@@ -13,7 +13,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { PROTOCOL_TEXT, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 
@@ -243,6 +243,35 @@ test('classic 行为不变：默认不注入超长任务协议段；root 不裁�
   assert.deepEqual(sections, [], 'classic root 不注入 worker/router 影子协议');
 });
 
+test('v0.3.8 长模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式」，classic 不变且装配按模式选择', () => {
+  // 预算与短语：长版本由 classic 派生，仍承载全部硬约束；只去掉长模式不存在的档位。
+  assert.ok(PROTOCOL_TEXT_LONG.length <= 5300, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
+  assert.ok(!PROTOCOL_TEXT_LONG.includes('压缩→新会话'), '长模式协议不得出现已移除档位');
+  assert.ok(!PROTOCOL_TEXT_LONG.includes('两段式'), '长模式协议不得出现两段式说明');
+  for (const phrase of [
+    '继续/压缩继续/接力新会话',
+    '本模式只有这三档',
+    '一次性预设只决定「做什么」',
+    '不产生审批豁免',
+    'phase 边界闸门',
+    '不开新 phase',
+    'contract_check{requirement, fidelity, attention}',
+  ]) {
+    assert.ok(PROTOCOL_TEXT_LONG.includes(phrase), '长模式协议缺短语: ' + phrase);
+  }
+  // classic 文本不变：仍支持四档与两段式。
+  assert.ok(PROTOCOL_TEXT.includes('压缩→新会话'));
+  assert.ok(PROTOCOL_TEXT.includes('两段式'));
+
+  // 装配：classic 用经典协议，routerMode 用长模式协议（逐字相等）。
+  const classic = fakeCtx();
+  apply(classic.ctx, {});
+  assert.equal(classic.sections.find((section) => section.name === 'context-relay:protocol').text, PROTOCOL_TEXT);
+  const long = fakeCtx();
+  apply(long.ctx, { routerMode: true });
+  assert.equal(long.sections.find((section) => section.name === 'context-relay:protocol').text, PROTOCOL_TEXT_LONG);
+});
+
 test('v0.2.17 B/D：classic 也监听 agent/created——非 root 裁 lead-only（普通子代理另裁 relay_phase），root 不裁', async () => {
   const f = fakeCtx();
   apply(f.ctx, {});
@@ -461,6 +490,11 @@ test('v0.3.1 relay-long 新根会话默认操作种子=continue（不覆盖显�
     updatePanelState('session-long-seed-ask', { defaultOperation: null }, { force: true });
     await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed-ask' }) });
     assert.equal(panelStateOf('session-long-seed-ask').defaultOperation, null, '显式「问我」(null) 不被种子覆盖');
+
+    // v0.3.8：长模式升级残留的面板预设也在根会话创建时清空（长模式没有该档）
+    updatePanelState('session-long-seed-stale-cth-preset', { defaultOperation: 'compress-then-handoff' });
+    await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed-stale-cth-preset' }) });
+    assert.equal(panelStateOf('session-long-seed-stale-cth-preset').defaultOperation, null, '长模式升级残留预设清空');
 
     // v0.3.5：v0.3.3 长会话升级残留的 cth 推荐在根会话创建时清空（该档已从长模式移除）
     updatePanelState('session-long-seed-stale-cth', { recommendedOperation: 'compress-then-handoff', recommendedReason: '旧推荐', recommendedAt: 1234 }, { source: 'agent' });

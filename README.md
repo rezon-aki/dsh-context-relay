@@ -64,7 +64,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 - 模式选择器出现 **Relay**（默认，工具面不裁）与 **Relay · 超长任务**（root Lead 只调度不执行：工具面隐藏 `bash/pwsh/write/edit`，软约束而非安全边界）。
 - 输入框上方出现**接力 chip**（仅 relay 会话渲染）：实时上下文占用、band、下一次操作；点开是面板。
-- 面板包含：一次性默认操作表盘（经典 6 档 / 超长任务 4 档）、三个自动授权开关（压缩 / 交接 / 授权下一次）、预算无上限开关、模型推荐行，以及「下一个新会话模式」滑动开关。
+- 面板包含：一次性默认操作表盘（经典 6 档 / 超长任务 4 档：问我 + 继续 / 压缩继续 / 接力新会话）、三个自动授权开关（压缩 / 交接 / 授权下一次）、预算无上限开关、模型推荐行，以及「下一个新会话模式」滑动开关。
 - **「预算无上限」胶囊**：按会话注入一句 `你的 token 预算无上限。`（只改提示词，不改内核配额）。
 - 到线时收到插件 notice（非用户消息）：只报状态与 phase 优先指引，不打断当前 phase。
 
@@ -75,7 +75,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 3. 工作期间不为预算打断 phase；预算只是 **phase 边界闸门**。
 4. 到线（organize / relay band）后，在 phase 边界按面板/人类决定处理：
    - **继续**：不压缩、不接力；
-   - **压缩继续**：`relay_organize` 做一次受控压缩（每会话最多一次；`force` 需人类坚持）；
+   - **压缩继续**：`relay_organize` 做一次受控压缩——每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批），无面板预设时第二次压缩需人类明确要求（`force`）；
    - **接力新会话**：`relay_handoff` 写交接单并创建新会话，旧会话树中的队友/后台任务会被中断或迁移；
    - **压缩→新会话**（两段式，仅经典 Relay）：第一次到线只压缩，第二次到线才接力。
 5. 交付前进入 `ship`：需要新上下文独立审查（`user_gate.review`）+ 大白话汇报（`user_gate.report`）。
@@ -107,7 +107,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 |---|---|
 | `relay_status` | 读上下文占用 / band / phase / 预算 headroom / 建议。 |
 | `relay_phase` | 声明/切换 phase；校验 exit_criteria、contract_check、warn 档 budget_plan；`ship` 需 `user_gate`。 |
-| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文档入口）→ 官方压缩 → 注入 brief。 |
+| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文档入口）→ 官方压缩 → 注入 brief。每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板预设时第二次压缩需人类明确要求（`force`）。 |
 | `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件），创建新 relay 会话并清理旧会话树。 |
 | `relay_recommend` | Lead-only：把模型推荐写入面板（切 phase / 压缩 / 接力 / 人类选择后清空）。 |
 | `doc_lint` | 四项目录/文档体检（quota / banned / index / git），输出 ≤2KB。 |
@@ -131,7 +131,7 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 - 压缩/接力的实际收益与模型、任务长度相关，阈值不是普适最优。
 - 视觉细节未做自动化回归，需安装后目检。
 - 压缩保真/收益未做严格 A/B；阈值拐点同样未做 A/B。
-- 两段式「压缩→新会话」仅单测覆盖，未做真机端到端接力（会创建会话/耗额度）。
+- 第二次压缩有摘要漂移风险：每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板预设时第二次压缩需人类明确要求（`force`）。
 - 面板写盘失败时状态只存内存（重启即丢）；settings 写盘是持久化优先。
 - composer chip / popover / 侧栏卡片文案仅中文；文档以中文为真源。
 

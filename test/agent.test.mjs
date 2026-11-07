@@ -403,16 +403,16 @@ test('v0.3.1 relay-long（routerMode）面板隐藏档归一：压缩→新会�
   assert.equal(switched.phase, 'build');
   assert.equal(switched.previous, 'discover');
   assert.equal(switched.band, 'organize');
-  assert.match(switched.reminder, /长模式已移除压缩→新会话（v0.3.4）/);
+  assert.match(switched.reminder, /长模式已移除该档/);
   assert.match(switched.reminder, /按继续处理并清空/);
   assert.match(switched.reminder, /chip 的 4 项/);
   assert.match(switched.reminder, /问我\/继续\/压缩继续\/接力新会话/);
   assert.match(switched.summary, /面板预设=继续（隐藏档归一）/);
   assert.equal(panelStateOf('session-long-hidden-cth').defaultOperation, null, '存量档按 continue 同一路径清空');
   assert.equal(cth.injected.length, 1, '放行路径注入 phase 边界 notice');
-  assert.match(cth.injected[0].content[0].text, /长模式已移除「压缩→新会话」/);
+  assert.match(cth.injected[0].content[0].text, /长模式已移除该档/);
   assert.match(cth.injected[0].content[0].text, /并清空/);
-  assert.match(cth.injected[0].content[0].text, /v0.3.4/);
+  assert.match(cth.injected[0].content[0].text, /注意下一次继续方式/);
 
   // 2) 长模式 + 存量隐藏档「自动（模型决定）」：按「继续」放行；autoChoose 持久开关不动（零副作用）
   const auto = make('session-long-hidden-auto', { autoChoose: true }, { routerMode: true });
@@ -1606,6 +1606,90 @@ test('relay_organize refuses a second compression unless the human forces it', a
   assert.equal(readdirSync(join(cwd, '.scratch', 'context-relay')).filter((name) => name.endsWith('.md')).length, 1, 'only the forced compression writes a brief');
 });
 
+test('v0.3.8 面板预设=compress：relay_status 推荐/文案跟随人类选择；已压缩过也允许第二次压缩（仍走审批）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const organizedLog = [{ type: 'tool/ptc-dispatch', seq: 0, data: { name: 'relay_organize', arguments: { phase: 'build' }, isError: false, content: [{ type: 'text', text: 'organized: freed 10 tokens' }] } }];
+  const session = fakeSession({ id: 'session-v038-panel-compress', cwd, seq: 1, log: organizedLog });
+  const compaction = { async compactIfNeeded() { return { shadowedTokenCount: 12 }; } };
+  const { services } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 }, compaction });
+  const { tools } = applyAgent(services);
+  updatePanelState(session.id, { defaultOperation: 'compress' });
+
+  const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
+  assert.equal(report.organizeCount, 1);
+  assert.equal(report.continue.recommendation, 'organize', '面板压缩继续优先于「已压缩过→推荐接力」规则');
+  assert.equal(report.continue.preset, 'compress');
+  assert.match(report.text, /continue: 面板预设=压缩继续/);
+  assert.match(report.advice, /面板预设=压缩继续，按预设执行/);
+  assert.doesNotMatch(report.advice, /本会话已压缩过，推荐接力/, '不出现与面板矛盾的规则推荐');
+
+  // 已压缩过 1 次 + 面板预设 compress + 非 force：按人类明确选择执行第二次压缩，成功后消费预设。
+  const second = await tools.get('relay_organize').execute({ phase: 'build', brief: 'second' }, { agent: { session, options: {} } });
+  assert.equal(second.ok, true, JSON.stringify(second));
+  assert.equal(second.organized, true);
+  assert.equal(second.organizeCount, 2);
+  assert.equal(panelStateOf(session.id).defaultOperation, null, '压缩成功后消费一次性预设');
+});
+
+test('v0.3.8 面板预设=handoff：relay_status 推荐=handoff 且文案报人类选择', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const organizedLog = [{ type: 'tool/ptc-dispatch', seq: 0, data: { name: 'relay_organize', arguments: { phase: 'build' }, isError: false, content: [{ type: 'text', text: 'organized: freed 10 tokens' }] } }];
+  const session = fakeSession({ id: 'session-v038-panel-handoff', cwd, seq: 1, log: organizedLog });
+  const { tools } = applyAgent(fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services);
+  updatePanelState(session.id, { defaultOperation: 'handoff' });
+  const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
+  assert.equal(report.organizeCount, 1);
+  assert.equal(report.continue.recommendation, 'handoff');
+  assert.equal(report.continue.preset, 'handoff');
+  assert.match(report.text, /continue: 面板预设=接力新会话/);
+  assert.doesNotMatch(report.text, /需人类选择/);
+});
+
+test('v0.3.8 长模式 advice 只列三档、不出现「压缩→新会话」；classic 仍保留该标签', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const makeReport = async (id, routerMode) => {
+    const session = fakeSession({ id, cwd, seq: 0 });
+    const { tools } = applyAgent(fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services, { routerMode });
+    // 升级残留：长模式旧会话可能存了已移除档位的预设；应按无预设处理且不把它写进模型可见文本。
+    updatePanelState(id, { defaultOperation: 'compress-then-handoff' });
+    return { report: await tools.get('relay_status').execute({}, { agent: { session, options: {} } }), session };
+  };
+  const long = await makeReport('session-v038-long-advice', true);
+  assert.match(long.report.advice, /继续 \/ 压缩继续 \/ 接力新会话/);
+  assert.doesNotMatch(long.report.advice, /压缩→新会话/, '长模式模型可见 advice 不得出现已移除档位');
+  assert.equal(long.report.continue.preset, null, '长模式升级残留预设按无预设处理');
+  assert.doesNotMatch(long.report.text, /压缩→新会话/);
+
+  const classic = await makeReport('session-v038-classic-advice', false);
+  assert.match(classic.report.advice, /压缩→新会话/, 'classic 面板档位列表照旧');
+  assert.equal(classic.report.continue.preset, 'compress-then-handoff');
+  assert.match(classic.report.text, /continue: 面板预设=压缩→新会话/);
+});
+
+test('v0.3.8 长模式到线提醒/面板行不显示升级残留的 cth 默认操作；classic 仍显示', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const listenerOf = (events) => events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
+  const noticeOf = async (id, routerMode) => {
+    const session = fakeSession({ id, cwd });
+    const { services } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 360_000 } });
+    const injected = [];
+    const listener = listenerOf(applyAgent(services, { routerMode }).events);
+    updatePanelState(id, { defaultOperation: 'compress-then-handoff' });
+    await listener({ agent: { session, inject(message) { injected.push(message); } } }, async () => undefined);
+    return injected[0]?.content?.[0]?.text ?? '';
+  };
+  const longText = await noticeOf('session-v038-long-notice-cth', true);
+  assert.ok(longText.length > 0, '长模式应注入到线提醒');
+  assert.doesNotMatch(longText, /压缩→新会话/, '长模式到线提醒不得显示已移除档位');
+  assert.match(longText, /默认操作「问我」/, '长模式残留预设按「问我」展示');
+  const classicText = await noticeOf('session-v038-classic-notice-cth', false);
+  assert.match(classicText, /默认操作「压缩→新会话」/, 'classic 仍正常显示该档');
+});
+
 test('relay_organize injects the phase brief only after a successful compaction', async () => {
   resetSharedState();
   const cwd = tmpCwd();
@@ -1955,6 +2039,11 @@ test('approval gate: handoff / forced second organize ask for official approval;
   // B-P2-6：非 force 的二次压缩注定 already-organized → 不弹审批
   const nonForceExec = { ...secondExec, arguments: { phase: 'build' } };
   assert.equal((await gate(nonForceExec, async () => ({ kind: 'allow' }))).kind, 'allow', 'already-organized 不弹审批');
+  // v0.3.8：面板预设=compress 时二次压缩不再注定被拒 → 必须正常进入审批分支（ask）。
+  updatePanelState('session-approval-organized', { defaultOperation: 'compress' });
+  const presetSecondAsk = await gate(nonForceExec, async () => ({ kind: 'allow' }));
+  assert.equal(presetSecondAsk.kind, 'ask', '面板预设压缩继续时二次压缩应弹审批而非预判放行');
+  updatePanelState('session-approval-organized', { defaultOperation: null });
   // B-P2-6：两段式「压缩→新会话」同一到线（已压缩 + 未到线）注定被工具体拒绝 → 不弹审批
   const twoStageSession = fakeSession({ id: 'session-approval-two-stage', cwd, seq: 0, log: organizedLog });
   updatePanelState('session-approval-two-stage', { defaultOperation: 'compress-then-handoff' });
@@ -1964,6 +2053,12 @@ test('approval gate: handoff / forced second organize ask for official approval;
   // 下一次到线（organize）→ 仍按两段式正常 ask（预设不自动免审）
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 };
   assert.equal((await gate(twoStageExec, async () => ({ kind: 'allow' }))).kind, 'ask', '下一次到线仍正常 ask');
+  // v0.3.8：长模式没有「压缩→新会话」档——两段式预判不生效（不因它免审）。
+  const longTwoStageSession = fakeSession({ id: 'session-approval-long-two-stage', cwd, seq: 0, log: organizedLog });
+  updatePanelState('session-approval-long-two-stage', { defaultOperation: 'compress-then-handoff' });
+  const longGate = preExecuteListener(applyAgent(fakeServices({ session: longTwoStageSession, pressure: { contextWindow: 1_000_000, projectedTokens: 130_000 }, extra: { approval } }).services, { routerMode: true }).events);
+  const longTwoStageExec = { ...handoffExec, agent: { session: longTwoStageSession } };
+  assert.equal((await longGate(longTwoStageExec, async () => ({ kind: 'allow' }))).kind, 'ask', '长模式两段式预判不生效：正常走接力审批');
 
   // 审批服务缺失：fail-closed deny + 部署提示（可配置 off）
   const noApprovalApply = applyAgent(fakeServices({ session: fakeSession({ id: 'session-approval-missing', cwd }) }).services);
@@ -4033,6 +4128,9 @@ test('v0.3.4 relay_recommend：长模式只接受三档，compress-then-handoff 
   // 长模式：先放一条推荐作为「零副作用」基线
   const long = fakeSession({ id: 'session-rec-v034-long', seq: 0 });
   const longTools = applyAgent(fakeServices({ session: long }).services, { routerMode: true }).tools;
+  // v0.3.8：长模式 operation schema 只暴露三档（模型可见 schema 不出现已移除的 compress-then-handoff）。
+  assert.deepEqual(longTools.get('relay_recommend').parameters.properties.operation.enum, ['continue', 'compress', 'handoff']);
+  assert.doesNotMatch(JSON.stringify(longTools.get('relay_recommend').parameters), /compress-then-handoff/);
   // v0.3.5 F4：reason 口径统一 120（schema 不再写 160）
   const reasonDesc = longTools.get('relay_recommend').parameters.properties.reason.description;
   assert.match(reasonDesc, /120/);
@@ -4057,6 +4155,7 @@ test('v0.3.4 relay_recommend：长模式只接受三档，compress-then-handoff 
   // classic：同值仍接受（两段式是 classic-only 档）
   const classic = fakeSession({ id: 'session-rec-v034-classic', seq: 0 });
   const classicTools = applyAgent(fakeServices({ session: classic }).services).tools;
+  assert.deepEqual(classicTools.get('relay_recommend').parameters.properties.operation.enum, ['compress', 'continue', 'handoff', 'compress-then-handoff'], 'classic 四档不变');
   const accepted = await classicTools.get('relay_recommend').execute({ operation: 'compress-then-handoff', reason: '经典两段式' }, { agent: { session: classic, options: {} } });
   assert.equal(accepted.ok, true);
   assert.equal(accepted.operation, 'compress-then-handoff');
