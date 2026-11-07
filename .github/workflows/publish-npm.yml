@@ -1,0 +1,63 @@
+name: Publish to npm (trusted publishing)
+
+# 由 GitHub Actions 通过 OIDC 直接发布到 npm：不需要 npm token，也不需要 6 位 OTP。
+# 前置（一次性，在 npm 网页做）：Package → Settings → Trusted Publishing 里添加
+#   GitHub repo: rezon-aki/dsh-context-relay
+#   Workflow:    publish-npm.yml
+# 触发：创建/发布 GitHub Release 时自动发；推送 v* tag 时自动发（tag 必须等于 package.json 版本，只认 SSH/无 API token 的发布路径）；或在 Actions 页面手动 Run workflow。
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # 注意：不要设置 registry-url——它会生成依赖 NODE_AUTH_TOKEN 的 .npmrc，干扰 npm CLI 的 OIDC trusted publishing 自动检测。
+
+      - name: Use npm >= 11.5.1 (trusted publishing)
+        run: npm install -g npm@latest
+
+      - name: Test
+        run: npm test
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: Verify tag matches package version (tag push)
+        if: github.event_name == 'push'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package version v$VERSION"; exit 1
+          fi
+
+      - name: Check if this version is already on npm
+        id: published
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "dsh-context-relay@$VERSION" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "dsh-context-relay@$VERSION is already published; skipping publish."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm with provenance
+        if: steps.published.outputs.already != 'true'
+        run: npm publish --provenance --access public

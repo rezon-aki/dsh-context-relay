@@ -1,0 +1,6 @@
+# dsh-context-relay 的 Host 平面装配行。
+# relay preset 不写在这里：插件激活时用 ctx.agentPresets.register 动态声明，
+# 卸载时自动注销（见 lib/index.js）。
+- insert:
+    - id: dsh-context-relay
+      name: dsh-context-relay

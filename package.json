@@ -1,0 +1,69 @@
+{
+  "name": "dsh-context-relay",
+  "version": "0.3.5",
+  "description": "DSH 上下文接力插件（Context Relay）：phase 协议 + 预算哨兵 + 受控压缩 + 有界 handoff 开新会话 + 队友保鲜（工作记录/体检/换代/链式召回），让 Lead 与队友长期停留在高效上下文区间。",
+  "author": "rezon-aki <rezon-aki@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rezon-aki/dsh-context-relay.git"
+  },
+  "homepage": "https://github.com/rezon-aki/dsh-context-relay#readme",
+  "bugs": {
+    "url": "https://github.com/rezon-aki/dsh-context-relay/issues"
+  },
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./agent": "./lib/agent.js",
+    "./client": "./lib/client.js",
+    "./policy": "./lib/policy.js",
+    "./handoff-store": "./lib/handoff-store.js"
+  },
+  "files": [
+    "lib",
+    "skills",
+    "cordis.patch.yml",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check lib/index.js && node --check lib/agent.js && node --check lib/agent/worker.js && node --check lib/agent/team.js && node --check lib/agent/team-tools.js && node --check lib/policy.js && node --check lib/client.js && node --check lib/handoff-store.js && node --check lib/lint.js && node --check lib/preset-base.js && node --check lib/projection.js && node --check lib/panel-store.js && node --check lib/agent/protocol.js && node --check lib/agent/shared.js && node --check lib/agent/derive.js && node --check lib/agent/panel-gate.js && node --check lib/agent/sentinel.js && node --check lib/agent/tools.js && node --check lib/agent/handoff.js && node --check lib/agent/progress.js && node --check lib/agent/chain.js",
+    "prepublishOnly": "npm test && npm run check"
+  },
+  "license": "MIT",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "context",
+    "compaction",
+    "relay",
+    "handoff",
+    "context-engineering",
+    "phase-protocol",
+    "agent-team",
+    "ptc"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.1-rc.2"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  }
+}
