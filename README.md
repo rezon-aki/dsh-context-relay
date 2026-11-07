@@ -25,18 +25,40 @@ Lead agent 的上下文一旦变长，就会开始偏离实现、重复劳动、
 
 要求：DSH `>=0.2.1-rc.2`、Node.js `>=20`。
 
+### 方式 A（推荐）：DSH Web UI 侧栏「插件」安装
+
+全程在 Web UI 里完成，不需要命令行：
+
+1. 打开 DSH Web UI，点左侧栏的 **「插件」**。
+2. 点右上角 **「添加插件」**。旁边的箭头是「选择添加插件方式」菜单，其中「安装第三方插件」进入同一个对话框。
+3. 在安装对话框的 **「插件包名」** 里填 `dsh-context-relay`；需要固定版本时在包名后加 `@版本号`。对话框也接受 Git 地址、压缩包或本地绝对路径。
+4. **「安装源」** 保持默认即可：首次使用会自动在 npm 官方源与中国大陆镜像源之间探测，选先响应的那个；也可以手动选 npm 官方源 / 中国大陆镜像源 / 自定义 http(s) 地址。
+5. 点 **「安装」**。Host 先读取这个包并在对话框里显示包名、简介与版本，pnpm 的命令和输出收在 **「查看安装详情」** 里。
+6. 安装完成后点 **「立即启用」**；如果关掉了对话框，到「插件」页的「已安装插件」里打开 `dsh-context-relay` 组合包的开关。
+7. 按页面提示 **重启/重载对应 profile**（启用 HMR 的 profile 会自动重组；否则重启 `dsh web`），然后 **刷新页面**。
+8. 新建会话：模式选择器里应出现 **Relay** 与 **Relay · 超长任务**；选中任一模式后，输入框上方应出现**接力 chip**——两者都出现即安装成功。
+9. （可选）「插件」页里 `dsh-context-relay` 的配置卡片可调阈值基准与面板默认值。
+
+**排障**
+
+- 装完看不到模式 → 确认组合包已启用、profile 已重载、页面已刷新；**安装成功不等于模块已激活**。
+- 看不到接力 chip → 只有 relay 会话会渲染 chip；重载前创建的旧会话使用旧 agent 平面，新建会话即可。
+- 需要升级 → 在「插件」页卸载后重新安装（本插件不是官方按需组合包，没有内置「更新」入口）。
+
+### 方式 B：命令行
+
 ```console
 dsh plugin --profile web add dsh-context-relay
 ```
 
-也可以从 DSH Web UI 侧栏 **「插件」→「添加插件」→ npm 包** 填包名安装，或从 Git / 本地目录安装：
+也可以从 Git 仓库或本地目录安装：
 
 ```console
 dsh plugin --profile web add github:rezon-aki/dsh-context-relay
 dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 ```
 
-安装后重启对应 profile、刷新 Web UI。新建会话时在模式选择器里选 **Relay** 或 **Relay · 超长任务**；会话创建后 preset 固定，要换模式请新建会话。
+安装后同样需要重启/重载 profile、刷新页面，再新建 relay 会话。
 
 ## 装完是什么样
 
@@ -124,7 +146,7 @@ npm run check   # 全部入口语法检查
 
 `lib/policy.js`（纯策略函数）、`lib/panel-store.js`（面板状态）、`lib/agent.js` + `lib/agent/*`（preset 平面）、`lib/index.js`（Host 平面/HTTP）、`lib/client.js`（Web UI bundle）、`lib/preset-base.js`（PTC preset 资产）、`skills/`（随包技能）。
 
-变更记录见 [CHANGELOG.md](CHANGELOG.md)；内部设计、验收与审计文档不随发布提供。
+变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License
 

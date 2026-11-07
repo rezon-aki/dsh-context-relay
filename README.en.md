@@ -25,18 +25,40 @@ This plugin does not replace the kernel compaction engine and does not delete hi
 
 Requires DSH `>=0.2.1-rc.2` and Node.js `>=20`.
 
+### Option A (recommended): DSH Web UI sidebar "Plugins"
+
+Everything stays in the Web UI — no command line needed:
+
+1. Open the DSH Web UI and click **Plugins** in the left sidebar.
+2. Click **Add plugin** in the top-right. (The arrow next to it opens the "Choose how to add a plugin" menu; **Install third-party plugin** leads to the same dialog.)
+3. In the install dialog, fill **Package name** with `dsh-context-relay` (append `@<version>` to pin one). The dialog also accepts Git URLs, tarballs and absolute local paths.
+4. Leave **Install source** at its default: on first use it probes the official npm registry and the mainland-China mirror and uses whichever responds first. You can also pick the official npm registry / mainland-China mirror / a custom http(s) URL manually.
+5. Click **Install**. The Host first resolves the package and shows its name, one-line description and version; pnpm commands and output stay folded under **View install details**.
+6. When installation completes, click **Enable now**. If you closed the dialog, open the `dsh-context-relay` bundle from **Installed plugins** on the Plugins page and switch it on.
+7. Follow the prompt to **restart/reload the profile** (profiles with HMR rebuild automatically; otherwise restart `dsh web`), then **refresh the page**.
+8. Create a new session: the mode picker should now show **Relay** and **Relay · 超长任务**; after selecting either, the **relay chip** should appear above the composer. Both together mean the install succeeded.
+9. Optional: the `dsh-context-relay` config card on the Plugins page sets the threshold basis and panel defaults.
+
+**Troubleshooting**
+
+- No modes after install → make sure the bundle is enabled, the profile was reloaded and the page was refreshed; **a successful install does not by itself activate the module**.
+- No relay chip → the chip only renders in relay sessions; sessions created before the reload keep the old agent plane — create a new session.
+- Updating → uninstall and reinstall to upgrade (this plugin is not an official on-demand bundle, so there is no built-in "Update" action).
+
+### Option B: command line
+
 ```console
 dsh plugin --profile web add dsh-context-relay
 ```
 
-Or install from the DSH Web UI: sidebar **Plugins → Add plugin → npm package**, then enter the package name. Git and local-directory installs work too:
+Git and local-directory installs also work:
 
 ```console
 dsh plugin --profile web add github:rezon-aki/dsh-context-relay
 dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 ```
 
-Restart the profile and refresh the Web UI. When creating a session, pick **Relay** or **Relay · 超长任务** in the mode picker. A session's preset is fixed once created — create a new session to switch modes.
+After installing, restart/reload the profile, refresh the page and create a new relay session.
 
 ## What you get
 
@@ -124,7 +146,7 @@ No build step: host and client are hand-written ESM. Hot-inject for development;
 
 `lib/policy.js` (pure policy functions), `lib/panel-store.js` (panel state), `lib/agent.js` + `lib/agent/*` (preset plane), `lib/index.js` (host plane / HTTP), `lib/client.js` (Web UI bundle), `lib/preset-base.js` (PTC preset assets), `skills/` (bundled skills).
 
-See [CHANGELOG.md](CHANGELOG.md). Internal design, acceptance and audit documents are not published.
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
