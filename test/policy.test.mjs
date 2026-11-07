@@ -250,48 +250,48 @@ test('continueChoice: compress-vs-handoff choice only at organize/relay bands, w
   assert.doesNotMatch(text, /already compressed once/, 'continue.reason 只在 JSON 字段，text 不重复');
 });
 
-test('v0.3.8 continueChoice：面板一次性预设优先于规则推荐（人类设置不被规则覆盖）', () => {
+test('continueChoice：面板模式（持久）优先于规则推荐（人类设置不被规则覆盖）', () => {
   const choiceAt = (preset, count = 0) => continueChoice({ band: 'organize' }, count, preset === undefined ? undefined : { defaultOperation: preset });
 
-  // 面板预设=压缩继续：即使已压缩过也按人类选择，不再推荐接力
+  // 面板模式=压缩继续：即使已压缩过也按人类选择，不再推荐接力
   const compress = choiceAt('compress', 1);
   assert.equal(compress.recommendation, 'organize');
   assert.equal(compress.preset, 'compress');
-  assert.equal(compress.reason, '面板预设=压缩继续（人类已选；已压缩过也按人类选择执行，审批仍按 autoCompress/authorizeNext）');
+  assert.equal(compress.reason, '面板模式=压缩继续（人类已选；已压缩过也按人类选择执行，审批仍按 autoCompress/authorizeNext）');
   assert.deepEqual(compress.options.map((option) => option.id), ['organize', 'handoff']);
 
-  // 面板预设=接力新会话
+  // 面板模式=接力新会话
   const handoff = choiceAt('handoff', 1);
   assert.equal(handoff.recommendation, 'handoff');
   assert.equal(handoff.preset, 'handoff');
-  assert.match(handoff.reason, /面板预设=接力新会话/);
+  assert.match(handoff.reason, /面板模式=接力新会话/);
 
-  // 面板预设=继续：不压缩不接力
+  // 面板模式=继续：不压缩不接力
   const keep = choiceAt('continue', 1);
   assert.equal(keep.recommendation, 'continue');
-  assert.equal(keep.reason, '面板预设=继续（人类已选：不压缩不接力）');
+  assert.equal(keep.reason, '面板模式=继续（人类已选：不压缩不接力）');
 
   // 压缩→新会话（仅 classic 可能）：两段式按已压缩次数推进
   assert.equal(choiceAt('compress-then-handoff', 0).recommendation, 'organize');
   assert.equal(choiceAt('compress-then-handoff', 1).recommendation, 'handoff');
 
-  // 无预设/空面板/非法值：仍走现行规则（已压缩过 → handoff；未压缩 → organize）
+  // 无模式/空面板/非法值：仍走现行规则（已压缩过 → handoff；未压缩 → organize）
   assert.equal(continueChoice({ band: 'organize' }, 1, {}).recommendation, 'handoff');
   assert.equal(continueChoice({ band: 'organize' }, 0).preset, null);
   assert.equal(continueChoice({ band: 'organize' }, 0, { defaultOperation: 'bogus' }).preset, null);
 
-  // formatStatus：有面板预设时只报「人类已选，按它执行」，不再出现规则推荐/选择题
+  // formatStatus：有面板模式时只报「人类已选，按它执行」，不再出现规则推荐/选择题
   const text = formatStatus({
     phase: 'build',
     lead: { ratio: 0.42, used: 420000, window: 1000000, band: 'organize' },
     thresholds: DEFAULT_THRESHOLDS,
     continue: compress,
   });
-  assert.match(text, /continue: 面板预设=压缩继续（人类已选，按它执行；压缩\/接力仍需审批）/);
+  assert.match(text, /continue: 面板模式=压缩继续（人类已选，按它执行；压缩\/接力仍需审批）/);
   assert.doesNotMatch(text, /需人类选择|推荐 handoff|选项 A/);
   assert.match(
     formatStatus({ phase: 'build', lead: { band: 'organize' }, thresholds: DEFAULT_THRESHOLDS, continue: choiceAt('compress-then-handoff', 0) }),
-    /continue: 面板预设=压缩→新会话（人类已选，按它执行；压缩\/接力仍需审批）/,
+    /continue: 面板模式=压缩→新会话（人类已选，按它执行；压缩\/接力仍需审批）/,
   );
 });
 

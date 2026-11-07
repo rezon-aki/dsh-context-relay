@@ -114,7 +114,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5300 / ROUTER �
   assert.ok(PROTOCOL_TEXT.length <= 5300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '一次性预设只决定「做什么」',
+    '模式只决定「做什么」',
     '不产生审批豁免',
     '免审只来自 autoCompress / autoHandoff / authorizeNext',
     'autoChoose 只决定谁选操作，不产生免审',
@@ -251,7 +251,7 @@ test('v0.3.8 长模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会
   for (const phrase of [
     '继续/压缩继续/接力新会话',
     '本模式只有这三档',
-    '一次性预设只决定「做什么」',
+    '模式只决定「做什么」',
     '不产生审批豁免',
     'phase 边界闸门',
     '不开新 phase',

@@ -63,8 +63,9 @@ After installing, restart/reload the profile, refresh the page and create a new 
 ## What you get
 
 - Two extra presets in the mode picker: **Relay** (default; the Lead keeps its full toolset) and **Relay · 超长任务** (the root Lead dispatches but does not execute: `bash/pwsh/write/edit` are hidden on its agent layer — a soft guard, not a security boundary).
-- A **relay chip** above the composer (relay sessions only): live context usage, band and next operation; click it to open the panel.
-- The panel: a one-shot default-operation dial (6 detents in classic Relay / 4 in the long-task mode: ask me + continue / compact-and-continue / hand off), three auto-authorisation toggles (compact / hand off / authorise next), a "budget unlimited" toggle, the model-recommendation row, and a "mode of the next session" slider.
+- A **relay chip** above the composer (relay sessions only): live context usage, band and current mode; click it to open the panel.
+- The panel: a **mode** dial (6 detents in classic Relay / 4 in the long-task mode: ask me + continue / compact-and-continue / hand off). The mode is **persistent** for the session (not consumed; it drives each line-crossing, and the next handoff session inherits it). It also has three auto-authorisation toggles (compact / hand off / authorise next), a "budget unlimited" toggle, the model-recommendation row, and a "which preset the next session uses" slider.
+- **Mode and approval are independent**: the mode only decides *what* happens at a line-crossing. Approval exemptions come only from the persistent auto-authorisations (`autoCompress` / `autoHandoff`) or the one-shot "authorise next" (`authorizeNext`).
 - A **budget-unlimited capsule**: injects one line, `你的 token 预算无上限。`, per session (prompt text only — it does not raise kernel limits).
 - A plugin notice when a threshold is crossed (not a user message): it reports status and phase-first guidance without interrupting the current phase.
 
@@ -73,9 +74,9 @@ After installing, restart/reload the profile, refresh the page and create a new 
 1. `relay_status` — check the current phase, context usage, band and budget headroom.
 2. `relay_phase({phase:"discover", goal, exit_criteria, contract_check})` to begin. Every phase switch takes `contract_check` (requirements settled / implementation faithful / is human attention worth spending).
 3. Never let the budget interrupt a phase — it is a **phase-boundary gate**.
-4. When over the line (organize / relay band), handle it at the next phase boundary according to the panel / the human's decision:
+4. When over the line (organize / relay band), handle it at the next phase boundary according to the panel mode / the human's decision:
    - **Continue**: no compaction, no handoff;
-   - **Compact and continue**: `relay_organize` performs one controlled compaction — at most once per session by default; when the human explicitly selects "compact and continue" in the panel, a second compaction runs as the human chose (approval still applies); without a panel preset the second compaction needs an explicit human request (`force`);
+   - **Compact and continue**: `relay_organize` performs one controlled compaction — at most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`);
    - **Hand off to a new session**: `relay_handoff` writes the handover and creates a new session; teammates and background jobs of the old session tree are interrupted or migrated;
    - **Compact → new session** (two-stage, classic Relay only): the first crossing only compacts; the second crossing hands off.
 5. Before delivering, enter `ship`: it requires a fresh-context independent review (`user_gate.review`) and a plain-language report (`user_gate.report`).
@@ -95,9 +96,9 @@ Optional host plugin config:
 | `inheritOnHandoff` | `true` | The handoff inherits the old session's model route and permission profile; `false` returns to deployment defaults. |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | The two mode ids. |
 
-Sidebar settings (human-editable, hot-reloaded): threshold basis, default operation, auto-decide, auto-compact, auto-handoff, budget unlimited.
+Sidebar settings (human-editable, hot-reloaded): threshold basis, default mode, auto-decide, auto-compact, auto-handoff, budget unlimited.
 
-Panel state (per session, `panel.json`): one-shot default operation, auto-authorisations, auto-decision record, handoff target mode, budget unlimited, and the three model-recommendation fields.
+Panel state (per session, `panel.json`): persistent mode (not consumed; inherited by the next handoff session), auto-authorisations, auto-decision record, handoff target preset, budget unlimited, and the three model-recommendation fields.
 
 Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`. Message/session content remains stored by DSH itself.
 
@@ -107,7 +108,7 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`. Mess
 |---|---|
 | `relay_status` | Read context usage / band / phase / budget headroom / advice. |
 | `relay_phase` | Declare or switch phase; validates exit_criteria, contract_check and warn-band budget_plan; `ship` requires `user_gate`. |
-| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and key-doc entry points) → official compaction → inject the brief. At most once per session by default; when the human explicitly selects "compact and continue" in the panel, a second compaction runs as the human chose (approval still applies); without a panel preset the second compaction needs an explicit human request (`force`). |
+| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and key-doc entry points) → official compaction → inject the brief. At most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`). |
 | `relay_handoff` | Produce a ≤8KB handover (including the rolling progress file), create a new relay session and clean up the old session tree. |
 | `relay_recommend` | Lead-only: write the model's recommendation to the panel (cleared on phase switch / compaction / handoff / human choice). |
 | `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output ≤2KB. |
@@ -118,7 +119,7 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 
 ## Safety boundaries and costs
 
-- **Approval hard gate**: `relay_organize` / `relay_handoff` go through the official approval gate by default (fail-closed; only `allowed-once` passes). Exemptions come **only** from panel `autoCompress` / `autoHandoff` / `authorizeNext`; a one-shot preset decides *what* to do, never grants an exemption.
+- **Approval hard gate**: `relay_organize` / `relay_handoff` go through the official approval gate by default (fail-closed; only `allowed-once` passes). Exemptions come **only** from panel `autoCompress` / `autoHandoff` / `authorizeNext`; the panel mode (persistent, not consumed) decides *what* to do and never grants an exemption.
 - **A handoff creates a new session and consumes quota**: it interrupts running teammates/subagents of the old session tree, cancels their background jobs and migrates scheduled jobs; the old session is marked `handedOff` as an audit record.
 - **Compaction is lossy**: old conversation detail survives only in the structured brief. Put important conclusions in docs/handoffs.
 - **No autonomous loop**: relay stays human-gated. Use the official Ralph / workflow / subagent for repetitive off-screen work.
@@ -131,7 +132,7 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - The real benefit of compaction/handoff depends on model and task length; thresholds are not universally optimal.
 - Visual details have no automated regression coverage — inspect after installing.
 - Compaction fidelity/benefit has no strict A/B; neither does the threshold inflection.
-- A second compaction risks summary drift: at most once per session by default; when the human explicitly selects "compact and continue" in the panel, a second compaction runs as the human chose (approval still applies); without a panel preset it needs an explicit human request (`force`).
+- A second compaction risks summary drift: at most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode it needs an explicit human request (`force`).
 - If writing `panel.json` fails, panel state lives in memory only (lost on restart); settings writes are persist-first.
 - Composer chip / popover / sidebar card text is Chinese-only; Chinese docs are the source of truth.
 

@@ -1107,7 +1107,7 @@ test('host: 未改面板的会话 GET panel 返回侧栏默认；改过面板后
   await putSettings(host, { threshold: 45, defaultOperation: 'compress', autoChoose: false, autoCompress: false, autoHandoff: false });
   assert.deepEqual((await getPanel(host, 'sess-default-b')).json.panel, resolvePanelState({ defaults: { defaultOperation: 'compress', unlimitedBudget: true } }));
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.panel, changed.json.panel);
-  // 一次性默认操作在会话里用掉后写 null 覆盖，不回落到侧栏默认 'compress'
+  // 人类在面板把模式写回 null（问我）后覆盖，不回落到侧栏默认 'compress'
   const consumed = await putPanel(host, { sessionId: 'sess-default-b', defaultOperation: null });
   assert.equal(consumed.json.panel.defaultOperation, null);
   assert.equal((await getPanel(host, 'sess-default-b')).json.panel.defaultOperation, null);

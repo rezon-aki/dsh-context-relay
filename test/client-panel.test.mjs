@@ -247,7 +247,7 @@ test('RelayPanel：授权 hint/title 用权威句（B-P2-15：不再写「本次
   const optionTitles = byClass(instance.tree, 'relay-v3-order').map((node) => String(node.props.title));
   const handoffOption = optionTitles.find((title) => title.includes('接力新会话'));
   assert.ok(handoffOption, '应有「接力新会话」选项');
-  assert.match(handoffOption, /预设只决定做什么/);
+  assert.match(handoffOption, /模式只决定做什么/);
   assert.match(handoffOption, /免审看 autoHandoff\/授权下一次/);
   assert.ok(!handoffOption.includes('本次免审批'));
   // 授权按钮 title：免审只来自 authorizeNext（一次性，操作成功后消费），不写旧的「接力/二次压缩」
@@ -256,7 +256,7 @@ test('RelayPanel：授权 hint/title 用权威句（B-P2-15：不再写「本次
   assert.match(String(auth.props.title), /下一次 relay 操作仍需官方审批/);
   assert.match(String(auth.props.title), /操作成功后消费/);
   // popover 内可见权威句（单一真源）
-  assert.match(textOf(popover), /一次性预设只决定「做什么」，不产生审批豁免；免审只来自 autoCompress \/ autoHandoff \/ authorizeNext（一次性，操作成功后消费）。/);
+  assert.match(textOf(popover), /模式在本会话持久（不消费），只决定到线时「做什么」，不产生审批豁免；免审只来自 autoCompress \/ autoHandoff \/ authorizeNext（一次性，操作成功后消费）；接力后模式由新会话继承。/);
   // 整个 bundle 不得再出现旧口径短语
   assert.equal(/本次免审批|视为已授权|pre-authorize|handoffPreAuthorized|接力\/二次压缩/.test(source), false, 'client bundle 不得再出现旧授权口径');
 });
@@ -740,7 +740,7 @@ test('CSS：模式开关动效契约（弹簧位移 / 双层渐变交叉 / 标�
   assert.ok(reduced.includes('.relay-v3-slide-fill{') === false, 'fill 的颜色渐变不受 reduced-motion 影响');
 });
 
-// ── v0.2.18：一次性默认操作 = 车钟表盘（6 档指针；写入字段与旧按钮网格一致）──────
+// ── v0.2.18/v0.4.0：默认模式 = 车钟表盘（模式持久不消费；写入字段与旧按钮网格一致）──────
 const dialOf = (instance) => find(instance.tree, (node) => typeof node?.props?.className === 'string' && node.props.className.split(' ').includes('relay-v3-dial'))[0];
 const dialOrders = (instance) => find(instance.tree, (node) => typeof node?.props?.className === 'string' && node.props.className.split(' ').includes('relay-v3-order'));
 const orderWithText = (instance, text) => dialOrders(instance).find((node) => JSON.stringify(node.children).includes(text));
@@ -753,7 +753,7 @@ const needleDeg = (instance) => {
 };
 const wrapDeg = (deg) => ((deg % 360) + 360) % 360;
 
-test('RelayPanel：一次性默认操作 = 冷峻哥特肋骨穹顶表盘（radiogroup + 6 档 radio + 照准仪指针 + 读出行）', async () => {
+test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 6 档 radio + 照准仪指针 + 读出行）', async () => {
   const env = createEnv();
   env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE() };
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -763,7 +763,7 @@ test('RelayPanel：一次性默认操作 = 冷峻哥特肋骨穹顶表盘（radi
   const dial = dialOf(instance);
   assert.ok(dial, '渲染冷峻哥特表盘');
   assert.equal(dial.props.role, 'radiogroup');
-  assert.equal(dial.props['aria-label'], '一次性默认操作（表盘档位）');
+  assert.equal(dial.props['aria-label'], '默认模式（表盘档位）');
   const orders = dialOrders(instance);
   assert.equal(orders.length, 6, 'classic 6 个档位');
   const checked = orders.filter((node) => node.props['aria-checked'] === true);
@@ -1053,7 +1053,7 @@ test('RelayPanel：扇区按 30° 边界平分 / 中心轮毂死区 / 非主键�
   assert.equal(putCount(), beforeHub, '右键单击不写 PUT');
 });
 
-// ── v0.2.31：relay-long 一次性默认操作 = 4 档（问/继续/压缩继续/接力新会话）──────────
+// ── v0.2.31/v0.4.0：relay-long 默认模式 = 4 档（问/继续/压缩继续/接力新会话）──────────
 const LONG_PRESET = 'relay-long';
 /** relay-long 会话面板 fixture（panel GET 已下发 preset + modes）。 */
 const longEnv = (panel) => ({
@@ -1106,11 +1106,30 @@ test('RelayPanel：relay-long 表盘只 4 档（问我/继续/压缩继续/接�
   const handoffSeat = orderWithText(instance, '接力新会话');
   assert.match(textOf(handoffSeat), /团队重启/, '铭牌标注「团队重启」');
   assert.match(String(handoffSeat.props.title), /团队重启/);
-  assert.match(String(handoffSeat.props.title), /预设只决定做什么/);
+  assert.match(String(handoffSeat.props.title), /模式只决定做什么/);
   orderWithText(instance, '接力新会话').props.onClick();
   await instance.flush();
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, '团队重启档写入 handoff');
   assert.match(textOf(instance.tree), /团队重启/, '读出行 hint 标注团队重启');
+});
+
+test('v0.4.0 chip 显示当前模式（不再是一次性下一次操作）：两段式显示模式名、自动模式显示「自动」', async () => {
+  // ① classic 两段式模式：chip 显示模式名「压缩→新会话」（与已压缩次数无关，模式持久不消费）
+  const env = createEnv();
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress-then-handoff' }, live: LIVE({ band: 'organize', organizeCount: 1 }) };
+  const RelayPanel = env.slots['conversation.composer.dock'];
+  const instance = env.mount(RelayPanel, { sessionId: 'A' });
+  await instance.flush();
+  const chipText = textOf(byClass(instance.tree, 'relay-v3-chip')[0]);
+  assert.match(chipText, /压缩→新会话/, 'chip 显示当前模式');
+  // ② autoChoose 模式：模型已记录 compress，chip 仍显示模式「自动」（title 显示模型记录的具体操作）
+  const env2 = createEnv();
+  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, autoChoose: true, autoDecision: { operation: 'compress', at: 1 } }, live: LIVE() };
+  const instance2 = env2.mount(env2.slots['conversation.composer.dock'], { sessionId: 'A' });
+  await instance2.flush();
+  const chip2 = byClass(instance2.tree, 'relay-v3-chip')[0];
+  assert.match(textOf(chip2), /自动/, 'chip 显示模式「自动」');
+  assert.match(String(chip2.props.title), /模型决定 压缩/, 'title 仍给出模型记录的具体操作');
 });
 
 test('RelayPanel：relay-long 隐藏档存量值视觉按「继续」显示、不写盘（host 做语义归一）', async () => {
@@ -1121,7 +1140,7 @@ test('RelayPanel：relay-long 隐藏档存量值视觉按「继续」显示、�
   await instance.flush();
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '打开/轮询不得主动写盘');
   const chipText = textOf(byClass(instance.tree, 'relay-v3-chip')[0]);
-  assert.match(chipText, /继续/, 'chip 下一次操作视觉按「继续」');
+  assert.match(chipText, /继续/, 'chip 当前模式视觉按「继续」');
   assert.equal(chipText.includes('压缩→新会话'), false, 'chip 不显示隐藏档');
   assert.ok(await openPopover(instance));
   const orders = dialOrders(instance);
@@ -1233,7 +1252,7 @@ test('RelayPanel：classic relay 会话保持 6 档（preset!==modes.long 不触
   assert.equal(dialOrders(instance).length, 6, 'classic 仍是 6 档');
   assert.ok(dialOrders(instance).some((node) => JSON.stringify(node.children).includes('压缩→新会话')), 'classic 保留「压缩→新会话」');
   assert.ok(dialOrders(instance).some((node) => JSON.stringify(node.children).includes('自动')), 'classic 保留「自动」');
-  assert.equal(byClass(instance.tree, 'relay-v3-dial-head-title')[0].children[0], '一次性默认操作', 'classic 表盘抬头不含「超长任务」');
+  assert.equal(byClass(instance.tree, 'relay-v3-dial-head-title')[0].children[0], '默认模式', 'classic 表盘抬头不含「超长任务」');
 });
 
 test('CSS：冷峻哥特「石肋星盘」表盘契约（多边形肋拱/山花冠/飞扶壁/照准仪/冷色线稿/无彩窗暖金/reduced-motion）', () => {

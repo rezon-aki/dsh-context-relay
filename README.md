@@ -63,8 +63,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 ## 装完是什么样
 
 - 模式选择器出现 **Relay**（默认，工具面不裁）与 **Relay · 超长任务**（root Lead 只调度不执行：工具面隐藏 `bash/pwsh/write/edit`，软约束而非安全边界）。
-- 输入框上方出现**接力 chip**（仅 relay 会话渲染）：实时上下文占用、band、下一次操作；点开是面板。
-- 面板包含：一次性默认操作表盘（经典 6 档 / 超长任务 4 档：问我 + 继续 / 压缩继续 / 接力新会话）、三个自动授权开关（压缩 / 交接 / 授权下一次）、预算无上限开关、模型推荐行，以及「下一个新会话模式」滑动开关。
+- 输入框上方出现**接力 chip**（仅 relay 会话渲染）：实时上下文占用、band、当前模式；点开是面板。
+- 面板包含：**模式**表盘（经典 6 档 / 超长任务 4 档：问我 + 继续 / 压缩继续 / 接力新会话）——模式在本会话内**持久**（不消费，到线时按它执行；接力后由新会话继承）；另含三个自动授权开关（压缩 / 交接 / 授权下一次）、预算无上限开关、模型推荐行，以及「下一个新会话使用哪个 preset」滑动开关。
+- **模式与审批相互独立**：模式只决定到线时做什么；压缩/接力的免审只来自持久自动授权（`autoCompress` / `autoHandoff`）或一次性的「授权下一次」（`authorizeNext`）。
 - **「预算无上限」胶囊**：按会话注入一句 `你的 token 预算无上限。`（只改提示词，不改内核配额）。
 - 到线时收到插件 notice（非用户消息）：只报状态与 phase 优先指引，不打断当前 phase。
 
@@ -73,9 +74,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 1. `relay_status`：看当前 phase、上下文占用、band 与预算 headroom。
 2. `relay_phase({phase:"discover", goal, exit_criteria, contract_check})` 开始；每次切 phase 都带 `contract_check`（需求已定 / 实现忠实 / 是否值得占用人类注意力）。
 3. 工作期间不为预算打断 phase；预算只是 **phase 边界闸门**。
-4. 到线（organize / relay band）后，在 phase 边界按面板/人类决定处理：
+4. 到线（organize / relay band）后，在 phase 边界按面板模式/人类决定处理：
    - **继续**：不压缩、不接力；
-   - **压缩继续**：`relay_organize` 做一次受控压缩——每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批），无面板预设时第二次压缩需人类明确要求（`force`）；
+   - **压缩继续**：`relay_organize` 做一次受控压缩——每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批），无面板模式时第二次压缩需人类明确要求（`force`）；
    - **接力新会话**：`relay_handoff` 写交接单并创建新会话，旧会话树中的队友/后台任务会被中断或迁移；
    - **压缩→新会话**（两段式，仅经典 Relay）：第一次到线只压缩，第二次到线才接力。
 5. 交付前进入 `ship`：需要新上下文独立审查（`user_gate.review`）+ 大白话汇报（`user_gate.report`）。
@@ -95,9 +96,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `inheritOnHandoff` | `true` | 接力继承旧会话模型路由与权限档；`false` 回部署默认。 |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | 两个模式 id。 |
 
-侧栏设置（人类可改，热生效）：阈值基准 + 默认操作 / 自动决定 / 自动压缩 / 自动交接 / 预算无上限。
+侧栏设置（人类可改，热生效）：阈值基准 + 默认模式 / 自动决定 / 自动压缩 / 自动交接 / 预算无上限。
 
-面板状态（按会话，`panel.json`）：一次性默认操作、自动授权、自决记录、交接目标模式、预算无上限、模型推荐三字段等。
+面板状态（按会话，`panel.json`）：持久模式（不消费，接力后由新会话继承）、自动授权、自决记录、交接目标模式、预算无上限、模型推荐三字段等。
 
 数据文件：`~/.dsh/data/dsh-context-relay/settings.json` 与 `panel.json`；消息/会话内容仍由 DSH 自身存储。
 
@@ -107,7 +108,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 |---|---|
 | `relay_status` | 读上下文占用 / band / phase / 预算 headroom / 建议。 |
 | `relay_phase` | 声明/切换 phase；校验 exit_criteria、contract_check、warn 档 budget_plan；`ship` 需 `user_gate`。 |
-| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文档入口）→ 官方压缩 → 注入 brief。每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板预设时第二次压缩需人类明确要求（`force`）。 |
+| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文档入口）→ 官方压缩 → 注入 brief。每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
 | `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件），创建新 relay 会话并清理旧会话树。 |
 | `relay_recommend` | Lead-only：把模型推荐写入面板（切 phase / 压缩 / 接力 / 人类选择后清空）。 |
 | `doc_lint` | 四项目录/文档体检（quota / banned / index / git），输出 ≤2KB。 |
@@ -118,7 +119,7 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 
 ## 安全边界与代价
 
-- **审批硬门**：`relay_organize` / `relay_handoff` 默认过官方审批（fail-closed，仅 allowed-once 放行）。免审**只**来自面板 `autoCompress` / `autoHandoff` / `authorizeNext`；一次性预设只决定「做什么」，不产生豁免。
+- **审批硬门**：`relay_organize` / `relay_handoff` 默认过官方审批（fail-closed，仅 allowed-once 放行）。免审**只**来自面板 `autoCompress` / `autoHandoff` / `authorizeNext`；面板模式（持久、不消费）只决定「做什么」，不产生豁免。
 - **接力会创建新会话并消耗额度**：会中断旧会话树中运行中的队友/子智能体、取消其后台任务、迁移定时任务；旧会话标记 `handedOff` 作为审计。
 - **压缩有损**：旧对话细节只保留结构化 brief；重要结论请写进文档/handoff。
 - **不自动循环**：relay 保持 human-gated；重复性整块劳动请用官方 Ralph / workflow / subagent。
@@ -131,7 +132,7 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 - 压缩/接力的实际收益与模型、任务长度相关，阈值不是普适最优。
 - 视觉细节未做自动化回归，需安装后目检。
 - 压缩保真/收益未做严格 A/B；阈值拐点同样未做 A/B。
-- 第二次压缩有摘要漂移风险：每会话默认最多一次；人类在面板明确选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板预设时第二次压缩需人类明确要求（`force`）。
+- 第二次压缩有摘要漂移风险：每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。
 - 面板写盘失败时状态只存内存（重启即丢）；settings 写盘是持久化优先。
 - composer chip / popover / 侧栏卡片文案仅中文；文档以中文为真源。
 
