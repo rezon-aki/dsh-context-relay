@@ -72,7 +72,7 @@ jobs:
           code=$?
           if [ "$code" -ne 0 ]; then
             echo "npm publish failed (exit $code); surfacing log tail as annotations"
-            tail -n 30 "$RUNNER_TEMP/npm-publish.log" | tr -d '\r' | while IFS= read -r line; do
+            grep -iE 'npm error|ERR!|error|E[0-9]{3}|not found|forbidden|unauthorized|provenance' "$RUNNER_TEMP/npm-publish.log" | head -n 30 | tr -d '\r' | while IFS= read -r line; do
               [ -n "$line" ] && echo "::error title=npm-publish::$line"
             done
             exit "$code"
