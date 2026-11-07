@@ -1,6 +1,6 @@
 {
   "name": "dsh-context-relay",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "DSH 上下文接力插件（Context Relay）：phase 协议 + 预算哨兵 + 受控压缩 + 有界 handoff 开新会话 + 队友保鲜（工作记录/体检/换代/链式召回），让 Lead 与队友长期停留在高效上下文区间。",
   "author": "rezon-aki <rezon-aki@users.noreply.github.com>",
   "repository": {
