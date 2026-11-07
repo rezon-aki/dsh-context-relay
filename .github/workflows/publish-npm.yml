@@ -60,4 +60,20 @@ jobs:
 
       - name: Publish to npm with provenance
         if: steps.published.outputs.already != 'true'
-        run: npm publish --provenance --access public
+        run: |
+          # 失败时把 npm 日志尾部转成公开 annotation：没有 admin token 也能排障（日志正文本身仍需权限）。
+          set +e
+          set -o pipefail
+          {
+            npm --version
+            node --version
+            npm publish --provenance --access public
+          } 2>&1 | tee "$RUNNER_TEMP/npm-publish.log"
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "npm publish failed (exit $code); surfacing log tail as annotations"
+            tail -n 30 "$RUNNER_TEMP/npm-publish.log" | tr -d '\r' | while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error title=npm-publish::$line"
+            done
+            exit "$code"
+          fi
