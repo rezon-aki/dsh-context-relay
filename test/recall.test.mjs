@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MANUAL_RECALL_HEADER, buildManualRecallSection, collectShadowedContext,
+  MANUAL_RECALL_HEADER, buildManualRecallSection, collectShadowedContext, latestShadowedEnd,
 } from '../lib/agent/recall.js';
 
 /** 最小会话替身：只提供 recall 用到的 snapshotEvents / surface。 */
@@ -62,6 +62,10 @@ function skillResultEvent(seq, name) {
   };
 }
 
+function compactionEvent(seq, start, end) {
+  return { seq, type: 'compaction/summary', data: { shadowedRange: { start, end }, shadowedSeqs: [] } };
+}
+
 test('collects additional AGENTS.md scopes and loaded skills, newest first', () => {
   const events = [
     instructionEvent(1, ['pkg-a/AGENTS.md']),
@@ -74,6 +78,40 @@ test('collects additional AGENTS.md scopes and loaded skills, newest first', () 
   assert.deepEqual(collected.instructions, ['pkg-b/AGENTS.md', 'pkg-a/AGENTS.md']);
   assert.deepEqual(collected.skills, ['browser-skill', 'tdd', 'code-review']);
   assert.deepEqual(collected.omitted, { instructions: 0, skills: 0 });
+});
+
+test('derives the shadowed range from the latest compaction and ignores retained-tail events (PTC 误报修复)', () => {
+  const events = [
+    instructionEvent(1, ['old/AGENTS.md']),
+    skillPtcDispatchEvent(2, 'old-skill'),
+    compactionEvent(3, 1, 2), // 本次压缩只遮蔽 seq 1–2
+    instructionEvent(4, ['tail/AGENTS.md']), // retained tail（没被遮蔽）
+    skillPtcDispatchEvent(5, 'tail-skill'), // PTC 内层事件永不在 surface，靠 shadowedEnd 兜住
+  ];
+  assert.equal(latestShadowedEnd(events), 2);
+  const derived = collectShadowedContext(fakeSession(events, []));
+  assert.deepEqual(derived.instructions, ['old/AGENTS.md'], 'retained tail 的附加指令不得误报');
+  assert.deepEqual(derived.skills, ['old-skill'], '压缩后新调用（PTC）的 skill 不得误报');
+  // 显式 shadowedEnd（organize 的 compactionInfo.shadowedEnd）优先于推导值
+  const explicit = collectShadowedContext(fakeSession(events, []), { shadowedEnd: 4 });
+  assert.deepEqual(explicit.instructions, ['tail/AGENTS.md', 'old/AGENTS.md']);
+  assert.deepEqual(explicit.skills, ['old-skill']);
+  assert.equal(latestShadowedEnd([compactionEvent(3, 1, 2), compactionEvent(6, 4, 5)]), 5, '取最近一次压缩的 end');
+  assert.equal(latestShadowedEnd([]), undefined);
+  assert.equal(latestShadowedEnd(undefined), undefined);
+});
+
+test('does not list a path/skill that is still visible through a newer re-injection (dedupe)', () => {
+  const events = [
+    instructionEvent(1, ['pkg/AGENTS.md']),
+    instructionEvent(2, ['pkg/AGENTS.md']),
+    skillResultEvent(3, 'tdd'),
+    skillResultEvent(4, 'tdd'),
+  ];
+  // 后一次重新加载仍在 surface 上 = 当前可见，不应再提示召回。
+  const collected = collectShadowedContext(fakeSession(events, [2, 4]));
+  assert.deepEqual(collected.instructions, []);
+  assert.deepEqual(collected.skills, []);
 });
 
 test('skips baseline instructions, removals, duplicate scopes and unreadable events', () => {
@@ -128,6 +166,7 @@ test('renders a bounded section with retrieval hints; empty when nothing was sha
   assert.match(section, /code-review/);
   assert.match(section, /read 重新读取/);
   assert.match(section, /skill\(\{name\}\)/);
+  assert.match(section, /已调用过/);
   assert.ok(section.length <= 900);
 
   const bounded = buildManualRecallSection({

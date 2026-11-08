@@ -934,7 +934,8 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
           { kind: 'child', id: 'teammate-1', mode: 'continuable', activity: 'running', parentId: 'session-caller', depth: 1 },
           { kind: 'diagnostic', id: 'child-broken', reason: 'corrupt' },
         ],
-        listChildren: async () => [{ kind: 'child', id: 'child-1', mode: 'continuable', activity: 'running' }],
+        // 真实 API：listChildren 返回 SubagentCatalogEntry（无 kind/activity 字段）。
+        listChildren: async () => [{ id: 'child-1', createdAt: 0, mode: 'continuable', label: 'child' }],
         interrupt: (id, authority) => { cleanupCalls.subagentInterrupts.push({ id, authority }); cleanupCalls.order.push('subagent-interrupt'); },
         drainChildren: async (caller, ids) => { cleanupCalls.drained.push(ids); cleanupCalls.order.push('drain-children'); },
         drainDescendants: async (parents) => { cleanupCalls.drainedDescendants.push(parents.map((parent) => parent.session.id)); cleanupCalls.order.push('drain-descendants'); },
@@ -1100,7 +1101,8 @@ test('relay_handoff 交接清理：drain 结算的子智能体后台任务不静
   };
   const subagents = {
     listDescendants: async () => [{ kind: 'child', id: 'child-1', mode: 'continuable', activity: 'running', depth: 1 }],
-    listChildren: async () => [{ kind: 'child', id: 'child-1', mode: 'continuable', activity: 'running' }],
+    // 真实 API：listChildren 返回 SubagentCatalogEntry（无 kind/activity 字段）。
+    listChildren: async () => [{ id: 'child-1', createdAt: 0, mode: 'continuable', label: 'child' }],
     interrupt: () => {},
     drainChildren: async () => { drained.value = true; },
     drainDescendants: async () => { drained.value = true; },

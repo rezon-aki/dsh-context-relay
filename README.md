@@ -113,7 +113,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 |---|---|
 | `relay_status` | 读上下文占用 / band / phase / 预算 headroom / 建议。 |
 | `relay_phase` | 声明/切换 phase；校验 exit_criteria、contract_check、warn 档 budget_plan；`ship` 需 `user_gate`。 |
-| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文件索引）→ 官方压缩 → 注入 brief（含「压缩后手动召回」：被遮蔽的附加 AGENTS.md 路径与已加载 skill 名，需要时按提示重读/重载）。每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
+| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文件索引）→ 官方压缩 → 注入 brief（含「压缩后手动召回」：被本次压缩遮蔽的附加 AGENTS.md 路径与已调用过的 skill 名，需要时按提示重读/重载）。每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
 | `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件），创建新 relay 会话并清理旧会话树。 |
 | `relay_recommend` | Lead-only：把模型推荐写入面板（切 phase / 压缩 / 接力 / 人类选择后清空）。 |
 | `doc_lint` | 四项目录/文档体检（quota / banned / index / git），输出 ≤2KB。 |

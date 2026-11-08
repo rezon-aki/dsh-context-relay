@@ -8,7 +8,9 @@
 - 修复：上述释放只提交/统计仍驻留的 activation，已卸载的不再虚报为「已释放」。
 - 新增：**团队优先契约**——已有智能体团队时默认只用队友；Lead 要开子代理（`subagent` / `subagent_fork`）必须先询问用户（协议文本 + `tools/pre-execute` 官方审批硬门；无审批 UI 部署 fail-open）。配置 `teamFirstSubagents`（默认 `'ask'`，`'off'` 关闭）。
 - 改进：压缩 brief 提示词要求「关键文件索引」（了解当前项目所需的重要文件：`path — 作用 — 为何必读`，≤8 条），段序前移防止注入截断；压缩后注入文案新增「接手第一步读索引」；`relay_freshen` 的 `key_docs` 参数同步该口径。
-- 改进：**压缩后手动召回**（`lib/agent/recall.js`）——官方压缩只自动恢复 runtime-context / AGENTS.md 基线 / skill 目录，touch 发现的附加 AGENTS.md 与已加载 skill 指令被遮蔽后注入召回指针（有界、失败降级为空）。
+- 改进：**压缩后手动召回**（`lib/agent/recall.js`）——官方压缩只自动恢复 runtime-context / AGENTS.md 基线 / skill 目录，touch 发现的附加 AGENTS.md 与已调用过的 skill 被遮蔽后注入召回指针（有界、失败降级为空）。
+- 修复：手动召回只列**确实被本次压缩遮蔽**的内容——以最近一次压缩的 `shadowedEnd` 为上界（retained tail 不算遮蔽；PTC 内层 `tool/ptc-dispatch` 事件永不在 surface，避免误报），后又被可见重加载的路径/skill 跳过；措辞改为「已调用过的 skill」。
+- 修复：`relay_handoff` 交接清理的 direct-drain 分支改按 `listChildren` 真实字段（`id`/`mode`，真实 API 没有 `kind`）过滤；旧代码按不存在的 `kind` 过滤导致该分支在真实内核下永远空转（`drainDescendants` 兜底）。
 - 测试：新增 `release` / `team-first` / `recall` 单测；`policy` 断言同步到新 brief 段名；团队优先门覆盖 `subagent_fork`。
 
 ## v0.4.0 (2026-11-07)
