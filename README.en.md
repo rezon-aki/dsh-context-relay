@@ -94,6 +94,9 @@ Optional host plugin config:
 | `injectBrief` | `true` | Whether the brief is injected into the next step after compaction. |
 | `handoffApproval` | `'required'` | Official approval hard gate for compaction/handoff; `'off'` for deployments without an approval UI (risk accepted by the deployment). |
 | `inheritOnHandoff` | `true` | The handoff inherits the old session's model route and permission profile; `false` returns to deployment defaults. |
+| `releaseOnCompress` | `true` | Long mode: after a successful compression, best-effort release the Lead's settled child sessions and retired teammate generations. |
+| `releaseRetiredGeneration` | `true` | After `relay_renew`, best-effort release the retired generation's session. |
+| `teamFirstSubagents` | `'ask'` | Team-first contract gate: when a team exists, the Lead needs human approval to spawn a `subagent`; `'off'` keeps only the protocol text (requires the official approval gate; inactive when `handoffApproval='off'`). |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | The two mode ids. |
 
 Sidebar settings (human-editable, hot-reloaded): threshold basis, default mode, auto-decide, auto-compact, auto-handoff, budget unlimited.
@@ -108,7 +111,7 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`. Mess
 |---|---|
 | `relay_status` | Read context usage / band / phase / budget headroom / advice. |
 | `relay_phase` | Declare or switch phase; validates exit_criteria, contract_check and warn-band budget_plan; `ship` requires `user_gate`. |
-| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and key-doc entry points) → official compaction → inject the brief. At most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`). |
+| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and key-doc entry points) → official compaction → inject the brief (including a "post-compaction manual recall" list: shadowed additional AGENTS.md paths and loaded skill names, with how to re-read/reload them). At most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`). |
 | `relay_handoff` | Produce a ≤8KB handover (including the rolling progress file), create a new relay session and clean up the old session tree. |
 | `relay_recommend` | Lead-only: write the model's recommendation to the panel (cleared on phase switch / compaction / handoff / human choice). |
 | `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output ≤2KB. |

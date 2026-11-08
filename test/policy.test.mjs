@@ -437,9 +437,9 @@ test('DEFAULT_PANEL_STATE / normalizePanelState: 13 字段白名单（v0.3.3 模
 
 test('buildPhaseBrief renders key docs and skips the section when empty', () => {
   const md = buildPhaseBrief({ phase: 'build', goal: 'x', keyDocs: ['docs/SPEC.md'] });
-  assert.match(md, /## 关键文档/);
+  assert.match(md, /## 关键文件索引/);
   assert.match(md, /- docs\/SPEC\.md/);
-  assert.doesNotMatch(buildPhaseBrief({ phase: 'discover' }), /关键文档/);
+  assert.doesNotMatch(buildPhaseBrief({ phase: 'discover' }), /关键文件索引/);
 });
 test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimitedBudget；旧字段忽略）', () => {
   const t = thresholdsFromPercent(40);

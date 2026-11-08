@@ -450,6 +450,11 @@ test('relay_freshen：Lead 拒绝/低 band 拒绝；官方压缩 + brief 注入 
     const lead = makeAgent({ sessionId: LEAD, cwd: dir });
     const teammate = makeAgent({ sessionId: 'session-w1', cwd: dir });
     const low = makeAgent({ sessionId: 'session-w2', cwd: dir });
+    // A+B：历史上被压缩遮蔽的附加 AGENTS.md / 已加载 skill 应进入压缩后注入的手动召回段。
+    teammate.session.snapshotEvents = () => [
+      { seq: 1, type: 'user/message', data: { source: { kind: 'agent-instructions', form: 'instructions', baseline: false, changes: [{ action: 'set', scope: 'pkg', path: 'pkg/AGENTS.md' }] }, content: [] } },
+      { seq: 2, type: 'user/message', data: { source: { kind: 'skill-invocation', form: 'instructions', name: 'code-review' }, content: [] } },
+    ];
     const memberships = new Map([
       [teammate, membership('teammate', 'impl-g1', lead)],
       [low, membership('teammate', 'review-g1', lead)],
@@ -474,16 +479,22 @@ test('relay_freshen：Lead 拒绝/低 band 拒绝；官方压缩 + brief 注入 
     assert.equal(ok.organized, true);
     assert.equal(ok.freedTokens, 1500);
     assert.equal(ok.briefInjected, true);
+    assert.equal(ok.manualRecallInjected, true, '手动召回（A+B）随 brief 注入');
     assert.match(ok.briefPath, new RegExp('team/' + LEAD + '/impl/freshen-'));
     assert.ok(existsSync(ok.briefPath));
     const brief = readFileSync(ok.briefPath, 'utf8');
     assert.match(brief, /Phase Brief · build/);
     assert.match(brief, /决定 A/);
     assert.match(brief, /链式召回/);
+    assert.match(brief, /压缩后手动召回/, 'brief 文件同样保留手动召回段');
+    assert.match(brief, /pkg\/AGENTS\.md/);
+    assert.match(brief, /code-review/);
     assert.equal(engineCalls.length, 1);
     assert.equal(engineCalls[0].trigger, 'context-overflow');
     assert.ok(teammate.injected.length >= 1, '压缩后 brief 注入下一 step');
     assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /队友 freshen/);
+    assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /压缩后手动召回/);
+    assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /pkg\/AGENTS\.md/);
     assert.match(readFileSync(join(dir, '.scratch', 'context-relay', 'chain.ndjson'), 'utf8'), /teammate-freshen/);
     assert.ok(readLedger(dir, 'impl', 20, LEAD).some((entry) => entry.event === 'freshen' && entry.name === 'impl-g1'));
     const second = await freshen.execute({ phase: 'verify', brief: '第二轮' }, { agent: teammate, force: true });

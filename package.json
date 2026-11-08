@@ -30,7 +30,7 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check lib/index.js && node --check lib/agent.js && node --check lib/agent/worker.js && node --check lib/agent/team.js && node --check lib/agent/team-tools.js && node --check lib/policy.js && node --check lib/client.js && node --check lib/handoff-store.js && node --check lib/lint.js && node --check lib/preset-base.js && node --check lib/projection.js && node --check lib/panel-store.js && node --check lib/agent/protocol.js && node --check lib/agent/shared.js && node --check lib/agent/derive.js && node --check lib/agent/panel-gate.js && node --check lib/agent/sentinel.js && node --check lib/agent/tools.js && node --check lib/agent/handoff.js && node --check lib/agent/progress.js && node --check lib/agent/chain.js",
+    "check": "node --check lib/index.js && node --check lib/agent.js && node --check lib/agent/worker.js && node --check lib/agent/team.js && node --check lib/agent/team-tools.js && node --check lib/policy.js && node --check lib/client.js && node --check lib/handoff-store.js && node --check lib/lint.js && node --check lib/preset-base.js && node --check lib/projection.js && node --check lib/panel-store.js && node --check lib/agent/protocol.js && node --check lib/agent/shared.js && node --check lib/agent/derive.js && node --check lib/agent/panel-gate.js && node --check lib/agent/sentinel.js && node --check lib/agent/tools.js && node --check lib/agent/handoff.js && node --check lib/agent/progress.js && node --check lib/agent/chain.js && node --check lib/agent/recall.js && node --check lib/agent/release.js",
     "prepublishOnly": "npm test && npm run check"
   },
   "license": "MIT",

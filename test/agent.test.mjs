@@ -534,10 +534,44 @@ test('relay_organize writes chain index and injects chain recall section (compac
   assert.match(briefText, /压缩与链式召回/, 'brief file and injected text stay in sync');
 });
 
+test('relay_organize injects manual recall pointers for shadowed instructions and skills (A+B)', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const log = [
+    { seq: 1, type: 'user/message', data: { source: { kind: 'agent-instructions', form: 'instructions', baseline: false, changes: [{ action: 'set', scope: 'pkg', path: 'pkg/AGENTS.md' }] }, content: [{ type: 'text', text: '<system-reminder>additional instructions</system-reminder>' }] } },
+    { seq: 2, type: 'user/message', data: { source: { kind: 'skill-invocation', form: 'instructions', name: 'code-review' }, content: [{ type: 'text', text: '<skill_content name="code-review">…' }] } },
+    { seq: 3, type: 'tool/result', data: { message: { role: 'tool', content: [{ type: 'text', text: '<skill_content name="tdd">…' }] } } },
+    { seq: 4, type: 'tool/ptc-dispatch', data: { name: 'skill', isError: false, content: [{ type: 'text', text: '<skill_content name="browser-skill">…' }] } },
+  ];
+  const session = fakeSession({ id: 'session-organize-manual-recall', cwd, seq: log.length, log });
+  const compaction = { async compactIfNeeded() { return { compactionId: 'compact-recall', shadowedTokenCount: 42, shadowedSeqs: [1, 2, 3, 4] }; } };
+  const { services } = fakeServices({ session, compaction });
+  const { tools } = applyAgent(services);
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const result = await tools.get('relay_organize').execute({ phase: 'build', brief: 'decided Z', force: true }, { agent });
+  assert.equal(result.ok, true);
+  assert.equal(result.manualRecallInjected, true);
+  const notice = injected[0].content[0].text;
+  assert.match(notice, /压缩后手动召回/);
+  assert.match(notice, /pkg\/AGENTS\.md/, 'shadowed additional AGENTS.md path is listed');
+  assert.match(notice, /read 重新读取/, 'retrieval hint tells the model how to trigger re-injection');
+  assert.match(notice, /code-review/, 'skill-invocation skill name is listed');
+  assert.match(notice, /tdd/, 'skill tool result skill name is listed');
+  assert.match(notice, /browser-skill/, 'PTC-dispatched skill result name is listed');
+  assert.ok(notice.length <= 4000, 'injected text stays bounded');
+  const briefText = readFileSync(result.briefPath, 'utf8');
+  assert.match(briefText, /压缩后手动召回/, 'brief file keeps the recall section too');
+});
+
 test('long brief truncation keeps the chain recall section (P2-1)', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-long-brief', cwd, seq: 0 });
+  // 让尾部同时带「链式召回 + 手动召回」两段，验证截断只切 brief 正文。
+  session.snapshotEvents = () => [
+    { seq: 1, type: 'user/message', data: { source: { kind: 'agent-instructions', form: 'instructions', baseline: false, changes: [{ action: 'set', scope: 'pkg', path: 'pkg/AGENTS.md' }] }, content: [] } },
+  ];
   const compaction = { async compactIfNeeded() { return { compactionId: 'compact-long', shadowedTokenCount: 5, shadowedSeqs: [10, 20] }; } };
   const { services } = fakeServices({ session, compaction });
   const { tools } = applyAgent(services);
@@ -550,6 +584,8 @@ test('long brief truncation keeps the chain recall section (P2-1)', async () => 
   assert.match(notice, /brief truncated/);
   assert.match(notice, /压缩与链式召回/, 'recall section survives truncation');
   assert.match(notice, /链式索引：\.scratch\/context-relay\/chain\.ndjson/, '召回段保留链式索引入口');
+  assert.match(notice, /压缩后手动召回/, '手动召回段同样不被尾部截断切掉');
+  assert.match(notice, /pkg\/AGENTS\.md/);
   const briefRaw = readFileSync(result.briefPath, 'utf8');
   assert.ok(briefRaw.length > 4000, 'brief file keeps the full text');
   assert.match(briefRaw, /压缩与链式召回/);
@@ -2344,7 +2380,8 @@ test('relay projection drives phase/organizeCount/phaseMeta and skips snapshotEv
   const brief = readFileSync(forced.briefPath, 'utf8');
   assert.match(brief, /投影里的目标/);
   assert.match(brief, /投影里的退出条件/);
-  assert.equal(counts.snapshot, 0, 'organize hot path also avoids snapshotEvents');
+  // organize 的 phase/计数/phaseMeta 仍以投影为准；成功压缩后额外扫一次日志派生「手动召回」清单（稀有路径，非热路径）。
+  assert.equal(counts.snapshot, 1, 'organize success scans the log once for the manual recall list; hot-path derivation still uses the projection');
 });
 
 test('Router P0 度量：relay_status 报执行占比与压缩债务（投影 v3 计数字段）', async () => {
@@ -3733,7 +3770,7 @@ test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语
     parameterChars += JSON.stringify(definition.parameters).length;
   }
   assert.ok(descriptionChars <= 1500, '六条工具描述总字符 <=1500，实际 ' + descriptionChars);
-  assert.ok(parameterChars <= 5100, '参数 schema 总字符 <=5100（v0.3.3 新增 relay_recommend schema），实际 ' + parameterChars);
+  assert.ok(parameterChars <= 5300, '参数 schema 总字符 <=5300（v0.4.1：brief/key_docs 增加压缩后接手契约描述），实际 ' + parameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权规则在协议里完整复述（描述只留指针）
   const protocol = sections[0].text;

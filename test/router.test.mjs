@@ -109,9 +109,10 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /relay_status\.compaction\.debt/);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5300 / ROUTER ≤2000', () => {
-  // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险
-  assert.ok(PROTOCOL_TEXT.length <= 5300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5400 / ROUTER ≤2000', () => {
+  // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
+  // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
+  assert.ok(PROTOCOL_TEXT.length <= 5400, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '模式只决定「做什么」',
@@ -245,7 +246,7 @@ test('classic 行为不变：默认不注入超长任务协议段；root 不裁�
 
 test('v0.3.8 长模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式」，classic 不变且装配按模式选择', () => {
   // 预算与短语：长版本由 classic 派生，仍承载全部硬约束；只去掉长模式不存在的档位。
-  assert.ok(PROTOCOL_TEXT_LONG.length <= 5300, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
+  assert.ok(PROTOCOL_TEXT_LONG.length <= 5400, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
   assert.ok(!PROTOCOL_TEXT_LONG.includes('压缩→新会话'), '长模式协议不得出现已移除档位');
   assert.ok(!PROTOCOL_TEXT_LONG.includes('两段式'), '长模式协议不得出现两段式说明');
   for (const phrase of [
