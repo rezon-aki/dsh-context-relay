@@ -20,6 +20,8 @@ This plugin does not replace the kernel compaction engine and does not delete hi
 | **Bounded handoff** | `relay_handoff` produces a ≤8KB handover and creates a fresh session; the old one stays as an audit record |
 | **Model recommendation** | `relay_recommend` sends the model's recommendation to the composer panel for highlighting — advice only, never auto-executed |
 | **Teammate freshness** | Long-task mode only: checkpoint / true-wipe reset / renew / rehydrate |
+| **Resource reclamation** | Best-effort release of still-resident stale child sessions / retired generations at compaction and renewal (already-released ones are never double-counted) |
+| **Team first** | With a team, the Lead needs human approval to open a subagent (`subagent` / `subagent_fork`) |
 
 ## Install
 
@@ -94,9 +96,9 @@ Optional host plugin config:
 | `injectBrief` | `true` | Whether the brief is injected into the next step after compaction. |
 | `handoffApproval` | `'required'` | Official approval hard gate for compaction/handoff; `'off'` for deployments without an approval UI (risk accepted by the deployment). |
 | `inheritOnHandoff` | `true` | The handoff inherits the old session's model route and permission profile; `false` returns to deployment defaults. |
-| `releaseOnCompress` | `true` | Long mode: after a successful compression, best-effort release the Lead's settled child sessions and retired teammate generations. |
-| `releaseRetiredGeneration` | `true` | After `relay_renew`, best-effort release the retired generation's session. |
-| `teamFirstSubagents` | `'ask'` | Team-first contract gate: when a team exists, the Lead needs human approval to spawn a `subagent`; `'off'` keeps only the protocol text (requires the official approval gate; inactive when `handoffApproval='off'`). |
+| `releaseOnCompress` | `true` | Long mode: after a successful compression, best-effort release the Lead's **still-resident** settled child sessions and retired teammate generations (the kernel auto-releases at natural settlement, so this is usually empty). |
+| `releaseRetiredGeneration` | `true` | After `relay_renew`, best-effort release the retired generation's still-resident session. |
+| `teamFirstSubagents` | `'ask'` | Team-first contract gate: when a team exists, the Lead needs human approval to open a subagent (`subagent` / `subagent_fork`); `'off'` keeps only the protocol text. Fails open (protocol text only) when the deployment has no approval service; inactive when `handoffApproval='off'` because the whole approval gate is not installed. |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | The two mode ids. |
 
 Sidebar settings (human-editable, hot-reloaded): threshold basis, default mode, auto-decide, auto-compact, auto-handoff, budget unlimited.
@@ -111,7 +113,7 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`. Mess
 |---|---|
 | `relay_status` | Read context usage / band / phase / budget headroom / advice. |
 | `relay_phase` | Declare or switch phase; validates exit_criteria, contract_check and warn-band budget_plan; `ship` requires `user_gate`. |
-| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and key-doc entry points) → official compaction → inject the brief (including a "post-compaction manual recall" list: shadowed additional AGENTS.md paths and loaded skill names, with how to re-read/reload them). At most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`). |
+| `relay_organize` | Controlled compaction: write the phase brief (with automatic doc_lint evidence and the key-file index) → official compaction → inject the brief (including a "post-compaction manual recall" list: shadowed additional AGENTS.md paths and loaded skill names, with how to re-read/reload them). At most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode the second compaction needs an explicit human request (`force`). |
 | `relay_handoff` | Produce a ≤8KB handover (including the rolling progress file), create a new relay session and clean up the old session tree. |
 | `relay_recommend` | Lead-only: write the model's recommendation to the panel (cleared on phase switch / compaction / handoff / human choice). |
 | `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output ≤2KB. |
@@ -123,9 +125,10 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 ## Safety boundaries and costs
 
 - **Approval hard gate**: `relay_organize` / `relay_handoff` go through the official approval gate by default (fail-closed; only `allowed-once` passes). Exemptions come **only** from panel `autoCompress` / `autoHandoff` / `authorizeNext`; the panel mode (persistent, not consumed) decides *what* to do and never grants an exemption.
+- **Team-first approval**: with a team, the Lead opening a subagent (`subagent` / `subagent_fork`) goes through an additional official approval by default (`teamFirstSubagents='ask'`); `'off'` or a deployment without an approval service degrades to protocol text only.
 - **A handoff creates a new session and consumes quota**: it interrupts running teammates/subagents of the old session tree, cancels their background jobs and migrates scheduled jobs; the old session is marked `handedOff` as an audit record.
 - **Compaction is lossy**: old conversation detail survives only in the structured brief. Put important conclusions in docs/handoffs.
-- **No autonomous loop**: relay stays human-gated. Use the official Ralph / workflow / subagent for repetitive off-screen work.
+- **No autonomous loop**: relay stays human-gated. Use the official Ralph / workflow / subagent for repetitive off-screen work (with a team, opening a subagent needs approval first).
 - **P0 rule**: irreversible / external / paid / credential / delete actions are reported first and require an explicit human Go. The plugin never auto-approves them.
 
 ## Known limitations
@@ -138,6 +141,8 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - A second compaction risks summary drift: at most once per session by default; when the human sets the panel mode to "compact and continue", a second compaction runs as the human chose (approval still applies); without a panel mode it needs an explicit human request (`force`).
 - If writing `panel.json` fails, panel state lives in memory only (lost on restart); settings writes are persist-first.
 - Composer chip / popover / sidebar card text is Chinese-only; Chinese docs are the source of truth.
+- Resource reclamation is best-effort: the kernel auto-releases at natural settlement, so a compaction usually has nothing left to reclaim (no memory-benefit promise). Only rare cases such as a still-resident generation at renewal actually free anything.
+- The team-first hard gate matches the exact tool names `subagent` / `subagent_fork`; other custom delegation tools are out of scope.
 
 ## Development
 

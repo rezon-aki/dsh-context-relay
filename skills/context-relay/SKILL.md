@@ -42,7 +42,7 @@ disable-model-invocation: true
 
 ## composer 面板（输入框下方「接力」chip）
 
-- **团队保鲜（v0.3.2）**：超长任务里固定 2–4 人小队、按角色名建（worker-1…），任务优先 `send_message` 给现有队友；只在新专长/无人可用时 spawn。**有团队时默认只用队友；要开子代理（subagent）必须先问用户**（团队优先契约）。**spawn 与 renew 都永久占成员额度**（部署上限，常见 8/16），满额后无法 spawn/renew——renew 报 `member-limit` 时不要重试：让队友先 `relay_checkpoint` 再 `relay_freshen`（同代 ≤2 次）继续复用，或在 phase 边界 `relay_handoff`（团队重启）后 `relay_rehydrate` 按记录重建小队；队友只在 organize/relay escalation（warn 只本地提示）。**旧任务结束、旧上下文不要时：`relay_checkpoint` → `relay_freshen({reset:true, brief:"新任务…"})` → 派新任务**——reset 是**真清空**（下一次 pre-step 后模型只剩系统提示 + brief；同成员/同会话/不占成员额度/不计 freshen 次数；失败自动回退官方压缩）。`relay_renew` 只用于换身份/角色（永久占额）。
+- **团队保鲜（v0.3.2）**：超长任务里固定 2–4 人小队、按角色名建（worker-1…），任务优先 `send_message` 给现有队友；只在新专长/无人可用时 spawn。**有团队时默认只用队友；要开子代理（`subagent` / `subagent_fork`）必须先问用户**（团队优先契约）。**spawn 与 renew 都永久占成员额度**（部署上限，常见 8/16），满额后无法 spawn/renew——renew 报 `member-limit` 时不要重试：让队友先 `relay_checkpoint` 再 `relay_freshen`（同代 ≤2 次）继续复用，或在 phase 边界 `relay_handoff`（团队重启）后 `relay_rehydrate` 按记录重建小队；队友只在 organize/relay escalation（warn 只本地提示）。**旧任务结束、旧上下文不要时：`relay_checkpoint` → `relay_freshen({reset:true, brief:"新任务…"})` → 派新任务**——reset 是**真清空**（下一次 pre-step 后模型只剩系统提示 + brief；同成员/同会话/不占成员额度/不计 freshen 次数；失败自动回退官方压缩）。`relay_renew` 只用于换身份/角色（永久占额）。
 - **渲染与档位（v0.3.1）**：接力 chip 只在 relay 会话渲染（非 relay 会话整块不出现）；模式在 popover 里是车钟表盘——classic 6 档、Relay · 超长任务只有 3 个操作档（继续 / 压缩继续 / 接力新会话；表盘另含「问我」，接力=团队重启）——v0.3.4 起移除「压缩→新会话」，且不显示「自动（模型决定）」；长模式存量档视觉按「继续」显示、由 host 按继续语义归一（cth 归一后清空），新长会话默认「继续」。
 - **模型推荐行（v0.3.3）**：Lead 用 `relay_recommend` 提交后，popover 状态行下多一行「模型推荐 · 操作 · 理由 · HH:MM」，表盘同操作档位加冷青虚线「荐」、chip title 追加「· 模型推荐 X」；长模式收到「压缩→新会话」推荐整条忽略（无行/无高亮，v0.3.4）；推荐文案用面板档位长 label（压缩继续/接力新会话），reason 存储 ≤120、展示/提醒 ≤60；旧宿主缺字段不渲染。**推荐≠决定、不产生授权**。
 

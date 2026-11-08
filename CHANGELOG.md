@@ -1,14 +1,15 @@
 # Changelog
 
-## 未发布（2026-11-08）
-
-- 新增：**压缩时点资源释放**——长模式 `relay_organize` 成功后 best-effort 释放当前 Lead 名下已 settled 子会话与 roster 中已退休队友代；`relay_renew` 换代后释放旧代 session（回收 10–40MB decoded/代）。配置 `releaseOnCompress` / `releaseRetiredGeneration`（默认开）。
-- 新增：**团队优先契约**——已有智能体团队时默认只用队友；Lead 要开 `subagent` 必须先询问用户（协议文本 + `tools/pre-execute` 官方审批硬门；无审批 UI 部署 fail-open）。配置 `teamFirstSubagents`（默认 `'ask'`，`'off'` 关闭）。
-- 改进：压缩 brief 提示词要求「关键文件索引」（了解当前项目所需的重要文件：`path — 作用 — 为何必读`，≤8 条），段序前移防止注入截断；压缩后注入文案新增「接手第一步读索引」。
-- 改进：**压缩后手动召回**（`lib/agent/recall.js`）——官方压缩只自动恢复 runtime-context / AGENTS.md 基线 / skill 目录，touch 发现的附加 AGENTS.md 与已加载 skill 指令被遮蔽后注入召回指针（有界、失败降级为空）。
-- 测试：新增 `release` / `team-first` / `recall` 单测；`policy` 断言同步到新 brief 段名。
-
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
+
+## v0.4.1 (2026-11-08)
+
+- 新增：**压缩/换代时点资源释放**——长模式 `relay_organize` 后与 `relay_renew` 后，best-effort 释放**仍驻留**的旧子会话 / 旧代 activation；内核在子会话自然结算时已自动释放，通常无可回收（不承诺内存收益）。配置 `releaseOnCompress` / `releaseRetiredGeneration`（默认开）。
+- 修复：上述释放只提交/统计仍驻留的 activation，已卸载的不再虚报为「已释放」。
+- 新增：**团队优先契约**——已有智能体团队时默认只用队友；Lead 要开子代理（`subagent` / `subagent_fork`）必须先询问用户（协议文本 + `tools/pre-execute` 官方审批硬门；无审批 UI 部署 fail-open）。配置 `teamFirstSubagents`（默认 `'ask'`，`'off'` 关闭）。
+- 改进：压缩 brief 提示词要求「关键文件索引」（了解当前项目所需的重要文件：`path — 作用 — 为何必读`，≤8 条），段序前移防止注入截断；压缩后注入文案新增「接手第一步读索引」；`relay_freshen` 的 `key_docs` 参数同步该口径。
+- 改进：**压缩后手动召回**（`lib/agent/recall.js`）——官方压缩只自动恢复 runtime-context / AGENTS.md 基线 / skill 目录，touch 发现的附加 AGENTS.md 与已加载 skill 指令被遮蔽后注入召回指针（有界、失败降级为空）。
+- 测试：新增 `release` / `team-first` / `recall` 单测；`policy` 断言同步到新 brief 段名；团队优先门覆盖 `subagent_fork`。
 
 ## v0.4.0 (2026-11-07)
 

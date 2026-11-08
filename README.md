@@ -20,6 +20,8 @@ Lead agent 的上下文一旦变长，就会开始偏离实现、重复劳动、
 | **有界接力** | `relay_handoff` 生成 ≤8KB 交接单并创建新会话，旧会话保留审计 |
 | **模型推荐** | `relay_recommend` 把推荐写给面板高亮；只展示，不自动执行 |
 | **队友保鲜** | 仅超长任务：checkpoint / reset 真清空 / renew 换身份 / rehydrate 重建 |
+| **资源回收** | 压缩/换代时 best-effort 释放仍驻留的旧子会话与旧代（内核已自动释放的不重复计算） |
+| **团队优先** | 已有团队时 Lead 开子代理（`subagent` / `subagent_fork`）默认需人类确认 |
 
 ## 安装
 
@@ -94,9 +96,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `injectBrief` | `true` | 压缩成功后是否把 brief 注入下一 step。 |
 | `handoffApproval` | `'required'` | 压缩/接力官方审批硬门；无审批 UI 的部署可设 `'off'`（风险由部署方承担）。 |
 | `inheritOnHandoff` | `true` | 接力继承旧会话模型路由与权限档；`false` 回部署默认。 |
-| `releaseOnCompress` | `true` | 长模式压缩成功后，best-effort 释放当前 Lead 名下已 settled 子会话与已退休队友代。 |
-| `releaseRetiredGeneration` | `true` | `relay_renew` 换代后 best-effort 释放旧代队友 session。 |
-| `teamFirstSubagents` | `'ask'` | 团队优先契约硬门：已有团队时 Lead 开 `subagent` 需人类确认；`'off'` 只保留协议文本（依赖官方审批；`handoffApproval='off'` 时不生效）。 |
+| `releaseOnCompress` | `true` | 长模式压缩成功后，best-effort 释放当前 Lead 名下**仍驻留**的已 settled 子会话与已退休队友代（内核自然结算时已自动卸载，通常无可释放）。 |
+| `releaseRetiredGeneration` | `true` | `relay_renew` 换代后 best-effort 释放仍驻留的旧代队友 session。 |
+| `teamFirstSubagents` | `'ask'` | 团队优先契约硬门：已有团队时 Lead 开子代理（`subagent` / `subagent_fork`）需人类确认；`'off'` 只保留协议文本。部署无审批服务时 fail-open（只留协议文本）；`handoffApproval='off'` 时整道审批门不安装、本项不生效。 |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | 两个模式 id。 |
 
 侧栏设置（人类可改，热生效）：阈值基准 + 默认模式 / 自动决定 / 自动压缩 / 自动交接 / 预算无上限。
@@ -111,7 +113,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 |---|---|
 | `relay_status` | 读上下文占用 / band / phase / 预算 headroom / 建议。 |
 | `relay_phase` | 声明/切换 phase；校验 exit_criteria、contract_check、warn 档 budget_plan；`ship` 需 `user_gate`。 |
-| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文档入口）→ 官方压缩 → 注入 brief（含「压缩后手动召回」：被遮蔽的附加 AGENTS.md 路径与已加载 skill 名，需要时按提示重读/重载）。每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
+| `relay_organize` | 受控压缩：写 phase brief（自动附 doc_lint 结论与关键文件索引）→ 官方压缩 → 注入 brief（含「压缩后手动召回」：被遮蔽的附加 AGENTS.md 路径与已加载 skill 名，需要时按提示重读/重载）。每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
 | `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件），创建新 relay 会话并清理旧会话树。 |
 | `relay_recommend` | Lead-only：把模型推荐写入面板（切 phase / 压缩 / 接力 / 人类选择后清空）。 |
 | `doc_lint` | 四项目录/文档体检（quota / banned / index / git），输出 ≤2KB。 |
@@ -123,9 +125,10 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 ## 安全边界与代价
 
 - **审批硬门**：`relay_organize` / `relay_handoff` 默认过官方审批（fail-closed，仅 allowed-once 放行）。免审**只**来自面板 `autoCompress` / `autoHandoff` / `authorizeNext`；面板模式（持久、不消费）只决定「做什么」，不产生豁免。
+- **团队优先审批**：已有团队时，Lead 开子代理（`subagent` / `subagent_fork`）默认再走一道官方审批（`teamFirstSubagents='ask'`）；`'off'` 或部署没有审批服务时退化为协议文本。
 - **接力会创建新会话并消耗额度**：会中断旧会话树中运行中的队友/子智能体、取消其后台任务、迁移定时任务；旧会话标记 `handedOff` 作为审计。
 - **压缩有损**：旧对话细节只保留结构化 brief；重要结论请写进文档/handoff。
-- **不自动循环**：relay 保持 human-gated；重复性整块劳动请用官方 Ralph / workflow / subagent。
+- **不自动循环**：relay 保持 human-gated；重复性整块劳动请用官方 Ralph / workflow / subagent（有团队时开子代理需先确认）。
 - **P0 规则**：不可逆/对外/付费/凭据/删除动作先报备并取得明确 Go，本插件不会替你自动批准。
 
 ## 已知限制
@@ -138,6 +141,8 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 - 第二次压缩有摘要漂移风险：每会话默认最多一次；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。
 - 面板写盘失败时状态只存内存（重启即丢）；settings 写盘是持久化优先。
 - composer chip / popover / 侧栏卡片文案仅中文；文档以中文为真源。
+- 资源回收是 best-effort：内核在子会话自然结算时会自动释放，压缩时点通常已无残留可回收（不承诺内存收益）；只有 renew 时旧代仍驻留等少数情况会真正释放。
+- 团队优先硬门按工具名精确匹配 `subagent` / `subagent_fork`；其它自定义 delegation 工具不在覆盖内。
 
 ## 开发
 
