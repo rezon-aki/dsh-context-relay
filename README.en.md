@@ -48,7 +48,8 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - In the very-long-task mode the Lead only splits, dispatches and verifies work while teammates build, spreading context pressure across two layers;
 - A teammate whose context is dirty can be wiped in place (a true reset) or replaced under a new identity, while the work record is kept;
 - When the Lead itself crosses the line, it hands over to a new session: running teammates and background jobs of the old session tree are interrupted, and the new session rebuilds the team and its work memory from the handover and progress documents (it does not take over the old team in place);
-- Both layers stay in their efficient range for a long time, raising the ceiling of long tasks.
+- Both layers stay in their efficient range for a long time, raising the ceiling of long tasks;
+- The Lead does not spin waiting for teammates after dispatching: their reports arrive as messages, so it only waits once when genuinely blocked and keeps working otherwise (saves tokens).
 
 ## Which mode to pick
 
@@ -102,6 +103,7 @@ After installing, restart/reload the profile, refresh the page and create a new 
 
 - Two extra options in the mode picker: **Relay** and **Relay · very long tasks**.
 - A **status bar** above the composer (relay sessions only): how much context is used, whether a line was reached, which mode is active; click it to open the panel.
+- Once work items are recorded, a **ledger chip** appears next to it: `ledger 3/8` = open items / total (an amber dot for in-progress, a red dot for blocked); click it to open the full **work ledger panel**.
 - In the panel you can:
   - choose what happens at the line — continue / compact and continue / hand off to a new session / compact then new session (classic mode) / let the model decide; the choice persists for the session and the next handoff session inherits it;
   - give auto-authorisations for compact, hand off, or just the next operation (no approval prompt while enabled);
@@ -125,6 +127,19 @@ The relay panel: default-mode dial, auto-authorisations, next-session mode, and 
 4. For manual control just say so, e.g. compact now, hand off to a new session, or ask me this time.
 5. If you ignore a line notice, nothing bad happens — keep giving instructions; it will not compact or hand off on its own.
 
+## Multi-branch work: the work ledger
+
+When one task opens many branches (several research threads, modules, or teammates each owning a piece), phase + a single handover page can silently drop items. The work ledger records each branch as a work item:
+
+- **Fields**: id (short slug), one-line title, status (open / doing / blocked / done), owner, next action, blocked reason, evidence, acceptance criterion, dependencies, phase;
+- **Storage**: `.scratch/context-relay/work-items.json` (workspace-level; survives phases, compaction and handoffs); the agent maintains it with the `relay_work_items` tool;
+- **Reconciliation**: at handoff, open items automatically become the new session's next actions (up to 8; the rest are listed by id in the handover); compaction briefs automatically include an open-items section; a phase switch reports leftovers from the previous phase; entering the delivery phase requires every item to be done or blocked by default (done items need evidence);
+- **Panel**: the `ledger 3/8` chip above the composer opens a read-only panel grouped by status, with owner, next action, evidence, acceptance criterion and dependencies; editing always goes through the agent tool (validation and concurrency safety);
+- **Team**: teammates may only update items they own; the Lead manages all; on teammate renewal ownership migrates to the new generation name;
+- **Prompting**: a short ledger discipline ships in the agent's standing prompt (when to use it, when to update, field rules, and that handoff/compaction carry open items automatically), so the agent knows what to record and when.
+
+Without a ledger file nothing changes — it is optional.
+
 ## Configuration
 
 Optional host plugin config (advanced):
@@ -135,6 +150,10 @@ Optional host plugin config (advanced):
 | `settings` | six-field defaults | Initial sidebar defaults; values you save in the UI win. |
 | `thresholds` | 0.35 / 0.40 / 0.50 | Legacy thresholds, used only when no UI settings exist. |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Overrides for the panel/settings file paths. |
+| `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
+| `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
+| `workItemsPath` | `.scratch/context-relay/work-items.json` | Override for the ledger file path (relative paths resolve against the workspace). |
+| `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
 | `handoffApproval` | `'required'` | Compaction/handoff must pass the official approval; deployments without an approval UI may set `'off'` (risk accepted by the deployment). |
 | `inheritOnHandoff` | `true` | The next session inherits the old model route and permission profile; `false` returns to deployment defaults. |
@@ -156,13 +175,14 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 | `relay_status` | Read current context usage, line state, phase, budget headroom and advice. |
 | `relay_phase` | Declare or switch phase; validates entry conditions and the self-check; delivery requires an independent review and a report. |
 | `relay_organize` | Write the handover page (with automatic documentation check and key-file index) → official compaction → inject the page back (with a re-read-when-needed reminder). At most once per session by default; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode the second one needs an explicit human request (`force`). |
-| `relay_handoff` | Produce a handover of at most 8KB (including the rolling progress file), create a new relay session and clean up the old session tree. |
+| `relay_handoff` | Produce a handover of at most 8KB (including the rolling progress file and the work ledger), create a new relay session and clean up the old session tree. |
+| `relay_work_items` | Read or maintain the work ledger: no args = read; Lead replaces the whole list (optional `rev` optimistic lock); teammates use `updates` to patch status/next/evidence/blocked on items they own. |
 | `relay_recommend` | Lead only: write the model advice into the panel (cleared on phase switch, compaction, handoff or human choice). |
 | `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output at most 2KB. |
 
 **Relay · very long tasks** adds team tools: `relay_team_status`, `relay_renew`, `relay_rehydrate` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates).
 
-HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/api` (handoff publication box).
+HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/api` (handoff publication box), `GET /context-relay/work-items?sessionId=` (work ledger for the panel poller).
 
 ## Safety boundaries and costs
 
@@ -183,6 +203,7 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - A session compacts once by default to avoid summary drift; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode it needs an explicit human request (`force`).
 - If writing the panel state fails it lives in memory only (lost on restart); settings writes are persist-first.
 - UI text is Chinese-only; the Chinese docs are the source of truth.
+- The work ledger is **shared per workspace**: several relay sessions in the same workspace see the same ledger (the `rev` optimistic lock prevents silent overwrites); the panel is read-only and edits go through the agent tool; the default cap is 30 items and an overflow write is refused (no automatic deletion of done items).
 - Resource reclamation is a fallback: the kernel usually auto-releases at natural settlement, so a compaction usually has nothing left (no memory-saving promise); only rare cases such as a still-resident old identity at renewal actually free anything.
 - The team-first hard gate matches the exact tool names `subagent` / `subagent_fork`; other custom delegation tools are out of scope.
 

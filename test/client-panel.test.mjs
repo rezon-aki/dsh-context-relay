@@ -8,6 +8,7 @@ import { runInNewContext } from 'node:vm';
 // 覆盖：B-P2-13 会话切换重置 popover、B-P2-15 授权文案权威句、B-P2-10 persisted:false 提示、
 // P3 live stale/缺失时渲染中性降级 chip（不显示旧值）、多 handoff 逐条消费（配合 client-notice 的 dock 提示）。
 // v0.2.14：popover「下一个接力新会话」二态滑动开关（role=switch / aria-checked / 显式 preset 写入 / 动效 CSS 契约）。
+// v0.5.0：工作台账（RelayWorkLedger 胶囊/分组折叠/隐藏条件 + RelayPanel 底部入口行 + dock slot 注册）。
 const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 
 const sameDeps = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
@@ -111,7 +112,7 @@ function createEnv() {
   const add = (store) => (name, fn) => { const set = store.get(name) ?? new Set(); set.add(fn); store.set(name, set); };
   const remove = (store) => (name, fn) => { store.get(name)?.delete(fn); };
   const calls = [];
-  const server = { panel: {}, settings: { ...SETTINGS_DEFAULT }, handoffs: [], panelPutResponse: null, settingsPutResponse: null, deferPanelGet: false, pendingPanelGets: [] };
+  const server = { panel: {}, settings: { ...SETTINGS_DEFAULT }, handoffs: [], panelPutResponse: null, settingsPutResponse: null, deferPanelGet: false, pendingPanelGets: [], workItems: null, workItemsPayload: null };
   const respond = (data) => Promise.resolve({ status: 200, json: () => Promise.resolve(data) });
   const fakeFetch = (url, options = {}) => {
     const method = options?.method ?? 'GET';
@@ -141,6 +142,12 @@ function createEnv() {
       // 可挂起 GET：验证「慢 GET 不回滚刚点状态」需要控制回包时机。
       if (server.deferPanelGet === true) return new Promise((resolve) => { server.pendingPanelGets.push({ resolve, payload }); });
       return respond(payload);
+    }
+    // v0.5.0 工作台账只读路由：默认 relay+enabled+workItems；测试可整体覆盖 payload（非 relay/禁用/空）。
+    if (url.startsWith('/context-relay/work-items?')) {
+      const sessionId = decodeURIComponent(url.slice(url.indexOf('sessionId=') + 'sessionId='.length));
+      if (server.workItemsPayload !== null) return respond({ ...server.workItemsPayload, sessionId });
+      return respond({ ok: true, sessionId, relay: true, enabled: true, path: '.scratch/context-relay/work-items.json', corrupt: false, workItems: server.workItems });
     }
     return respond({ ok: false });
   };
@@ -177,18 +184,29 @@ function createEnv() {
   runInNewContext(source, sandbox);
   const client = captured.exports;
   const slots = {};
+  const registrations = [];
   client.apply({
-    slots: { inject: (_name, fn) => fn(), register: (definition, component) => { slots[definition.name] = component; } },
+    slots: {
+      inject: (_name, fn) => fn(),
+      // v0.5.0：conversation.composer.dock 现在有 relay-panel + relay-ledger 两个组件 →
+      // 按注册顺序保留首个到 name 键（既有测试继续拿到 RelayPanel），并额外按 id 暴露。
+      register: (definition, component) => {
+        registrations.push({ definition, component });
+        if (slots[definition.name] === undefined) slots[definition.name] = component;
+        if (typeof definition.id === 'string' && definition.id !== '') slots[definition.id] = component;
+      },
+    },
     sessions: { refresh: () => Promise.resolve() },
     uiWorkspace: { openSession: () => {} },
     effect: (fn) => { fn(); return () => {}; },
   });
   const pollAll = () => { for (const fn of [...timers.values()]) fn(); };
+  const emit = (name, event) => { for (const fn of listeners.document.get(name) ?? []) fn(event); };
   const resolvePendingPanelGets = (payload) => {
     const pending = server.pendingPanelGets.splice(0);
     for (const item of pending) item.resolve({ status: 200, json: () => Promise.resolve(payload ?? item.payload) });
   };
-  return { slots, server, calls, mount: runtime.mount, pollAll, resolvePendingPanelGets };
+  return { slots, registrations, server, calls, mount: runtime.mount, pollAll, emit, resolvePendingPanelGets };
 }
 
 /** 递归找节点（fake React 树：{type, props, children}）。 */
@@ -1610,4 +1628,166 @@ test('CSS：模型推荐契约（推荐行 + 冷青虚线「荐」高亮 + 微�
   assert.ok(source.includes('.relay-v3-order-recommend-tag{') && source.includes('border:1px dashed rgba(127,230,255,.75)'), '「荐」标记 = 冷青虚线小牌');
   assert.ok(source.includes('@keyframes relay-v3-recommend-glow{'), '微光呼吸关键帧');
   assert.ok(source.includes('@media (prefers-reduced-motion: reduce){.relay-v3-rec-tag{animation:none}}'), 'reduced-motion 关推荐微光动画');
+});
+
+// ── v0.5.0：工作台账（composer dock 胶囊 + portal 面板 + RelayPanel 底部入口行）────────
+const ledgerItems = () => [
+  { id: 'api-export', title: '导出 API', status: 'doing', owner: 'worker-1', next: '写完 handler', evidence: ['lib/index.js:120'], acceptance: '单测全绿', depends: ['schema'] },
+  { id: 'gate', title: '闸门接入', status: 'blocked', owner: 'worker-2', blocked: '等 T1 落盘', next: '等依赖' },
+  { id: 'docs', title: '补文档', status: 'open', next: '补 README' },
+  { id: 'schema', title: '定义 schema', status: 'done', next: '', evidence: ['lib/schema.js:1'] },
+];
+const LEDGER_COUNTS = Object.freeze({ total: 4, open: 1, doing: 1, blocked: 1, done: 1, pending: 3 });
+const ledgerPayload = (overrides = {}) => ({
+  rev: 3,
+  updatedAt: '2026-11-10T13:00:00.000Z',
+  counts: { ...LEDGER_COUNTS },
+  items: ledgerItems(),
+  ...overrides,
+});
+
+test('RelayWorkLedger：隐藏条件（非 relay / 禁用 / 无台账文件）；胶囊文案「台账 pending/total」与状态点色', async () => {
+  const env = createEnv();
+  const Ledger = env.slots['relay-ledger'];
+  assert.ok(Ledger, 'apply 注册 relay-ledger 组件');
+  const instance = env.mount(Ledger, { sessionId: 'A' });
+  await instance.flush();
+  assert.equal(instance.tree, null, '无台账文件（workItems:null）不占位');
+  // 非 relay 会话不占位
+  env.server.workItemsPayload = { ok: true, relay: false, enabled: true, path: '.scratch/context-relay/work-items.json', corrupt: false, workItems: ledgerPayload() };
+  env.pollAll();
+  await instance.flush();
+  assert.equal(instance.tree, null, '非 relay 会话不占位');
+  // workItems:false 不占位
+  env.server.workItemsPayload = { ok: true, relay: true, enabled: false, path: '.scratch/context-relay/work-items.json', corrupt: false, workItems: ledgerPayload() };
+  env.pollAll();
+  await instance.flush();
+  assert.equal(instance.tree, null, '启用关闭不占位');
+  // relay + 有台账 → 胶囊
+  env.server.workItemsPayload = null;
+  env.server.workItems = ledgerPayload();
+  env.pollAll();
+  await instance.flush();
+  const chipNow = () => byClass(instance.tree, 'relay-v3-chip')[0];
+  assert.ok(chipNow(), 'relay + 有台账 → 渲染胶囊');
+  assert.match(String(chipNow().props.className), /relay-v3-ripple/);
+  assert.match(textOf(chipNow()), /台账 3\/4/);
+  const dotNow = () => byClass(chipNow(), 'relay-ledger-chip-dot')[0];
+  assert.match(String(dotNow().props.style.background), /#d1242f/, '有 blocked → 红点');
+  // 只有 doing → 琥珀点
+  env.server.workItems = ledgerPayload({ counts: { total: 4, open: 1, doing: 1, blocked: 0, done: 2, pending: 2 } });
+  env.pollAll();
+  await instance.flush();
+  assert.match(String(dotNow().props.style.background), /#d4a017/, '只有 doing → 琥珀点');
+  // 没有 blocked/doing → 绿点
+  env.server.workItems = ledgerPayload({ counts: { total: 4, open: 1, doing: 0, blocked: 0, done: 3, pending: 1 } });
+  env.pollAll();
+  await instance.flush();
+  assert.match(String(dotNow().props.style.background), /#2da44e/, '否则绿点');
+  // 请求失败（ok:false）不清空上次成功数据
+  env.server.workItemsPayload = { ok: false };
+  env.pollAll();
+  await instance.flush();
+  assert.ok(chipNow(), '路由失败时保留上次成功数据（面板不闪没）');
+});
+
+test('RelayWorkLedger：点击胶囊打开 portal 面板（头部/分组顺序/条目字段/done 折叠可展开/点外+Escape 关闭）', async () => {
+  const env = createEnv();
+  env.server.workItems = ledgerPayload();
+  const Ledger = env.slots['relay-ledger'];
+  const instance = env.mount(Ledger, { sessionId: 'A' });
+  await instance.flush();
+  const chipNow = () => byClass(instance.tree, 'relay-v3-chip')[0];
+  const panelNow = () => byClass(instance.tree, 'relay-v3-popover')[0];
+  chipNow().props.onClick();
+  await instance.flush();
+  assert.ok(panelNow(), '点击胶囊打开面板');
+  assert.match(String(panelNow().props.className), /relay-ledger-panel/);
+  assert.equal(panelNow().props.style.width, 'min(380px, calc(100vw - 24px))', '窄屏宽度契约');
+  assert.equal(panelNow().props.style.maxHeight, '60vh', 'max-height 60vh 滚动');
+  assert.match(textOf(panelNow()), /工作台账 · 未闭合 3 \/ 共 4 · rev 3/);
+  // 分组顺序 doing → blocked → open → done（done 默认折叠，标题带计数）
+  const groupTitles = byClass(instance.tree, 'relay-ledger-group-title').map((node) => JSON.stringify(node.children));
+  assert.equal(groupTitles.length, 4, '四个分组');
+  assert.match(groupTitles[0], /进行中 1/);
+  assert.match(groupTitles[1], /阻塞 1/);
+  assert.match(groupTitles[2], /待办 1/);
+  assert.match(groupTitles[3], /已完成 1/);
+  // 条目字段：状态点 + title + owner 徽标 + → next + 📎 evidence + 完成标准 + 依赖 + id
+  const text = textOf(panelNow());
+  assert.match(text, /导出 API/);
+  assert.match(text, /worker-1/);
+  assert.match(text, /→ 写完 handler/);
+  assert.match(text, /📎 lib\/index\.js:120/);
+  assert.match(text, /完成标准：单测全绿/);
+  assert.match(text, /依赖：schema/);
+  assert.match(text, /#api-export/);
+  assert.match(text, /阻塞：等 T1 落盘/);
+  assert.equal(text.includes('定义 schema'), false, 'done 分组默认折叠');
+  byClass(instance.tree, 'relay-ledger-group-toggle')[0].props.onClick();
+  await instance.flush();
+  assert.match(textOf(panelNow()), /定义 schema/, '点击标题展开 done 分组');
+  // Escape 关闭
+  env.emit('keydown', { key: 'Escape' });
+  await instance.flush();
+  assert.equal(byClass(instance.tree, 'relay-v3-popover').length, 0, 'Escape 关闭面板');
+  assert.equal(chipNow().props['aria-expanded'], false);
+  // 再开 → 点面板外关闭
+  chipNow().props.onClick();
+  await instance.flush();
+  assert.ok(panelNow());
+  env.emit('pointerdown', { target: {} });
+  await instance.flush();
+  assert.equal(byClass(instance.tree, 'relay-v3-popover').length, 0, '点面板外关闭');
+});
+
+test('RelayWorkLedger：空台账（文件存在、items 为空）仍出胶囊并渲染空态/底部只读提示', async () => {
+  const env = createEnv();
+  env.server.workItems = { rev: 0, updatedAt: null, counts: { total: 0, open: 0, doing: 0, blocked: 0, done: 0, pending: 0 }, items: [] };
+  const Ledger = env.slots['relay-ledger'];
+  const instance = env.mount(Ledger, { sessionId: 'A' });
+  await instance.flush();
+  assert.match(textOf(instance.tree), /台账 0\/0/);
+  byClass(instance.tree, 'relay-v3-chip')[0].props.onClick();
+  await instance.flush();
+  const text = textOf(byClass(instance.tree, 'relay-v3-popover')[0]);
+  assert.match(text, /暂无工作项（agent 用 relay_work_items 维护）/);
+  assert.match(text, /由 agent 维护 · 每 4s 刷新/);
+});
+
+test('RelayPanel：底部「工作台账」入口行显示 ledgerUi 快照计数；点击打开台账面板并收起本弹层', async () => {
+  const env = createEnv();
+  env.server.workItems = ledgerPayload();
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  const Ledger = env.slots['relay-ledger'];
+  const ledger = env.mount(Ledger, { sessionId: 'A' });
+  await ledger.flush();
+  const RelayPanel = env.slots['conversation.composer.dock'];
+  const panel = env.mount(RelayPanel, { sessionId: 'A' });
+  await panel.flush();
+  assert.ok(await openPopover(panel));
+  const entry = byClass(panel.tree, 'relay-ledger-entry')[0];
+  assert.ok(entry, 'popover 底部有工作台账入口行');
+  assert.match(textOf(entry), /工作台账 · 未闭合 3 \/ 共 4/);
+  entry.props.onClick();
+  await panel.flush();
+  await ledger.flush();
+  assert.equal(byClass(panel.tree, 'relay-v3-chip')[0].props['aria-expanded'], false, '点击入口行收起接力弹层');
+  assert.equal(byClass(ledger.tree, 'relay-v3-popover').length, 1, '台账面板由同一组件打开');
+});
+
+test('工作台账：dock 注册（id relay-ledger / order 2，位于 relay-panel 之后）+ 常量/CSS 契约', () => {
+  const env = createEnv();
+  const dock = env.registrations.filter((entry) => entry.definition.name === 'conversation.composer.dock');
+  assert.deepEqual(dock.map((entry) => entry.definition.id), ['relay-panel', 'relay-ledger']);
+  assert.equal(dock[1].definition.order, 2);
+  assert.equal(typeof dock[1].definition.inject, 'function');
+  assert.equal(env.slots['conversation.composer.dock'], dock[0].component, '既有 name 键仍解析到 RelayPanel');
+  assert.equal(env.slots['relay-ledger'], dock[1].component);
+  assert.ok(source.includes('const WORK_ITEMS_API = "/context-relay/work-items";'), '工作台账只读路由常量');
+  assert.ok(source.includes('id: "relay-ledger"'));
+  for (const rule of ['.relay-ledger-panel{', '.relay-ledger-dot{', '.relay-ledger-group-title{', '.relay-ledger-item{', '.relay-ledger-owner{', '.relay-ledger-entry{']) {
+    assert.ok(source.includes(rule), '缺样式规则：' + rule);
+  }
+  assert.ok(source.includes('maxHeight: "60vh"'), '面板 60vh 高度上限');
 });

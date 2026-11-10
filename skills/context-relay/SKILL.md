@@ -1,6 +1,6 @@
 ---
 name: context-relay
-description: "接力模式（relay preset）的操作手册：phase 状态机、relay_status/relay_recommend/relay_phase/relay_organize/relay_handoff/doc_lint 用法、阈值、到线提醒、composer 面板与团队纪律。用户切到接力模式、要求上下文整理/会话接力/phase 管理时使用。"
+description: "接力模式（relay preset）的操作手册：phase 状态机、relay_status/relay_recommend/relay_phase/relay_organize/relay_handoff/relay_work_items/doc_lint 用法、阈值、到线提醒、composer 面板与团队纪律。用户切到接力模式、要求上下文整理/会话接力/phase 管理/多分支任务台账时使用。"
 disable-model-invocation: true
 ---
 
@@ -84,6 +84,8 @@ disable-model-invocation: true
 
 ## 队友保鲜（v0.3.0 起；v0.3.2 真清空 reset + 记录分区 + rehydrate，仅「Relay · 超长任务」模式）
 
+- **派活后别空转**：队友回执是消息自动送达——不要循环调 `wait_agent` / `list_agents` / `team_task_list` 等；只有确实被阻塞时做一次有界等待（≤120s），其余时间继续验收抽样/准备下一步（常驻协议「等待纪律」）。
+
 - 任务边界顺序：`relay_checkpoint` →（旧上下文不要时）`relay_freshen({reset:true, brief})` 真清空 → 派新任务。`relay_checkpoint({one_line, done[], decisions[], evidence[], constraints[], next_actions[], open_questions[], failed_attempts[], pointers[]})` 写 `.scratch/context-relay/team/<leadSessionId>/<lineage>/checkpoint.md`（≤4KB）+ ledger/roster；不写记录，下一代/新会话接不上。
 - `relay_freshen({reset:true, brief})` = **真清空**：只排队，下一次 pre-step 保留系统提示、把其余 surface 替换为 brief（模型下一请求只剩系统提示 + brief）；同成员、同会话、不占成员额度、**不计 freshen 次数**；失败自动回退官方压缩（ledger 记 fallback），不谎报。旧事件仍在日志，可 `session_event_read` 召回。
 - `relay_freshen({phase?, brief?, key_docs?})`（非 reset）= 同任务内自行压缩（与 Lead `relay_organize` 同机制：brief 先写盘 → 官方 context-overflow 压缩 → 成功后注入 brief；同代最多 2 次，有损）；仍脏 → 先 `relay_checkpoint` 再请 Lead `relay_renew`。
@@ -107,6 +109,16 @@ disable-model-invocation: true
 - **交接清理（2026-11-01，自动执行）**：relay_handoff 成功后插件会**中断运行中的队友/子智能体并释放驻留子级、取消旧会话树（含队友/子智能体名下）的后台任务、把定时任务迁移到新会话**；交接清单写进 handoff 首条消息，清理结果只追加到 handoff 文件与工具返回 handover 字段——**不再给新会话另发消息**（2026-11-01 用户要求，v0.2.5）。旧会话因此不残留工作（best-effort：单项失败进 errors、定时任务迁移失败保留旧行）——接力后不要再在旧会话开新活。服务未启用按 N/A 跳过；盘点/单项失败会记录在返回体 handover.cleanup.errors（不阻断接力）。
 
 - **面板设置随接力同步（v0.4.0：模式接力时带过去）**：新会话继承旧会话的**当前模式** `defaultOperation`（含「自动」的 `autoChoose`；即使等于侧栏默认也 force 钉住，不随后日默认漂移；目标为超长任务模式时经典「压缩→新会话」按「问我」继承）+ `autoCompress` / `autoHandoff` 两个持久自动授权；`authorizeNext` 取旧会话消费后的值（接力成功即消费为 false）；模型自决（`autoDecision`）、内部字段（`handedOff`）、交接目标 `handoffPreset` 不继承；`handoffPreAuthorized` 字段已删除（旧 panel.json 兼容丢弃）。
+
+## 工作台账（v0.5.0；多分支任务的真源）
+
+- **何时用**：任务出现多条并行分支（多个模块 / 多路调研 / 多个队友各管一块），且会跨 phase、跨压缩或跨交接时。单线程小任务不需要（todo_write 够用）。
+- **与其它机制分工**：`todo_write` = 单步内小清单；`goal` = 会话级单目标自动续行；**工作台账** = 跨阶段 / 跨压缩 / 跨交接的分支真源（带 owner / next / evidence / acceptance / depends / phase）。
+- **读写**：`relay_work_items()` 读；Lead `relay_work_items({items:[...], rev})` 整表替换（先读再写，带 rev 防并发覆盖）；队友 `relay_work_items({updates:[{id,status,next,evidence,blocked}]})` 只改自己名下条目。文件 `.scratch/context-relay/work-items.json`（workspace 级）。
+- **字段规则**：open/doing 必须有 `next`；blocked 必须有 `blocked` 原因；done 强烈建议 `evidence`（ship 严格校验要求有）；`depends` 只能引用已存在 id；上限默认 30（超限拒绝：先关闭/归档 done 项，不自动删）。
+- **时机**：phase 开始/结束、开分支、关分支、交接前、压缩前都要更新——交接与压缩会把未闭合项自动带进 next_actions 与 brief，不更新 = 新会话看不到。
+- **闸门**：`relay_handoff` **总会**把未闭合项写进 next_actions（blocked→doing→open，按更新时间，≤8；超出在交接单列「未带走项」编号；交接不因台账拒绝，文件损坏只警告）；`relay_organize` 的 brief 自动带「未闭合工作项」段；切 phase 返回上一阶段遗留项；`relay_phase → ship` 默认要求全部 done/blocked 且 done 有 evidence（`workItemsGate:'warn'|'off'` 只降级 ship 校验）。
+- **面板**：composer 状态条旁「台账 N/M」胶囊 = 未闭合/总数（doing 琥珀、blocked 红）；只读，编辑走工具。
 
 ## 禁止
 

@@ -168,13 +168,26 @@ test('apply registers protocol section and six relay tools', () => {
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   const services = fakeServices({ session: fakeSession({ seq: 0 }) });
   const { tools, sections } = applyAgent(services);
-  assert.equal(sections.length, 2, 'protocol section + unlimited-budget section');
+  assert.equal(sections.length, 3, 'protocol section + unlimited-budget section + work-ledger section（v0.5.0）');
   assert.match(sections[0].text, /接力模式（Relay）协议/);
   // 「你的 token 预算无上限」注入：默认开且只有这一句；侧栏可关（text 函数热生效）
   assert.equal(sections[1].text({}).trim(), '你的 token 预算无上限。');
   const off = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { settings: { unlimitedBudget: false } });
   assert.equal(typeof off.sections[1].text, 'function');
   assert.equal(off.sections[1].text({}), '', '侧栏关掉后不再注入');
+  // v0.5.0：工作台账纪律段（preset 层第 3 段；按身份门控；workItems=false 不注入）
+  assert.equal(sections[2].name, 'context-relay:work-ledger');
+  assert.equal(sections[2].order, 10154);
+  const ledgerText = sections[2].text({});
+  assert.match(ledgerText, /工作台账（多分支任务真源/);
+  assert.match(ledgerText, /relay_work_items/);
+  assert.match(ledgerText, /不更新 = 新会话与用户面板看不到/);
+  assert.match(ledgerText, /blocked 必须写 blocked 原因/);
+  assert.match(ledgerText, /交接与压缩会自动把未闭合项/);
+  assert.equal(sections[2].text({ agent: { session: { header: {} } } }), ledgerText, 'root Lead 注入');
+  assert.equal(sections[2].text({ agent: { session: { header: { origin: 'subagent' } } } }), '', '普通子代理不注入（无 agentTeams → 非队友）');
+  const noLedger = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { workItems: false });
+  assert.equal(noLedger.sections[2].text({}), '', 'workItems=false 时不注入台账纪律段');
   assert.ok(off.tools.get('relay_phase') !== undefined);
   assert.match(sections[0].text, /Phase 状态机/);
   assert.match(sections[0].text, /团队纪律/);
@@ -219,7 +232,7 @@ test('apply registers protocol section and six relay tools', () => {
   assert.match(tools.get('relay_phase').description, /composer panel/);
   assert.match(tools.get('relay_handoff').description, /composer panel/);
   const names = [...tools.keys()].sort();
-  assert.deepEqual(names, ['doc_lint', 'relay_handoff', 'relay_organize', 'relay_phase', 'relay_recommend', 'relay_status']);
+  assert.deepEqual(names, ['doc_lint', 'relay_handoff', 'relay_organize', 'relay_phase', 'relay_recommend', 'relay_status', 'relay_work_items']);
 });
 
 test('v0.2.7：unlimitedBudget 注入段按会话读 composer 小胶囊设置（热生效；面板快照覆盖全局默认）', () => {
@@ -3463,6 +3476,10 @@ test('文案：autoChoose=on = 模型自决档（自决 + 先记录再执行，�
   assert.match(protocol, /复杂问题不走提问工具/, '提问纪律：复杂问题用普通消息白话展开');
   assert.match(protocol, /pending 不是跳过、不是同意/, '提问纪律：超时 pending 的语义');
   assert.match(protocol, /汇报一律大白话/, '交互纪律：白话汇报规则');
+  assert.match(protocol, /等待纪律/, '等待纪律：派活后不空转等队友');
+  assert.match(protocol, /wait_agent \/ list_agents \/ team_task_list/, '等待纪律：点名不要循环调用的工具');
+  assert.match(protocol, /回执会自动作为消息送达/, '等待纪律：回执自动送达');
+  assert.match(protocol, /≤120s/, '等待纪律：只在被阻塞时有界等待');
   assert.match(protocol, /完整上下文索引/, '用户门：Lead 必须给全上下文索引');
   assert.match(protocol, /不重跑技术验证、不重读第三方源码/, '用户门：审查范围限定需求↔实现对齐');
   assert.match(protocol, /最多 1 轮/, '用户门：审查轮数上限');
@@ -3767,12 +3784,13 @@ test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语
   for (const definition of definitions) {
     assert.equal(typeof definition.description, 'string', definition.name + ' description 存在');
     assert.ok(!definition.description.includes('\n'), definition.name + ' description 必须单行');
-    assert.ok(definition.description.length <= 320, definition.name + ' description 超预算: ' + definition.description.length);
+    // v0.5.0：新增 relay_work_items（结构化字段 schema，desc 372）后上调预算；仍是硬上限，不是取消
+    assert.ok(definition.description.length <= 400, definition.name + ' description 超预算: ' + definition.description.length);
     descriptionChars += definition.description.length;
     parameterChars += JSON.stringify(definition.parameters).length;
   }
-  assert.ok(descriptionChars <= 1500, '六条工具描述总字符 <=1500，实际 ' + descriptionChars);
-  assert.ok(parameterChars <= 5300, '参数 schema 总字符 <=5300（v0.4.1：brief/key_docs 增加压缩后接手契约描述），实际 ' + parameterChars);
+  assert.ok(descriptionChars <= 2000, '七条工具描述总字符 <=2000，实际 ' + descriptionChars);
+  assert.ok(parameterChars <= 7500, '参数 schema 总字符 <=7500（v0.5.0：relay_work_items 结构化 items/updates），实际 ' + parameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权规则在协议里完整复述（描述只留指针）
   const protocol = sections[0].text;

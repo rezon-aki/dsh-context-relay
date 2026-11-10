@@ -2,6 +2,18 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.5.0 (2026-11-10)
+
+- 新增：**工作台账（work ledger）**——多分支/多线程长任务的工作项真源：`relay_work_items` 工具读写 `.scratch/context-relay/work-items.json`（workspace 级，跨阶段/压缩/交接共享）；字段 id / title / status(open|doing|blocked|done) / owner / next / blocked / evidence / acceptance / depends / phase；整表替换带 rev 乐观锁、原子写；损坏文件备份 `.corrupt-<ts>` 并 fail-open；默认上限 30 项（`workItemsMax` 1–100）。
+- 新增：**界面对账面板**——输入框上方「台账 N/M」胶囊（未闭合/总数，进行中琥珀点、阻塞红点），点开完整面板（进行中 → 阻塞 → 待办 → 已完成折叠分组；显示负责人/下一步/证据/完成标准/依赖），接力面板弹层里也有入口；只读、4 秒刷新，编辑统一走 agent 工具。数据接口 `GET /context-relay/work-items?sessionId=`。
+- 新增：**对账闸门**——`relay_handoff` 自动把未闭合项（阻塞 → 进行中 → 待办，按更新时间，最多 8 条）写成新会话的下一步，交接单新增「工作台账」段与「未带走项」计数，新会话首条消息带台账入口；`relay_organize` 的压缩材料自动带「未闭合工作项」段；切阶段返回上一阶段遗留项；进 `ship` 默认严格校验（全部完成或阻塞，完成项需证据）；`relay_status` 与到线提醒显示计数。
+- 新增：**团队集成**——队友只能修改自己名下的工作项（`updates` 补丁，不能增删条目或改负责人）；`relay_checkpoint` 自动附自己的未闭合项；`relay_renew` 换代时负责人自动迁移到新代号。
+- 新增配置：`workItems`（默认 `true`）、`workItemsGate`（**交付阶段**校验强度：`strict`/`warn`/`off`，默认 strict；交接/压缩始终 fail-open 写入，不受本项影响）、`workItemsPath`、`workItemsMax`（默认 30）。空台账 = 旧行为完全不变；`workItems:false` 或 gate off 可完全回退。
+- 改进：**常驻提示词新增工作台账纪律段**（只注入 relay 的 root Lead 与 relay-long 队友，`workItems:false` 时不注入）——何时记（多分支任务 vs 单线程小任务）、更新时机（phase 起止/开关分支/交接前/压缩前）、字段规则（next/blocked/evidence/owner/depends/上限）、以及「交接/压缩会自动带未闭合项」的语义；工具描述保持精简，避免工具 schema 预算膨胀。
+- 改进：**常驻协议新增「等待纪律」**（团队纪律段）：派活后不要循环调 `wait_agent` / `list_agents` / `team_task_list` 等队友回执——回执会自动作为消息送达；只有确实被阻塞时才做一次有界等待（≤120s），其余时间继续做有用工作或验收抽样，减少空转消耗。
+- 测试：新增工作台账数据层 / 闸门 / host 路由 / 客户端测试；全量回归通过。
+- 文档：README 增加「工作台账」说明与配置/工具/HTTP 清单；SKILL 增加「何时记台账、与 todo/goal 的分工」。
+
 ## v0.4.1 (2026-11-09)
 
 - 新增：**压缩/换代时点资源释放**——长模式 `relay_organize` 后与 `relay_renew` 后，best-effort 释放**仍驻留**的旧子会话 / 旧代 activation；内核在子会话自然结算时已自动释放，通常无可回收（不承诺内存收益）。配置 `releaseOnCompress` / `releaseRetiredGeneration`（默认开）。
