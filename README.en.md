@@ -132,7 +132,7 @@ The relay panel: default-mode dial, auto-authorisations, next-session mode, and 
 When one task opens many branches (several research threads, modules, or teammates each owning a piece), phase + a single handover page can silently drop items. The work ledger records each branch as a work item:
 
 - **Fields**: id (short slug), one-line title, status (open / doing / blocked / done), owner, next action, blocked reason, evidence, acceptance criterion, dependencies, phase;
-- **Storage**: `.scratch/context-relay/work-items.json` (workspace-level; survives phases, compaction and handoffs); the agent maintains it with the `relay_work_items` tool;
+- **Storage**: `.scratch/context-relay/work-items/<session>.json` (**session-level**: one per root session; teammates share the Lead's ledger; a handoff copies it to the new session); survives phases/compaction, and the agent maintains it with the `relay_work_items` tool;
 - **Reconciliation**: at handoff, open items automatically become the new session's next actions (up to 8; the rest are listed by id in the handover); compaction briefs automatically include an open-items section; a phase switch reports leftovers from the previous phase; entering the delivery phase requires every item to be done or blocked by default (done items need evidence);
 - **Panel**: the `ledger 3/8` chip above the composer opens a read-only panel grouped by status, with owner, next action, evidence, acceptance criterion and dependencies; editing always goes through the agent tool (validation and concurrency safety);
 - **Team**: teammates may only update items they own; the Lead manages all; on teammate renewal ownership migrates to the new generation name;
@@ -152,7 +152,7 @@ Optional host plugin config (advanced):
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Overrides for the panel/settings file paths. |
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
-| `workItemsPath` | `.scratch/context-relay/work-items.json` | Override for the ledger file path (relative paths resolve against the workspace). |
+| `workItemsPath` | `(per-session by default)` | Override for the ledger file path: an explicit value makes all sessions share one file (the old workspace-level behaviour); the default is `.scratch/context-relay/work-items/<session>.json`. |
 | `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
 | `handoffApproval` | `'required'` | Compaction/handoff must pass the official approval; deployments without an approval UI may set `'off'` (risk accepted by the deployment). |

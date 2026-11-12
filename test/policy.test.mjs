@@ -295,6 +295,30 @@ test('continueChoice：面板模式（持久）优先于规则推荐（人类设
   );
 });
 
+test('formatStatus：面板授权事实如实渲染（v0.5.1——不再一律说「仍需审批」）', () => {
+  const choice = continueChoice({ band: 'organize' }, 1, { defaultOperation: 'compress' });
+  const base = {
+    phase: 'build',
+    lead: { ratio: 0.42, used: 420000, window: 1000000, band: 'organize' },
+    thresholds: DEFAULT_THRESHOLDS,
+    continue: choice,
+  };
+  // 旧调用方不提供面板信息：保持旧文案（兼容）
+  assert.match(formatStatus(base), /压缩\/接力仍需审批/);
+  const text = formatStatus({ ...base, panel: { defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: false, authorizeNext: false, autoDecision: null } });
+  assert.match(text, /continue: 面板模式=压缩继续（人类已选，按它执行；压缩免审=on · 接力免审=off · 授权下一次=off）/);
+  assert.doesNotMatch(text, /压缩\/接力仍需审批/, 'autoCompress 已开时不得再谎称仍需审批');
+  assert.match(text, /panel: 模式=压缩继续 · autoChoose=off · autoCompress=on · autoHandoff=off · authorizeNext=off/);
+  // 未到线（无 continue）也渲染 panel 行；autoDecision 记录可见；模式空 = 问我
+  const quiet = formatStatus({
+    phase: 'build',
+    lead: { band: 'ok' },
+    thresholds: DEFAULT_THRESHOLDS,
+    panel: { defaultOperation: null, autoChoose: true, autoCompress: false, autoHandoff: false, authorizeNext: false, autoDecision: { operation: 'compress' } },
+  });
+  assert.match(quiet, /panel: 模式=问我 · autoChoose=on · autoCompress=off · autoHandoff=off · authorizeNext=off · 已记录操作=compress/);
+});
+
 test('buildPhaseBrief renders only non-empty sections and accepts single string fields', () => {
   const md = buildPhaseBrief({ phase: 'build', goal: 'ship it', exitCriteria: 'tests green' });
   assert.match(md, /## 目标\n- ship it/);

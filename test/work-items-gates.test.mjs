@@ -16,6 +16,7 @@ import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState }
 import { createTeamTools } from '../lib/agent/team-tools.js';
 import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
+import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
@@ -78,6 +79,14 @@ function fakeServices({ session, pressure = { contextWindow: 1_000_000, projecte
 }
 
 function applyAgent(services, config = {}) {
+  const bundle = fakeCtx({ services });
+  // 既有夹具统一用旧 workspace 级路径（显式 workItemsPath 覆盖）——会话级默认路径由本文件新增用例单独覆盖。
+  apply(bundle.ctx, { workItemsPath: WORK_ITEMS_REL, ...config });
+  return bundle;
+}
+
+/** 会话级默认路径装配（不注入 workItemsPath 覆盖）。 */
+function applyAgentScoped(services, config = {}) {
   const bundle = fakeCtx({ services });
   apply(bundle.ctx, config);
   return bundle;
@@ -236,6 +245,11 @@ test('relay_status：台账存在附 workItems 摘要 + text 末行；空台账 
   assert.equal(report.workItems.counts.pending, 2);
   assert.equal(report.workItems.corrupt, false);
   assert.match(report.text, /work-items: 未闭合 2 \/ 共 3 \(doing 1 · blocked 1 · open 0 · done 1\) · rev 7/);
+  // v0.5.1：面板授权事实进 relay_status（模型唯一可靠的面板视图）+ 台账新鲜度后缀。
+  assert.equal(report.panel.defaultOperation, null);
+  assert.equal(report.panel.autoCompress, false);
+  assert.match(report.text, /panel: 模式=问我 · autoChoose=off · autoCompress=off · autoHandoff=off · authorizeNext=off/);
+  assert.match(report.text, /· rev 7 · 更新于 \d+ 分钟前（台账已停滞：phase 边界\/交接前先更新）/);
 
   // 损坏文件：fail-open 视为空台账 + corrupt=true（文件被隔离备份），不抛、不阻断状态读取。
   writeFileSync(join(cwd, WORK_ITEMS_REL), '{ not json');
@@ -243,6 +257,85 @@ test('relay_status：台账存在附 workItems 摘要 + text 末行；空台账 
   assert.equal(corrupt.workItems.exists, false);
   assert.equal(corrupt.workItems.corrupt, true);
   assert.ok(readdirSync(join(cwd, '.scratch', 'context-relay')).some((name) => name.startsWith('work-items.json.corrupt-')), '损坏文件已备份');
+});
+
+// ── 会话级台账（v0.5.1：跟会话走） ───────────────────────────────────
+
+test('会话级台账：同 cwd 两个会话互不串账；队友读写的是 Lead 的台账', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const leadA = fakeSession({ id: 'session-scope-a', cwd, seq: 0 });
+  const leadB = fakeSession({ id: 'session-scope-b', cwd, seq: 0 });
+  const bundleA = applyAgentScoped(fakeServices({ session: leadA }).services);
+  const bundleB = applyAgentScoped(fakeServices({ session: leadB }).services);
+  const agentA = { session: leadA, options: {} };
+  const agentB = { session: leadB, options: {} };
+  const callA = (args) => bundleA.tools.get('relay_work_items').execute(args, { agent: agentA });
+  const callB = (args) => bundleB.tools.get('relay_work_items').execute(args, { agent: agentB });
+
+  const wrote = await callA({ items: [{ id: 'a1', title: 'A 分支', status: 'open', owner: 'mate-1', next: '开工' }] });
+  assert.equal(wrote.ok, true, JSON.stringify(wrote));
+  assert.match(wrote.relativePath, /^.scratch\/context-relay\/work-items\/session-scope-a\.json$/);
+  assert.equal((await callA({})).exists, true);
+  assert.equal((await callB({})).exists, false, '另一个会话读不到本会话台账');
+
+  // 队友（subagent + parentSession=Lead）共享 Lead 的会话级台账：读同一文件、可按 owner patch。
+  const mate = fakeSession({ id: 'session-scope-a-mate', cwd, header: { cwd, origin: 'subagent', parentSession: 'session-scope-a' }, seq: 0 });
+  const mateServices = fakeServices({
+    session: mate,
+    extra: { agentTeams: { tryMembership: () => ({ role: 'teammate', name: 'mate-1' }), listMembers: () => [] } },
+  });
+  const mateBundle = applyAgentScoped(mateServices.services);
+  const mateAgent = { session: mate, options: {} };
+  const mateCall = (args) => mateBundle.tools.get('relay_work_items').execute(args, { agent: mateAgent });
+  const mateRead = await mateCall({});
+  assert.equal(mateRead.relativePath, wrote.relativePath, '队友共用 Lead 的台账');
+  const patched = await mateCall({ updates: [{ id: 'a1', status: 'doing', next: '在写' }] });
+  assert.equal(patched.ok, true, JSON.stringify(patched));
+  assert.equal((await callA({})).items[0].status, 'doing', 'Lead 读到队友的 patch');
+});
+
+test('会话级台账：旧 workspace 级文件在首次读取时按 updatedBy 迁移到本会话（不偷别人的）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-scope-migrate', cwd, seq: 0 });
+  mkdirSync(join(cwd, '.scratch', 'context-relay'), { recursive: true });
+  writeFileSync(join(cwd, WORK_ITEMS_REL), JSON.stringify({
+    version: 1,
+    rev: 4,
+    updatedAt: new Date().toISOString(),
+    updatedBy: session.id,
+    items: [{ id: 'm1', title: 'M', status: 'doing', next: '继续' }],
+  }));
+  const { tools } = applyAgentScoped(fakeServices({ session }).services);
+  const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
+  assert.equal(report.workItems.exists, true, '旧台账已迁移');
+  assert.match(report.workItems.path, /work-items\/session-scope-migrate\.json$/);
+  assert.equal(readWorkItems(cwd, { scopeId: session.id }).items[0].id, 'm1');
+  // 另一个会话读不到这份台账（迁移只在 updatedBy 匹配时发生）
+  assert.equal(readWorkItems(cwd, { scopeId: 'session-scope-other' }).exists, false);
+});
+
+test('relay_handoff：会话级台账复制到新会话（rev 保留），交接单/入口行/返回体指向新路径', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-scope-handoff', cwd, seq: 0 });
+  const seeded = writeWorkItems(cwd, { items: [{ id: 'h1', title: 'H', status: 'doing', next: '交接中' }], scopeId: session.id });
+  assert.equal(seeded.ok, true);
+  const followed = [];
+  const { tools } = applyAgentScoped(handoffServices({ session, cwd, followed }).services);
+  const result = await tools.get('relay_handoff').execute({
+    status: { phase: 'build', goal: '会话级台账交接', next_actions: ['用户下一步'] },
+    human_approved: true,
+  }, { agent: { session, options: {} } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.workItems.relativePath, '.scratch/context-relay/work-items/session-new.json', '返回体指向新会话台账');
+  assert.equal(result.workItems.rev, seeded.ledger.rev, '复制保留 rev');
+  const childLedger = readWorkItems(cwd, { scopeId: 'session-new' });
+  assert.equal(childLedger.exists, true);
+  assert.equal(childLedger.items[0].id, 'h1');
+  const text = followed[0].content[0].text;
+  assert.match(text, /工作台账：\.scratch\/context-relay\/work-items\/session-new\.json/);
 });
 
 // ── relay_organize ────────────────────────────────────────────────────
@@ -606,7 +699,7 @@ function makeTeamService({ members = [], memberships = new Map(), spawnResult } 
 }
 
 const TEAM_LEAD = 'session-team-lead';
-const workItemsConfig = { enabled: true, gate: 'strict', max: 30, pathOverride: undefined };
+const workItemsConfig = { enabled: true, gate: 'strict', max: 30, pathOverride: WORK_ITEMS_REL };
 
 test('relay_checkpoint：返回体带自己 owner 的未闭合台账摘要（无则 null）；workItems=false 不读', async () => {
   resetSharedState();

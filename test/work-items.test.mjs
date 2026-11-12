@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -11,11 +11,16 @@ import {
   normalizeWorkItemsConfig,
   workItemsPathOf,
   readWorkItems,
+  copyWorkItemsToScope,
+  workItemsRelativePath,
+  workItemsScopeOf,
   validateWorkItems,
   writeWorkItems,
   countsOf,
   pendingFirst,
   ledgerLine,
+  ledgerAgeMinutes,
+  ledgerAgeSuffix,
   formatWorkItemLines,
   ledgerNextActions,
   ledgerBriefSection,
@@ -358,6 +363,67 @@ test('ledgerLine：固定格式（counts / ledger 两种入参）', () => {
   assert.deepEqual(read.counts, { total: 1, open: 1, doing: 0, blocked: 0, done: 0, pending: 1 });
   assert.equal(JSON.stringify(read.counts), '{"total":1,"open":1,"doing":0,"blocked":0,"done":0,"pending":1}');
   assert.equal(ledgerLine(read.counts), 'work-items: 未闭合 1 / 共 1 (doing 0 · blocked 0 · open 1 · done 0) · rev 1');
+});
+
+test('会话级路径：workItemsScopeOf（队友随 Lead）/ workItemsRelativePath（覆盖优先、非法作用域回落）', () => {
+  assert.equal(workItemsScopeOf({ id: 's-root', header: {} }), 's-root');
+  assert.equal(workItemsScopeOf({ id: 's-team', header: { origin: 'subagent', parentSession: 's-root' } }), 's-root');
+  assert.equal(workItemsScopeOf({ id: 's-nest', header: { delegationDepth: 2, parentSession: 's-team' } }), 's-team');
+  assert.equal(workItemsScopeOf({ id: 's-x' }), 's-x');
+  assert.equal(workItemsScopeOf(undefined), undefined);
+  assert.equal(workItemsScopeOf({}), undefined);
+  assert.equal(workItemsRelativePath(undefined, 's-root'), '.scratch/context-relay/work-items/s-root.json');
+  assert.equal(workItemsRelativePath('custom/shared.json', 's-root'), 'custom/shared.json');
+  assert.equal(workItemsRelativePath(undefined, 'bad/../id'), WORK_ITEMS_RELATIVE, '非法作用域回落旧路径');
+  assert.equal(workItemsPathOf('/w', undefined, 's-root'), '/w/.scratch/context-relay/work-items/s-root.json');
+  assert.equal(workItemsPathOf('/w', 'shared.json', 's-root'), '/w/shared.json', '显式覆盖优先');
+});
+
+test('会话级隔离 / 交接继承 / 旧 workspace 台账迁移', () => {
+  const cwd = tempCwd();
+  const a = writeWorkItems(cwd, { items: [{ id: 'aa', title: 'A', status: 'open', next: 'go' }], scopeId: 'scope-a' });
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.equal(a.relativePath, '.scratch/context-relay/work-items/scope-a.json');
+  assert.equal(readWorkItems(cwd, { scopeId: 'scope-a' }).exists, true);
+  assert.equal(readWorkItems(cwd, { scopeId: 'scope-b' }).exists, false, '会话之间互不串账');
+
+  // 交接继承：复制到新会话作用域（rev 保留），源台账保留
+  const copied = copyWorkItemsToScope(cwd, { fromScopeId: 'scope-a', toScopeId: 'scope-child' });
+  assert.equal(copied, '.scratch/context-relay/work-items/scope-child.json');
+  assert.equal(readWorkItems(cwd, { scopeId: 'scope-child' }).rev, a.ledger.rev);
+  assert.equal(readWorkItems(cwd, { scopeId: 'scope-child' }).items[0].id, 'aa');
+  assert.equal(readWorkItems(cwd, { scopeId: 'scope-a' }).exists, true, '源台账不被移走');
+  assert.equal(copyWorkItemsToScope(cwd, { fromScopeId: 'scope-a', toScopeId: 'scope-child' }), undefined, '目标已存在不覆盖');
+  assert.equal(copyWorkItemsToScope(cwd, { fromScopeId: 'scope-a', toScopeId: 'scope-x', pathOverride: 'shared.json' }), undefined, '显式共享路径不复制');
+
+  // 旧 workspace 级台账 → 会话级一次性迁移（仅最后写者=本作用域时；不会偷别人的台账）
+  const legacyCwd = tempCwd();
+  writeWorkItems(legacyCwd, { items: [{ id: 'old', title: '旧', status: 'doing', next: 'n' }], scopeId: 'scope-legacy', updatedBy: 'scope-legacy' });
+  const scopedPath = join(legacyCwd, '.scratch', 'context-relay', 'work-items', 'scope-legacy.json');
+  renameSync(scopedPath, join(legacyCwd, '.scratch', 'context-relay', 'work-items.json'));
+  const migrated = readWorkItems(legacyCwd, { scopeId: 'scope-legacy' });
+  assert.equal(migrated.exists, true, '旧台账按 updatedBy 迁移到会话级');
+  assert.equal(migrated.items[0].id, 'old');
+  assert.equal(readWorkItems(legacyCwd, { scopeId: 'scope-other' }).exists, false, '其它会话不迁移、不偷台账');
+  // 过渡期：别的会话写的旧文件不会覆盖本会话已迁移的台账
+  writeFileSync(join(legacyCwd, '.scratch', 'context-relay', 'work-items.json'), JSON.stringify({
+    version: 1, rev: 9, updatedAt: new Date().toISOString(), updatedBy: 'scope-other',
+    items: [{ id: 'x1', title: 'X', status: 'open', next: 'n' }],
+  }));
+  assert.equal(readWorkItems(legacyCwd, { scopeId: 'scope-legacy' }).items[0].id, 'old', '他人旧文件不覆盖本会话');
+});
+
+test('ledgerAgeMinutes/ledgerAgeSuffix：新鲜度后缀（刚更新 / N 分钟前 / 停滞提醒；缺 updatedAt 为空）', () => {
+  const now = Date.parse('2026-11-12T12:00:00.000Z');
+  assert.equal(ledgerAgeMinutes({ updatedAt: '2026-11-12T11:58:00.000Z' }, now), 2);
+  assert.equal(ledgerAgeMinutes({ updatedAt: '2026-11-12T12:00:30.000Z' }, now), 0, '未来时间按 0 处理');
+  assert.equal(ledgerAgeMinutes({}, now), null);
+  assert.equal(ledgerAgeMinutes({ updatedAt: 'not-a-date' }, now), null);
+  assert.equal(ledgerAgeSuffix({ updatedAt: '2026-11-12T11:59:30.000Z' }, { now }), ' · 刚更新');
+  assert.equal(ledgerAgeSuffix({ updatedAt: '2026-11-12T11:50:00.000Z' }, { now }), ' · 更新于 10 分钟前');
+  assert.match(ledgerAgeSuffix({ updatedAt: '2026-11-12T11:00:00.000Z' }, { now }), /^ · 更新于 60 分钟前（台账已停滞：phase 边界\/交接前先更新）$/);
+  assert.equal(ledgerAgeSuffix({}, { now }), '');
+  assert.equal(ledgerAgeSuffix({ updatedAt: '2026-11-12T11:00:00.000Z' }, { now, staleMinutes: 120 }), ' · 更新于 60 分钟前', '阈值可调');
 });
 
 test('formatWorkItemLines：有界行、owner/next/evidence 段、includeDone 与 limit', () => {

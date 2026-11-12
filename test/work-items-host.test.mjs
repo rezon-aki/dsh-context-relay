@@ -16,6 +16,8 @@ const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const WARNED_KEY = Symbol.for('dsh-context-relay.warned');
 const WORK_ITEMS_ROUTE = '/context-relay/work-items';
 const WORK_ITEMS_RELATIVE = '.scratch/context-relay/work-items.json';
+/** v0.5.1：默认会话级路径（relaySession 默认 id=sess-relay）。 */
+const SCOPED_RELATIVE = '.scratch/context-relay/work-items/sess-relay.json';
 
 beforeEach(() => { clearPanelMemory(); delete globalThis[SETTINGS_KEY]; delete globalThis[WARNED_KEY]; });
 afterEach(() => { clearPanelMemory(); delete globalThis[SETTINGS_KEY]; });
@@ -83,9 +85,9 @@ function request(route, { method = 'GET', url = WORK_ITEMS_ROUTE } = {}) {
 const getWorkItems = (host, sessionId) => request(host.getRoute(), { url: WORK_ITEMS_ROUTE + '?sessionId=' + encodeURIComponent(sessionId) });
 const relaySession = (cwd, id = 'sess-relay') => ({ get: () => sessionOf(id, { agentPreset: 'relay', cwd }) });
 
-/** 在 <cwd>/.scratch/context-relay/work-items.json 写一份台账。 */
+/** 在 <cwd>/<relative> 写一份台账（默认 = 会话级路径 sess-relay）。 */
 function writeLedger(cwd, ledger = defaultLedger(), relative) {
-  const path = join(cwd, relative ?? WORK_ITEMS_RELATIVE);
+  const path = join(cwd, relative ?? SCOPED_RELATIVE);
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, JSON.stringify(ledger), 'utf8');
   return path;
@@ -157,10 +159,32 @@ test('host: work-items relay 会话无台账文件 → 200 + workItems:null + �
     sessionId: 'sess-relay',
     relay: true,
     enabled: true,
-    path: WORK_ITEMS_RELATIVE,
+    path: SCOPED_RELATIVE,
     corrupt: false,
     workItems: null,
   });
+});
+
+test('host: 默认会话级路径（未配置 workItemsPath）→ 读 work-items/<scope>.json；队友会话读 Lead 的台账', async () => {
+  const cwd = tempCwd();
+  const scoped = join(cwd, '.scratch/context-relay/work-items/sess-relay.json');
+  mkdirSync(join(scoped, '..'), { recursive: true });
+  writeFileSync(scoped, JSON.stringify(defaultLedger()), 'utf8');
+  const host = fakeHost({ config: { workItemsPath: null }, sessions: relaySession(cwd) });
+  const got = await getWorkItems(host, 'sess-relay');
+  assert.equal(got.out.statusCode, 200);
+  assert.equal(got.json.path, '.scratch/context-relay/work-items/sess-relay.json');
+  assert.equal(got.json.workItems.rev, 12);
+
+  // 队友会话（parentSession=Lead）解析到 Lead 的会话级台账，不读自己的。
+  const mateHost = fakeHost({
+    config: { workItemsPath: null },
+    sessions: { get: () => sessionOf('sess-mate', { agentPreset: 'relay', cwd, origin: 'subagent', parentSession: 'sess-relay' }) },
+  });
+  const mateGot = await getWorkItems(mateHost, 'sess-mate');
+  assert.equal(mateGot.out.statusCode, 200);
+  assert.equal(mateGot.json.path, '.scratch/context-relay/work-items/sess-relay.json');
+  assert.equal(mateGot.json.workItems.rev, 12);
 });
 
 test('host: work-items relay 会话 cwd 不可得 → 200 + workItems:null（不 500）', async () => {
@@ -180,7 +204,7 @@ test('host: work-items 有台账 → rev/updatedAt/counts/items + 相对路径',
   assert.equal(got.json.ok, true);
   assert.equal(got.json.relay, true);
   assert.equal(got.json.enabled, true);
-  assert.equal(got.json.path, WORK_ITEMS_RELATIVE);
+  assert.equal(got.json.path, SCOPED_RELATIVE);
   assert.equal(got.json.corrupt, false);
   const workItems = got.json.workItems;
   assert.ok(workItems !== null && typeof workItems === 'object');
@@ -205,15 +229,15 @@ test('host: work-items 有台账 → rev/updatedAt/counts/items + 相对路径',
 
 test('host: work-items 损坏台账 → corrupt:true + workItems:null + 隔离备份（fail-open）', async () => {
   const cwd = tempCwd();
-  const path = join(cwd, WORK_ITEMS_RELATIVE);
+  const path = join(cwd, SCOPED_RELATIVE);
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, '{ broken ledger', 'utf8');
   const got = await getWorkItems(fakeHost({ sessions: relaySession(cwd) }), 'sess-relay');
   assert.equal(got.out.statusCode, 200);
   assert.equal(got.json.corrupt, true);
   assert.equal(got.json.workItems, null);
-  assert.equal(got.json.path, WORK_ITEMS_RELATIVE);
-  const backups = readdirSync(join(cwd, '.scratch', 'context-relay')).filter((name) => name.includes('.corrupt-'));
+  assert.equal(got.json.path, SCOPED_RELATIVE);
+  const backups = readdirSync(join(cwd, '.scratch', 'context-relay', 'work-items')).filter((name) => name.includes('.corrupt-'));
   assert.equal(backups.length, 1, '损坏文件必须隔离备份');
 });
 

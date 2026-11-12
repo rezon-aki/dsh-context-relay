@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { apply } from '../lib/agent.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
+import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { listHandoffs } from '../lib/handoff-store.js';
 
 const HANDOFF_KEY = Symbol.for('dsh-context-relay.handoffs');
@@ -27,6 +28,7 @@ function resetSharedState() {
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true };
   delete globalThis[Symbol.for('dsh-context-relay.handoff.routes')];
   clearPanelMemory();
+  clearSentinelMemory();
   configurePanelStore({ panelPath: join(mkdtempSync(join(tmpdir(), 'relay-panel-')), 'panel.json') });
 }
 
@@ -683,6 +685,45 @@ test('reminders: 升线提醒（同档不重复），回退后再升线仍提醒
   await step(); // 回退后再升线：提醒（口径：升线就提醒，不是整会话每档一次）
   assert.equal(injected.length, 4);
   assert.match(injected[3].source.summary, /band=warn/);
+});
+
+test('面板变更提醒（v0.5.1）：人类改模式/授权后下一次 pre-step 注入一次；同签名不重复；与到线提醒同一步不双发', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-panel-change', cwd });
+  const { services, state } = fakeServices({ session });
+  const { events } = applyAgent(services);
+  const listener = preStepListener(events);
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const step = () => listener({ agent }, async () => undefined);
+
+  await step(); // 首次见到：只记签名，不提醒
+  assert.equal(injected.length, 0);
+
+  updatePanelState(session.id, { defaultOperation: 'compress', autoCompress: true }, { source: 'agent' });
+  await step();
+  assert.equal(injected.length, 1, '面板变更 → 一次提醒');
+  const text = injected[0].content[0].text;
+  assert.match(text, /面板已更新/);
+  assert.match(text, /模式=压缩 ·/);
+  assert.match(text, /autoCompress=on/);
+  assert.match(text, /压缩免审=on（autoCompress）/);
+  assert.equal(injected[0].source.form, 'notice');
+  assert.ok(injected[0].source.summary.length <= 120);
+
+  await step();
+  assert.equal(injected.length, 1, '同签名不重复提醒');
+
+  // 到线提醒同一步已带全量面板状态：只发到线提醒，不额外发面板提醒。
+  updatePanelState(session.id, { autoHandoff: true }, { source: 'agent' });
+  state.pressure = { contextWindow: 1_000_000, projectedTokens: 360_000 };
+  await step();
+  assert.equal(injected.length, 2, '升线 + 面板变更同一步只发到线提醒');
+  assert.match(injected[1].content[0].text, /到线提醒（插件 notice，非用户发言）/);
+  assert.match(injected[1].content[0].text, /autoHandoff=on/, '到线提醒本身带全量面板状态');
+  await step();
+  assert.equal(injected.length, 2, '被到线提醒覆盖的面板变更不得在下一步补发');
 });
 
 test('reminder listener registration is idempotent per ctx', () => {

@@ -2,6 +2,15 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.5.1 (2026-11-13)
+
+- 变更：**工作台账跟会话走**——默认落盘 `.scratch/context-relay/work-items/<session>.json`（每个根会话一份；队友共用 Lead 的台账；同一工作区的多个接力会话不再互相串账/覆盖）。`relay_handoff` 把源会话台账复制到新会话（rev 保留），交接单/首条消息/返回体指向新路径；旧 workspace 级 `work-items.json` 仅作一次性迁移来源（读时会话级文件缺失且最后写者=本会话时自动复制一份）与显式 `workItemsPath` 覆盖。
+- 修复：`relay_status` 的 `continue:` 行按真实开关显示「压缩免审/接力免审/授权下一次」——以前硬编码「压缩/接力仍需审批」，人类中途打开 autoCompress 后模型看不到，会误判需要批准而不敢压缩。
+- 新增：**面板变更提醒**——人类在 composer「接力」chip 改模式/自动授权后，下一次 step 注入一次面板状态（与到线提醒同一步不重复；同状态不重复）。
+- 新增：`relay_status` 增加 `panel:` 行（模式 + autoChoose/autoCompress/autoHandoff/authorizeNext + 已记录操作）。
+- 改进：**台账新鲜度**——`relay_status` 与到线提醒的台账行带「刚更新 / 更新于 N 分钟前」，超过 30 分钟标「台账已停滞」，提醒模型在 phase 边界/交接前更新（台账本身不会自动更新）。
+- 测试：新增会话级隔离/交接继承/旧台账迁移、面板授权文本、面板变更提醒、台账新鲜度用例；全量 526 通过。
+
 ## v0.5.0 (2026-11-10)
 
 - 新增：**工作台账（work ledger）**——多分支/多线程长任务的工作项真源：`relay_work_items` 工具读写 `.scratch/context-relay/work-items.json`（workspace 级，跨阶段/压缩/交接共享）；字段 id / title / status(open|doing|blocked|done) / owner / next / blocked / evidence / acceptance / depends / phase；整表替换带 rev 乐观锁、原子写；损坏文件备份 `.corrupt-<ts>` 并 fail-open；默认上限 30 项（`workItemsMax` 1–100）。
