@@ -118,7 +118,8 @@ disable-model-invocation: true
 - **关 phase 闸门**：本 phase 未 done 的分点必须收口（done 要 evidence / blocked 写原因）或 carry，否则 `relay_phase` **拒绝**（strict 默认；`workItemsPhaseGate` 可 warn/off）。
 - **读写**：`relay_work_items()` 读；Lead `relay_work_items({items:[...], rev})` 整表替换（未写 phase 的条目自动继承原条目/currentPhase）；队友 `relay_work_items({updates:[...]})` 只改自己名下条目。文件 `.scratch/context-relay/work-items/<session>.json`（会话级；队友共用 Lead 的；交接复制到新会话）。
 - **字段规则**：open 可无 next（未领取）；doing 必须有 next；blocked 必须有原因；done 要 evidence（ship 严格校验）；depends 只引已存在 id；上限默认 30。
-- **对账**：交接把未闭合项写进 next_actions（≤8）；压缩 brief 带「未闭合工作项」段；切 phase 响应带分点摘要（planned/done/opened/carried）。
+- **对账**：交接把未闭合项写进 next_actions（≤8）；压缩 brief 带「未闭合工作项」段；切 phase 响应带分点摘要（planned/done/opened/carried）与 `carryIgnored`（carry 里无效 id 会显式列出）。
+- **删除条目**：整表替换不得静默删除未完成条目（open/doing/blocked）——要作废用 `drop:["id"]` 显式声明；done 可静默清理。
 - **面板**：composer 状态条旁「台账 N/M」胶囊；只读，编辑走工具。
 - **队友状态不轮询**：`relay_team_status` 状态没变的重复查询会被拒绝；回执自动送达；等队友 = 结束回合或推进队列下一分点。
 - **phase 边界自动 triage（v0.6.1）**：跨 phase 的 `relay_phase` 响应带 `team:{members:[{name,band,action}],pending,hint}`（Lead 有队伍时）——按 band 执行：ok 复用 / warn 收口后 checkpoint / organize·relay 清空复用（freshen reset，0 额度）/ 换身份才 renew；不需要主动查 `relay_team_status`。

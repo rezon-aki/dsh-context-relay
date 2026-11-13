@@ -2,6 +2,18 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.6.2 (2026-11-13)
+
+独立审查（新上下文）发现 6 个「需求↔实现」偏差，本版修复：
+
+- 修复：**到线提醒仍按时间拼台账年龄**（`更新于 N 分钟前 / 台账已停滞`）——与「不要按时间提醒」冲突；改为只显示 phase 行，时间判定彻底删除。
+- 修复：**关 phase 闸门旁路**——`relay_work_items` 整表替换可静默删除未完成条目（删掉自然过闸）。现在拒绝：done 条目可静默清理；未完成条目（open/doing/blocked）必须用 `drop:[ids]` 显式声明；未知/重复 drop 报错。删除不再是无痕操作。
+- 修复：**去轮询签名漏 v0.6.1 新字段**——team_status 签名补 `phase` 与名下 doing/blocked 计数，避免 phase 切换后合法查询被 `unchanged-poll` 误拒。
+- 修复：**台账缺失无引导**——跨 phase 时若还没有台账，`relay_phase` 响应带 `ledger.hint` 提示开账（事件驱动、不建文件、不注入）。
+- 修复：**carry 无效 id 静默忽略**——响应新增 `ledger.carryIgnored`（不存在/已 done/别的 phase 的 id 显式列出）；闸门与 carry 一律以台账 `currentPhase` 为准（跨会话 phase 不一致时）。
+- 修复：**items 非字符串静默丢弃**——`relay_phase({items:[...]})` 现在拒绝非字符串元素。
+- 测试：新增静默删除/drop/carryIgnored/items 类型/空台账提示用例；全量 534 通过。
+
 ## v0.6.1 (2026-11-13)
 
 - 新增：**phase 边界自动带队友 triage**——`relay_phase` 跨 phase 时（Lead 根会话、有队伍）自动读一遍队友上下文压力，响应返回 `team: {members:[{name,band,action}], pending, omitted, hint}`，按档给建议：ok=复用 / warn=收口后 checkpoint / organize·relay=checkpoint + `relay_freshen({reset:true, brief})` 真清空复用（0 额度）/ 换身份才 renew；读不到就提示人工判断。**不需要再主动轮询 relay_team_status**；读压力失败 fail-open，不阻断 phase 切换。

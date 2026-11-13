@@ -155,17 +155,67 @@ test('relay_work_items：注册且无参=读（空台账 exists=false）；Lead 
   assert.equal(disk.rev, 1);
   assert.equal(disk.items.length, 2);
 
-  const stale = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }], rev: 0 }, { agent });
+  const stale = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }], drop: ['api-export', 'schema'], rev: 0 }, { agent });
   assert.equal(stale.ok, false);
   assert.equal(stale.code, 'stale-revision');
   assert.equal(stale.currentRev, 1);
   assert.equal(readLedgerFile(cwd).rev, 1, 'stale 拒绝不得覆盖');
 
-  const invalid = await tool.execute({ items: [{ id: 'bad-1', title: '缺 next', status: 'doing' }] }, { agent });
+  const invalid = await tool.execute({ items: [{ id: 'bad-1', title: '缺 next', status: 'doing' }], drop: ['api-export', 'schema'] }, { agent });
   assert.equal(invalid.ok, false);
   assert.equal(invalid.code, 'invalid-item');
   assert.ok(Array.isArray(invalid.errors) && invalid.errors.length > 0);
   assert.equal(readLedgerFile(cwd).rev, 1, '校验失败不得落盘');
+});
+
+test('relay_work_items：整表替换不得静默删除未完成条目；drop 显式声明放行', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  writeLedger(cwd, [
+    { id: 'keep-1', title: '保留', status: 'doing', next: '继续' },
+    { id: 'drop-1', title: '待作废', status: 'blocked', blocked: '方案取消' },
+    { id: 'done-1', title: '已完成', status: 'done', evidence: ['e:1'] },
+  ], { rev: 3 });
+  const session = fakeSession({ id: 'session-wi-drop', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_work_items');
+  const agent = { session, options: {} };
+  const items = [{ id: 'keep-1', title: '保留', status: 'doing', next: '继续' }];
+  const silent = await tool.execute({ items, rev: 3 }, { agent });
+  assert.equal(silent.ok, false);
+  assert.equal(silent.code, 'phase-not-closed');
+  assert.deepEqual(silent.ids, ['drop-1'], 'done 条目允许静默清理；未完成的必须显式 drop');
+  assert.equal(readLedgerFile(cwd).rev, 3, '拒绝不落盘');
+  const badDrop = await tool.execute({ items, drop: ['nope'], rev: 3 }, { agent });
+  assert.equal(badDrop.code, 'invalid-drop');
+  const dropped = await tool.execute({ items, drop: ['drop-1'], rev: 3 }, { agent });
+  assert.equal(dropped.ok, true, JSON.stringify(dropped));
+  assert.equal(dropped.counts.total, 1);
+  const both = await tool.execute({ items, drop: ['keep-1'], rev: dropped.rev }, { agent });
+  assert.equal(both.code, 'invalid-drop');
+});
+
+test('relay_phase：carry 无效 id 显式报告；items 非字符串拒绝', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  writeLedger(cwd, [
+    { id: 'b1', title: '遗留', status: 'doing', next: 'x', phase: 'build' },
+    { id: 'b2', title: '完成', status: 'done', evidence: ['e:1'], phase: 'build' },
+  ], { rev: 1, currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 1 } });
+  const session = fakeSession({ id: 'session-wi-carry-ignored', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_phase');
+  const agent = { session, options: {} };
+  const ok = await tool.execute({ phase: 'verify', contract_check: CONTRACT_CHECK, carry: ['b1', 'b2', 'missing'] }, { agent });
+  assert.equal(ok.ok ?? true, true);
+  assert.deepEqual(ok.ledger.carried, ['b1']);
+  assert.deepEqual(ok.ledger.carryIgnored, ['b2', 'missing'], '已 done/不存在 的 carry 显式报告，不静默');
+
+  const plainCwd = tmpCwd();
+  const plainSession = fakeSession({ id: 'session-wi-items-type', cwd: plainCwd, seq: 0 });
+  const plainTool = applyAgent(fakeServices({ session: plainSession }).services).tools.get('relay_phase');
+  await assert.rejects(
+    () => plainTool.execute({ phase: 'build', contract_check: CONTRACT_CHECK, items: ['ok', 123] }, { agent: { session: plainSession, options: {} } }),
+    /items 的每个元素必须是字符串/,
+  );
 });
 
 test('relay_work_items：队友只能 patch 自己 owner 的项；整表替换 lead-only；非 Team subagent 只读也被拒', async () => {
@@ -483,7 +533,7 @@ test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；item
   const emptyAgent = { session: emptySession, options: {} };
   await emptyTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
   const emptySwitched = await emptyTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
-  assert.equal(emptySwitched.ledger, undefined, '空台账旧行为不变');
+  assert.match(emptySwitched.ledger.hint, /还没有工作台账/, '空台账跨 phase 给开账提示（事件驱动，不建文件）');
 });
 
 // ── 台账闭环（v0.6.0 事件驱动） ────────────────────────────────────────
@@ -708,7 +758,8 @@ test('sentinelText：台账非空 pending>0 时正文末尾追加台账行（Lea
   const state = { band: 'organize' };
   const ledger = { exists: true, counts: { total: 5, pending: 2, doing: 1, blocked: 1, open: 0, done: 3 } };
   const leadText = sentinelText('build', state, false, undefined, undefined, false, ledger);
-  assert.match(leadText, /\n工作台账：未闭合 2 \/ 共 5（relay_work_items 查看，交接前先更新）$/);
+  assert.match(leadText, /\n工作台账：未闭合 2 \/ 共 5（relay_work_items 查看\/更新；phase 边界前收口）$/);
+  assert.doesNotMatch(leadText, /更新于 \d+ 分钟前|已停滞/, '不再按时间提示台账新鲜度');
   const subText = sentinelText('build', state, true, undefined, { sent: true }, false, ledger);
   assert.match(subText, /工作台账：未闭合 2 \/ 共 5/);
   const empty = { exists: false, counts: { total: 0, pending: 0 } };
