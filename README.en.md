@@ -49,7 +49,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - A teammate whose context is dirty can be wiped in place (a true reset) or replaced under a new identity, while the work record is kept;
 - When the Lead itself crosses the line, it hands over to a new session: running teammates and background jobs of the old session tree are interrupted, and the new session rebuilds the team and its work memory from the handover and progress documents (it does not take over the old team in place);
 - Both layers stay in their efficient range for a long time, raising the ceiling of long tasks;
-- The Lead does not spin waiting for teammates after dispatching: their reports arrive as messages, so it only waits once when genuinely blocked and keeps working otherwise (saves tokens).
+- The Lead does not spin waiting for teammates after dispatching: their reports arrive as messages, so it only waits once when genuinely blocked and keeps working otherwise (saves tokens). Repeated `relay_team_status` reads with an unchanged team are refused, and a phase switch automatically returns a teammate triage (keep / checkpoint / reset-reuse / renew).
 
 ## Which mode to pick
 

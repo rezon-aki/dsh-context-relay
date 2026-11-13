@@ -2,6 +2,13 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.6.1 (2026-11-13)
+
+- 新增：**phase 边界自动带队友 triage**——`relay_phase` 跨 phase 时（Lead 根会话、有队伍）自动读一遍队友上下文压力，响应返回 `team: {members:[{name,band,action}], pending, omitted, hint}`，按档给建议：ok=复用 / warn=收口后 checkpoint / organize·relay=checkpoint + `relay_freshen({reset:true, brief})` 真清空复用（0 额度）/ 换身份才 renew；读不到就提示人工判断。**不需要再主动轮询 relay_team_status**；读压力失败 fail-open，不阻断 phase 切换。
+- 改进：`relay_team_status` 每行带 `phase`（Lead 当前 phase）与名下条目计数 `items:{doing,blocked}`（有台账时），报告顶层也带 `phase`——triage 与台账能对上。
+- 文档/协议：工作台账段补「phase 边界响应会自动带队友 triage」。
+- 测试：新增跨 phase 自动 triage（有队伍/无队伍）与 team_status phase 字段用例；全量 532 通过。
+
 ## v0.6.0 (2026-11-13)
 
 - 新增：**工作台账 = phase 工作队列**——`relay_phase` 新增 `items`（开 phase 登记 1–8 条分点，单线程小任务 `items: []`）与 `carry`（把上一 phase 未闭合项显式带入）；台账顶层新增 `currentPhase`（phase/goal/exit_criteria/since/openedAtRev），条目新增 `carriedFrom`；新条目默认继承当前 phase。

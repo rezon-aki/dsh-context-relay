@@ -530,6 +530,39 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   assert.match(injected[2].content[0].text, /未领取：open「补文档」/);
 });
 
+test('relay_phase 跨 phase：有队伍时自动带队友 triage（不轮询）；无队伍不加字段', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-team-triage', cwd, seq: 0 });
+  const teams = {
+    tryMembership: () => ({ role: 'lead' }),
+    listMembers: () => [
+      { id: 'session-m1', name: 'mate-1', role: 'teammate', status: 'inactive' },
+      { id: 'session-m2', name: 'mate-2', role: 'teammate', status: 'inactive' },
+    ],
+  };
+  const sessionQuery = {
+    async observeSession(memberId) {
+      const projectedTokens = memberId === 'session-m1' ? 420000 : 20000; // 夹具阈值 40 → organize 档
+      return { projections: { values: { contextPressure: { contextWindow: 1000000, projectedTokens } } }, [Symbol.dispose]() {} };
+    },
+  };
+  const bundle = applyAgent(fakeServices({ session, extra: { agentTeams: teams, sessionQuery } }).services);
+  const result = await bundle.tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  assert.equal(result.team.members.length, 2);
+  assert.deepEqual(result.team.members.map((row) => row.name), ['mate-1', 'mate-2']);
+  assert.equal(result.team.members[0].band, 'organize');
+  assert.match(result.team.members[0].action, /relay_freshen\(\{reset:true/);
+  assert.deepEqual(result.team.pending, ['mate-1']);
+  assert.match(result.team.hint, /不要轮询/);
+
+  // 无队伍：不加 team 段（旧行为不变）
+  const plainSession = fakeSession({ id: 'session-team-triage-plain', cwd, seq: 0 });
+  const plain = applyAgent(fakeServices({ session: plainSession }).services);
+  const plainResult = await plain.tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session: plainSession, options: {} } });
+  assert.equal(plainResult.team, undefined);
+});
+
 test('台账闭环：空台账/队友会话不注入（旧行为不变）', async () => {
   resetSharedState();
   const cwd = tmpCwd();

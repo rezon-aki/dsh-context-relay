@@ -321,6 +321,9 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     const impl = report.team.find((row) => row.name === 'impl-g1');
     const review = report.team.find((row) => row.name === 'review-g1');
     assert.equal(impl.gen, 1);
+    assert.equal(report.phase, null, '无台账时 Lead phase 为 null');
+    assert.equal(impl.phase, null);
+    assert.equal(impl.items, undefined, '无台账时不带条目计数');
     assert.equal(impl.health, 'stale');
     assert.equal(review.health, 'spent');
     assert.deepEqual(report.stale.sort(), ['impl-g1', 'review-g1']);
