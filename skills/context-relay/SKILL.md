@@ -110,15 +110,17 @@ disable-model-invocation: true
 
 - **面板设置随接力同步（v0.4.0：模式接力时带过去）**：新会话继承旧会话的**当前模式** `defaultOperation`（含「自动」的 `autoChoose`；即使等于侧栏默认也 force 钉住，不随后日默认漂移；目标为超长任务模式时经典「压缩→新会话」按「问我」继承）+ `autoCompress` / `autoHandoff` 两个持久自动授权；`authorizeNext` 取旧会话消费后的值（接力成功即消费为 false）；模型自决（`autoDecision`）、内部字段（`handedOff`）、交接目标 `handoffPreset` 不继承；`handoffPreAuthorized` 字段已删除（旧 panel.json 兼容丢弃）。
 
-## 工作台账（v0.5.1；多分支任务的真源）
+## 工作台账（v0.6.0；当前 phase 的工作队列）
 
-- **何时用**：任务出现多条并行分支（多个模块 / 多路调研 / 多个队友各管一块），且会跨 phase、跨压缩或跨交接时。单线程小任务不需要（todo_write 够用）。
-- **与其它机制分工**：`todo_write` = 单步内小清单；`goal` = 会话级单目标自动续行；**工作台账** = 跨阶段 / 跨压缩 / 跨交接的分支真源（带 owner / next / evidence / acceptance / depends / phase）。
-- **读写**：`relay_work_items()` 读；Lead `relay_work_items({items:[...], rev})` 整表替换（先读再写，带 rev 防并发覆盖）；队友 `relay_work_items({updates:[{id,status,next,evidence,blocked}]})` 只改自己名下条目。文件 `.scratch/context-relay/work-items/<session>.json`（**会话级**：每个根会话一份；队友共用 Lead 的台账；交接时自动复制到新会话，交接单/首条消息指向新路径）。
-- **字段规则**：open/doing 必须有 `next`；blocked 必须有 `blocked` 原因；done 强烈建议 `evidence`（ship 严格校验要求有）；`depends` 只能引用已存在 id；上限默认 30（超限拒绝：先关闭/归档 done 项，不自动删）。
-- **时机**：phase 开始/结束、开分支、关分支、交接前、压缩前都要更新——交接与压缩会把未闭合项自动带进 next_actions 与 brief，不更新 = 新会话看不到。
-- **闸门**：`relay_handoff` **总会**把未闭合项写进 next_actions（blocked→doing→open，按更新时间，≤8；超出在交接单列「未带走项」编号；交接不因台账拒绝，文件损坏只警告）；`relay_organize` 的 brief 自动带「未闭合工作项」段；切 phase 返回上一阶段遗留项；`relay_phase → ship` 默认要求全部 done/blocked 且 done 有 evidence（`workItemsGate:'warn'|'off'` 只降级 ship 校验）。
-- **面板**：composer 状态条旁「台账 N/M」胶囊 = 未闭合/总数（doing 琥珀、blocked 红）；只读，编辑走工具。
+- **什么时候用**：长任务 / 多分支（多模块、多路调研、多队友各管一块）/ 要跨 phase、压缩或交接时。台账是**当前 phase 的队列**，插件负责把队列摆到眼前，不靠模型自觉。
+- **开 phase 列分点**：`relay_phase({phase, items:["…","…"]})` 登记 1–8 条（单线程小任务 `items: []`）；新条目默认 phase=当前 phase，跨 phase 用 `carry:["id"]` 显式带走（记 carriedFrom）。
+- **闭环（事件驱动，不看时间）**：焦点行 `[台账·build 2/4] doing「…」next「…」` 只在焦点变化时注入；变更类工具（write/edit/bash…）成功但没落账 → 下一步提示「[闭环] 上一步改动未落账」；分点 done 后提示下一个；relay_work_items 成功即视为已落账。
+- **关 phase 闸门**：本 phase 未 done 的分点必须收口（done 要 evidence / blocked 写原因）或 carry，否则 `relay_phase` **拒绝**（strict 默认；`workItemsPhaseGate` 可 warn/off）。
+- **读写**：`relay_work_items()` 读；Lead `relay_work_items({items:[...], rev})` 整表替换（未写 phase 的条目自动继承原条目/currentPhase）；队友 `relay_work_items({updates:[...]})` 只改自己名下条目。文件 `.scratch/context-relay/work-items/<session>.json`（会话级；队友共用 Lead 的；交接复制到新会话）。
+- **字段规则**：open 可无 next（未领取）；doing 必须有 next；blocked 必须有原因；done 要 evidence（ship 严格校验）；depends 只引已存在 id；上限默认 30。
+- **对账**：交接把未闭合项写进 next_actions（≤8）；压缩 brief 带「未闭合工作项」段；切 phase 响应带分点摘要（planned/done/opened/carried）。
+- **面板**：composer 状态条旁「台账 N/M」胶囊；只读，编辑走工具。
+- **队友状态不轮询**：`relay_team_status` 状态没变的重复查询会被拒绝；回执自动送达；等队友 = 结束回合或推进队列下一分点。
 
 ## 禁止
 

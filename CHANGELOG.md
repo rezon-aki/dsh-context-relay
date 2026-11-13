@@ -2,6 +2,19 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.6.0 (2026-11-13)
+
+- 新增：**工作台账 = phase 工作队列**——`relay_phase` 新增 `items`（开 phase 登记 1–8 条分点，单线程小任务 `items: []`）与 `carry`（把上一 phase 未闭合项显式带入）；台账顶层新增 `currentPhase`（phase/goal/exit_criteria/since/openedAtRev），条目新增 `carriedFrom`；新条目默认继承当前 phase。
+- 新增：**关 phase 闸门**——本 phase 未 done 的分点未收口且未 carry → `relay_phase` 拒绝（默认 strict；`workItemsPhaseGate: 'strict'|'warn'|'off'` 可调）；拒绝零副作用（不切 phase、不写盘、不写 lessons）。单线程小任务用 `items: []` 显式声明放行。
+- 新增：**事件驱动台账闭环（不按时间）**——队列焦点行（`[台账·build 2/4] doing「…」next「…」`）只在焦点/rev 变化时注入；变更类工具（write/edit/bash/pwsh/apply_patch）成功后没落账 → 下一步提示「[闭环] 上一步改动未落账」；`relay_work_items` 成功即清待落账；分点 done 后焦点行提示下一个。open 允许无 next（未领取），doing 仍强制 next。
+- 新增：**relay_team_status 去轮询**——团队状态没变的重复查询直接拒绝（`unchanged-poll`），并给出替代：回执自动送达、phase 边界带 triage、结束回合或推进台账。**不改 Agent Teams 工具**（wait_agent / spawn_teammate / send_message / list_agents / team_task_* 零改动）。
+- 改进：`relay_status` 的 workItems 摘要带 currentPhase/phaseLine/focus/未分阶段计数；text 增 phase 行与焦点行；去掉按时间的「更新于 N 分钟前 / 已停滞」提示（闭环改为事件驱动）。
+- 改进：`relay_phase` 跨 phase 响应新增 `ledger` 段（phase/planned/done/pending/opened/carried/leftover/hint）与 ok 档 `context:{action:'continue'}` 记录；台账写失败 fail-open（phase 仍切换，返回 workItemsWarning）。
+- 改进：压缩 brief / 交接单按 phase 展示（当前 phase 行 + 条目 phase/carriedFrom）；`relay_handoff` 复制 currentPhase 到新会话。
+- 配置：新增 `workItemsPhaseGate`（默认 `'strict'`）。
+- 协议：Phase 状态机写明「开 phase 带 items / 关 phase 收口或 carry / strict 拒绝」；工作台账段升级为「phase 工作队列（焦点行 / 闭环 / 关账闸门 / 不轮询）」；团队 Lead 段加「不要轮询队友」。
+- 测试：新增 phase 元数据 / 关 phase 闸门 / carry / 焦点行+闭环注入 / 去轮询 / 配置归一用例；工具 schema 预算仍达标；全量 531 通过。
+
 ## v0.5.1 (2026-11-13)
 
 - 变更：**工作台账跟会话走**——默认落盘 `.scratch/context-relay/work-items/<session>.json`（每个根会话一份；队友共用 Lead 的台账；同一工作区的多个接力会话不再互相串账/覆盖）。`relay_handoff` 把源会话台账复制到新会话（rev 保留），交接单/首条消息/返回体指向新路径；旧 workspace 级 `work-items.json` 仅作一次性迁移来源（读时会话级文件缺失且最后写者=本会话时自动复制一份）与显式 `workItemsPath` 覆盖。

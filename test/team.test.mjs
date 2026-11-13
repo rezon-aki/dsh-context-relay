@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
-import { createTeamTools } from '../lib/agent/team-tools.js';
+import { clearTeamStatusMemory, createTeamTools } from '../lib/agent/team-tools.js';
 import { TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPendingResets, hasPendingReset } from '../lib/agent/reset.js';
 import { clearSentinelMemory, LAST_BAND } from '../lib/agent/sentinel.js';
@@ -306,6 +306,7 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     const ctx = fakeCtx({ agentTeams: teams, sessionQuery: pressureQuery({ 'session-w1': 36000, 'session-w2': 40000 }) });
     const { leadTools } = createTeamTools(makeRuntime(ctx.ctx));
     const statusTool = leadTools.find((tool) => tool.name === 'relay_team_status');
+    clearTeamStatusMemory();
     const nonLead = await statusTool.execute({}, { agent: teammate });
     assert.equal(nonLead.ok, false);
     assert.equal(nonLead.code, 'lead-only');
@@ -329,7 +330,14 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     assert.match(impl.action, /relay_freshen\(\{reset:true/, '结构化 action 也 reset-first');
     assert.doesNotMatch(impl.action, /relay_renew）|先换新/);
     assert.ok(report.text.length <= 2000, '团队报告有界');
-  } finally { cleanup(dir); }
+    // v0.6.0 去轮询：状态没变的重复调用直接拒绝（信息没变）
+    const again = await statusTool.execute({}, { agent: lead });
+    assert.equal(again.ok, false);
+    assert.equal(again.code, 'unchanged-poll');
+    assert.equal(again.unchanged, true);
+    assert.match(again.summary, /do not poll/);
+    assert.match(again.text, /phase 边界会带 triage/);
+  } finally { clearTeamStatusMemory(); cleanup(dir); }
 });
 
 test('relay_renew：无 checkpoint 先催（pending）；有记录则换代（分区交接/roster/ledger + 展示路径）', async () => {

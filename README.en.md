@@ -127,16 +127,17 @@ The relay panel: default-mode dial, auto-authorisations, next-session mode, and 
 4. For manual control just say so, e.g. compact now, hand off to a new session, or ask me this time.
 5. If you ignore a line notice, nothing bad happens — keep giving instructions; it will not compact or hand off on its own.
 
-## Multi-branch work: the work ledger
+## The work ledger: the current phase's work queue
 
-When one task opens many branches (several research threads, modules, or teammates each owning a piece), phase + a single handover page can silently drop items. The work ledger records each branch as a work item:
+Long tasks drift: the agent forgets what it set out to do and how far it got. The ledger turns "what this phase must finish" into a queue and puts it in front of the agent at the right moments — **event-driven, not time-based**:
 
-- **Fields**: id (short slug), one-line title, status (open / doing / blocked / done), owner, next action, blocked reason, evidence, acceptance criterion, dependencies, phase;
-- **Storage**: `.scratch/context-relay/work-items/<session>.json` (**session-level**: one per root session; teammates share the Lead's ledger; a handoff copies it to the new session); survives phases/compaction, and the agent maintains it with the `relay_work_items` tool;
-- **Reconciliation**: at handoff, open items automatically become the new session's next actions (up to 8; the rest are listed by id in the handover); compaction briefs automatically include an open-items section; a phase switch reports leftovers from the previous phase; entering the delivery phase requires every item to be done or blocked by default (done items need evidence);
-- **Panel**: the `ledger 3/8` chip above the composer opens a read-only panel grouped by status, with owner, next action, evidence, acceptance criterion and dependencies; editing always goes through the agent tool (validation and concurrency safety);
-- **Team**: teammates may only update items they own; the Lead manages all; on teammate renewal ownership migrates to the new generation name;
-- **Prompting**: a short ledger discipline ships in the agent's standing prompt (when to use it, when to update, field rules, and that handoff/compaction carry open items automatically), so the agent knows what to record and when.
+- **Register points when a phase opens**: `relay_phase({phase, items:["…","…"]})` records 1–8 points (single-thread work: `items: []`); new items belong to the current phase by default, and a cross-phase item must be carried explicitly;
+- **Closed-loop recording**: the current point and its next action are injected as one line ("[ledger·build 2/4] doing「…」next「…」") when the focus changes; after a file/command change with no ledger update the agent is prompted "[closed loop] the last change is not recorded"; completing a point suggests the next one;
+- **Phase-close gate**: unfinished points of this phase must be closed (done with evidence / blocked with a reason) or explicitly carried, otherwise the phase switch is refused (`workItemsPhaseGate` can be `warn`/`off`; single-thread work declares empty items);
+- **Fields**: id (short slug), title, status (open/doing/blocked/done), owner, next action, blocked reason, evidence, acceptance criterion, dependencies, phase;
+- **Storage**: `.scratch/context-relay/work-items/<session>.json` (session-level: one per root session; teammates share the Lead's ledger; a handoff copies it to the new session), maintained with `relay_work_items`;
+- **Reconciliation**: at handoff, open items automatically become the new session's next actions (up to 8); compaction briefs include an open-items section; entering the delivery phase requires every item to be done or blocked;
+- **Panel**: the `ledger 3/8` chip above the composer opens a read-only panel grouped by status; editing always goes through the agent tool.
 
 Without a ledger file nothing changes — it is optional.
 
@@ -152,6 +153,7 @@ Optional host plugin config (advanced):
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Overrides for the panel/settings file paths. |
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
+| `workItemsPhaseGate` | `'strict'` | **Phase-close** gate: unfinished points not closed or carried → `strict` refuses the switch / `warn` proceeds with a notice / `off`. Single-thread work declares `items: []`. |
 | `workItemsPath` | `(per-session by default)` | Override for the ledger file path: an explicit value makes all sessions share one file (the old workspace-level behaviour); the default is `.scratch/context-relay/work-items/<session>.json`. |
 | `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |

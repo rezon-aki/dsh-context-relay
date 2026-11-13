@@ -92,10 +92,10 @@ function applyAgentScoped(services, config = {}) {
   return bundle;
 }
 
-function writeLedger(cwd, items, { rev = 1 } = {}) {
+function writeLedger(cwd, items, { rev = 1, currentPhase } = {}) {
   const path = join(cwd, WORK_ITEMS_REL);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, rev, updatedAt: '2026-11-10T00:00:00.000Z', updatedBy: 'test', items }, null, 2));
+  writeFileSync(path, JSON.stringify({ version: 1, rev, updatedAt: '2026-11-10T00:00:00.000Z', updatedBy: 'test', ...(currentPhase === undefined ? {} : { currentPhase }), items }, null, 2));
   return path;
 }
 
@@ -249,7 +249,17 @@ test('relay_status：台账存在附 workItems 摘要 + text 末行；空台账 
   assert.equal(report.panel.defaultOperation, null);
   assert.equal(report.panel.autoCompress, false);
   assert.match(report.text, /panel: 模式=问我 · autoChoose=off · autoCompress=off · autoHandoff=off · authorizeNext=off/);
-  assert.match(report.text, /· rev 7 · 更新于 \d+ 分钟前（台账已停滞：phase 边界\/交接前先更新）/);
+  assert.doesNotMatch(report.text, /更新于 \d+ 分钟前/, 'v0.6.0：不再用时间判定台账新鲜度');
+  // v0.6.0：currentPhase 进 workItems 摘要与 text（phase 行 + 焦点行）
+  writeFileSync(join(cwd, WORK_ITEMS_REL), JSON.stringify({
+    version: 1, rev: 8, updatedAt: '2026-11-13T00:00:00.000Z', updatedBy: 'test',
+    currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 7 },
+    items: [{ id: 'p1', title: '分点一', status: 'doing', next: '推进', phase: 'build' }],
+  }, null, 2));
+  const phased = await tools.get('relay_status').execute({}, { agent });
+  assert.equal(phased.workItems.phase.phase, 'build');
+  assert.match(phased.text, /phase: phase build · 分点 0\/1/);
+  assert.match(phased.text, /\[台账·build 0\/1\] doing「分点一」next「推进」/);
 
   // 损坏文件：fail-open 视为空台账 + corrupt=true（文件被隔离备份），不抛、不阻断状态读取。
   writeFileSync(join(cwd, WORK_ITEMS_REL), '{ not json');
@@ -432,7 +442,7 @@ test('relay_phase → ship：workItemsGate=warn 只附 workItemsWarning 不拒�
   }
 });
 
-test('relay_phase 跨 phase：ledger 带上一 phase 未闭合 id（leftover 非空才加）；同 phase/空台账不加字段', async () => {
+test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；items 开分点并落 currentPhase', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   writeLedger(cwd, [
@@ -445,11 +455,23 @@ test('relay_phase 跨 phase：ledger 带上一 phase 未闭合 id（leftover 非
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
-  const toBuild = await call({ phase: 'build', contract_check: CONTRACT_CHECK });
-  assert.equal(toBuild.ledger, undefined, '上一 phase(discover) 无遗留 → 不加 ledger');
-  const toVerify = await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
-  assert.deepEqual(toVerify.ledger.leftover, ['b1', 'b3'], '未闭合=未 done（含 blocked），含 phase=上一 phase 的项');
-  assert.equal(toVerify.ledger.counts.total, 4);
+  // discover→build：discover 无未闭合 → 放行；items 开分点（中文标题回退 point）
+  const toBuild = await call({ phase: 'build', contract_check: CONTRACT_CHECK, items: ['实现闸门'] });
+  assert.equal(toBuild.ledger.phase, 'build');
+  assert.deepEqual(toBuild.ledger.opened, ['point']);
+  assert.equal(toBuild.ledger.planned, 4, 'build 既有 3 条 + 新分点');
+  assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build');
+  // build→verify：b1/b3/point 未收口 → strict 拒绝，零副作用（currentPhase 不变）
+  await assert.rejects(() => call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /refused \(work items, phase open\)/);
+  assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build');
+  // 显式 carry → 放行；条目 phase 改到 verify 并记 carriedFrom
+  const toVerify = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, carry: ['b1', 'b3', 'point'], items: ['验收'] });
+  assert.deepEqual(toVerify.ledger.carried, ['b1', 'b3', 'point']);
+  assert.deepEqual(toVerify.ledger.leftover, undefined, '全部收口/carry → 无 leftover');
+  const file = readLedgerFile(cwd);
+  assert.equal(file.currentPhase.phase, 'verify');
+  assert.equal(file.items.find((item) => item.id === 'b1').phase, 'verify');
+  assert.equal(file.items.find((item) => item.id === 'b1').carriedFrom, 'build');
   assert.equal(toVerify.summary.includes('ledger'), false, 'ledger 只加字段，不改 summary');
 
   const same = await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
@@ -462,6 +484,61 @@ test('relay_phase 跨 phase：ledger 带上一 phase 未闭合 id（leftover 非
   await emptyTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
   const emptySwitched = await emptyTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
   assert.equal(emptySwitched.ledger, undefined, '空台账旧行为不变');
+});
+
+// ── 台账闭环（v0.6.0 事件驱动） ────────────────────────────────────────
+
+test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提示；落账后焦点更新、不重复', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const phaseMeta = { phase: 'build', goal: 'g', since: 1, openedAtRev: 2 };
+  writeLedger(cwd, [
+    { id: 'p1', title: '实现闸门', status: 'doing', next: '写测试', phase: 'build' },
+    { id: 'p2', title: '补文档', status: 'open', phase: 'build' },
+  ], { rev: 2, currentPhase: phaseMeta });
+  const session = fakeSession({ id: 'session-ledger-guard', cwd, seq: 0 });
+  const bundle = applyAgent(fakeServices({ session }).services);
+  const listener = bundle.events.find((event) => event.name === 'agent/pre-step').listener;
+  const post = bundle.events.find((event) => event.name === 'tools/post-execute').listener;
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const step = () => listener({ agent }, async () => undefined);
+
+  await step();
+  assert.equal(injected.length, 1, 'focus line injected once');
+  assert.match(injected[0].content[0].text, /\[台账·build 0\/2\] doing「实现闸门」next「写测试」/);
+  await step();
+  assert.equal(injected.length, 1, 'same focus is not re-injected');
+
+  // 变更类工具成功 → 待落账 → 下一步注入闭环提示
+  await post({ name: 'write', agent, arguments: { file_path: 'lib/x.js' } }, { isError: false }, async () => undefined);
+  await step();
+  assert.equal(injected.length, 2);
+  assert.match(injected[1].content[0].text, /\[闭环\] 上一步改动未落账：write\(x\.js\)/);
+  await step();
+  assert.equal(injected.length, 2, 'closure prompt is not repeated per step');
+
+  // relay_work_items 成功 = 已落账：清 pending；台账 rev/焦点变化 → 下一步注入新焦点
+  await post({ name: 'relay_work_items', agent, arguments: {} }, { isError: false }, async () => undefined);
+  writeLedger(cwd, [
+    { id: 'p1', title: '实现闸门', status: 'done', evidence: ['test/x'], phase: 'build' },
+    { id: 'p2', title: '补文档', status: 'open', phase: 'build' },
+  ], { rev: 3, currentPhase: phaseMeta });
+  await step();
+  assert.equal(injected.length, 3);
+  assert.match(injected[2].content[0].text, /\[台账·build 1\/2\]/);
+  assert.match(injected[2].content[0].text, /未领取：open「补文档」/);
+});
+
+test('台账闭环：空台账/队友会话不注入（旧行为不变）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const lead = fakeSession({ id: 'session-ledger-guard-empty', cwd, seq: 0 });
+  const leadBundle = applyAgent(fakeServices({ session: lead }).services);
+  const leadListener = leadBundle.events.find((event) => event.name === 'agent/pre-step').listener;
+  const leadInjected = [];
+  await leadListener({ agent: { session: lead, inject(message) { leadInjected.push(message); } } }, async () => undefined);
+  assert.equal(leadInjected.length, 0, 'no ledger → no focus/closure noise');
 });
 
 // ── relay_handoff ─────────────────────────────────────────────────────

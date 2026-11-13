@@ -29,6 +29,13 @@ import {
   checkShipGate,
   applyItemUpdates,
   migrateOwner,
+  checkPhaseGate,
+  applyPhaseCarry,
+  createPhaseItems,
+  phaseItemsOf,
+  phaseSummary,
+  phaseFocusLine,
+  phaseLine,
 } from '../lib/agent/work-items.js';
 
 const tempCwd = () => mkdtempSync(join(tmpdir(), 'relay-work-items-'));
@@ -43,8 +50,11 @@ const readSeed = (cwd) => readWorkItems(cwd);
 // ---- config / path ----
 
 test('normalizeWorkItemsConfig：默认 enabled/strict/30，非法 gate 与 max 归一', () => {
-  assert.deepEqual(normalizeWorkItemsConfig(), { enabled: true, gate: 'strict', pathOverride: undefined, max: 30 });
-  assert.deepEqual(normalizeWorkItemsConfig({ workItems: false }), { enabled: false, gate: 'strict', pathOverride: undefined, max: 30 });
+  assert.deepEqual(normalizeWorkItemsConfig(), { enabled: true, gate: 'strict', phaseGate: 'strict', pathOverride: undefined, max: 30 });
+  assert.deepEqual(normalizeWorkItemsConfig({ workItems: false }), { enabled: false, gate: 'strict', phaseGate: 'strict', pathOverride: undefined, max: 30 });
+  assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'warn' }).phaseGate, 'warn');
+  assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'off' }).phaseGate, 'off');
+  assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'nonsense' }).phaseGate, 'strict');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'warn' }).gate, 'warn');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'off' }).gate, 'off');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'STRICT' }).gate, 'strict');
@@ -220,16 +230,17 @@ test('readWorkItems：结构损坏（items 非数组）同样隔离并空台账'
 
 // ---- validate ----
 
-test('validateWorkItems：open/doing 缺 next、blocked 缺原因均逐条报错', () => {
+test('validateWorkItems：doing 缺 next、blocked 缺原因报错（open 允许空 next）', () => {
+  // v0.6.0：open = 未领取，允许 next 为空（phase 分点开张时由宿主创建）。
+  assert.equal(validateWorkItems([{ id: 'aa', title: 'A', status: 'open' }]).ok, true);
   const missingNext = validateWorkItems([
-    { id: 'aa', title: 'A', status: 'open' },
     { id: 'bb', title: 'B', status: 'doing' },
   ]);
   assert.equal(missingNext.ok, false);
   assert.equal(missingNext.code, 'invalid-item');
-  assert.equal(missingNext.errors.length, 2);
-  assert.deepEqual(missingNext.errors.map((error) => error.code), ['missing-next', 'missing-next']);
-  assert.deepEqual(missingNext.errors.map((error) => error.index), [0, 1]);
+  assert.equal(missingNext.errors.length, 1);
+  assert.deepEqual(missingNext.errors.map((error) => error.code), ['missing-next']);
+  assert.deepEqual(missingNext.errors.map((error) => error.index), [0]);
 
   const missingBlocked = validateWorkItems([{ id: 'aa', title: 'A', status: 'blocked' }]);
   assert.equal(missingBlocked.ok, false);
@@ -662,4 +673,84 @@ test('migrateOwner：owner 从旧代迁到新代；无匹配/同代/空台账不
   assert.equal(invalid.ok, false);
   assert.equal(invalid.code, 'invalid-item');
   assert.equal(migrateOwner(cwd, {}).ok, false);
+});
+
+// ---- v0.6.0 phase 元数据 / 关 phase 闸门 ----
+
+test('phase 元数据：currentPhase 读写、不传保留、phaseSummary/phaseFocusLine/phaseLine', () => {
+  const cwd = tempCwd();
+  const written = seed(cwd, [
+    { id: 'gate', title: '实现关账闸门', status: 'doing', next: '写拒绝路径与测试', phase: 'build' },
+    { id: 'docs', title: '写文档', status: 'open', phase: 'build' },
+  ], { currentPhase: { phase: 'build', goal: '台账 phase 化', exitCriteria: '闸门生效', since: 1, openedAtRev: 0 }, updatedBy: 'session-x' });
+  assert.equal(written.ok, true);
+  const read = readWorkItems(cwd);
+  assert.equal(read.currentPhase.phase, 'build');
+  assert.equal(read.currentPhase.goal, '台账 phase 化');
+  assert.equal(read.currentPhase.exitCriteria, '闸门生效');
+  assert.deepEqual(phaseItemsOf(read, 'build').map((item) => item.id), ['gate', 'docs']);
+  const summary = phaseSummary(read);
+  assert.equal(summary.planned, 2);
+  assert.equal(summary.done, 0);
+  assert.equal(summary.pending, 2);
+  assert.equal(summary.doing, 1);
+  assert.match(phaseFocusLine(read), /doing「实现关账闸门」next「写拒绝路径与测试」/);
+  assert.equal(phaseLine(read), 'phase build · 分点 0/2（未闭合 2）');
+  // 不传 currentPhase → 保留原值；显式 null → 清空
+  const kept = seed(cwd, read.items, { rev: read.rev, currentPhase: undefined });
+  assert.equal(kept.ledger.currentPhase.phase, 'build');
+  const readKept = readWorkItems(cwd);
+  const cleared = writeWorkItems(cwd, { items: readKept.items, rev: readKept.rev, currentPhase: null });
+  assert.equal(cleared.ok, true);
+  assert.equal(readWorkItems(cwd).currentPhase, null);
+  // 全部 done → 焦点行提示可以关 phase
+  const done = seed(cwd, [
+    { id: 'gate', title: '实现关账闸门', status: 'done', evidence: ['test/agent.test.mjs'], phase: 'build' },
+  ], { currentPhase: { phase: 'build' } });
+  assert.equal(done.ok, true);
+  assert.match(phaseFocusLine(readWorkItems(cwd)), /分点全闭环/);
+});
+
+test('checkPhaseGate：strict 拒绝未收口；carry 显式带走；warn 放行；空台账放行', () => {
+  const ledger = {
+    exists: true,
+    currentPhase: { phase: 'discover' },
+    items: [
+      { id: 'aa', title: 'A', status: 'open', phase: 'discover' },
+      { id: 'bb', title: 'B', status: 'done', phase: 'discover', evidence: ['e'] },
+      { id: 'cc', title: 'C', status: 'doing', next: 'x', phase: 'build' },
+    ],
+  };
+  const strict = checkPhaseGate(ledger, { phase: 'discover', gate: 'strict' });
+  assert.equal(strict.ok, false);
+  assert.equal(strict.code, 'phase-not-closed');
+  assert.deepEqual(strict.leftover, ['aa']);
+  assert.match(strict.message, /relay_work_items/);
+  const carried = checkPhaseGate(ledger, { phase: 'discover', carry: ['aa'], gate: 'strict' });
+  assert.equal(carried.ok, true);
+  assert.deepEqual(carried.carried, ['aa']);
+  assert.deepEqual(carried.leftover, []);
+  assert.equal(checkPhaseGate(ledger, { phase: 'discover', gate: 'warn' }).ok, true);
+  assert.equal(checkPhaseGate(ledger, { phase: 'discover', gate: 'off' }).ok, true);
+  assert.equal(checkPhaseGate({ exists: false, items: [] }, { phase: 'discover' }).ok, true);
+  const applied = applyPhaseCarry(ledger.items, { carry: ['aa'], from: 'discover', to: 'build' });
+  const moved = applied.find((item) => item.id === 'aa');
+  assert.equal(moved.phase, 'build');
+  assert.equal(moved.carriedFrom, 'discover');
+  assert.equal(applied.find((item) => item.id === 'bb').phase, 'discover');
+});
+
+test('createPhaseItems：标题 → id（中文回退 point、冲突加后缀）、open 无 next、phase 正确', () => {
+  const created = createPhaseItems(['实现关账闸门', '实现关账闸门', 'write tests'], { phase: 'build', existing: [{ id: 'write-tests' }] });
+  assert.equal(created.length, 3);
+  assert.equal(created[0].id, 'point');
+  assert.equal(created[1].id, 'point-2');
+  assert.notEqual(created[2].id, 'write-tests');
+  assert.equal(created[0].phase, 'build');
+  assert.equal(created[0].status, 'open');
+  assert.equal(created[0].next, null);
+  assert.equal(created[0].carriedFrom, null);
+  // 生成后能过整表校验（open 允许空 next）
+  const validated = validateWorkItems(created);
+  assert.equal(validated.ok, true, JSON.stringify(validated));
 });

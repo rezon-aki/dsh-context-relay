@@ -181,11 +181,11 @@ test('apply registers protocol section and six relay tools', () => {
   assert.equal(sections[2].name, 'context-relay:work-ledger');
   assert.equal(sections[2].order, 10154);
   const ledgerText = sections[2].text({});
-  assert.match(ledgerText, /工作台账（多分支任务真源/);
+  assert.match(ledgerText, /工作台账（phase 工作队列/);
   assert.match(ledgerText, /relay_work_items/);
-  assert.match(ledgerText, /不更新 = 新会话与用户面板看不到/);
+  assert.match(ledgerText, /台账不会自动更新/);
   assert.match(ledgerText, /blocked 必须写 blocked 原因/);
-  assert.match(ledgerText, /交接与压缩会自动把未闭合项/);
+  assert.match(ledgerText, /压缩\/交接自动带未闭合项/);
   assert.equal(sections[2].text({ agent: { session: { header: {} } } }), ledgerText, 'root Lead 注入');
   assert.equal(sections[2].text({ agent: { session: { header: { origin: 'subagent' } } } }), '', '普通子代理不注入（无 agentTeams → 非队友）');
   const noLedger = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { workItems: false });
