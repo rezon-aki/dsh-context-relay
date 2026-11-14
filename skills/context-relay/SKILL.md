@@ -125,6 +125,15 @@ disable-model-invocation: true
 - **phase 边界自动 triage（v0.6.1）**：跨 phase 的 `relay_phase` 响应带 `team:{members:[{name,band,action}],pending,hint}`（Lead 有队伍时）——按 band 执行：ok 复用 / warn 收口后 checkpoint / organize·relay 清空复用（freshen reset，0 额度）/ 换身份才 renew；不需要主动查 `relay_team_status`。
 - **上下文不靠记忆（v0.6.3）**：焦点行同一次注入还带 `[上下文] band=…（到线时给边界动作）` 与 `[队友] 队友待处理 N：name(band)…`——Lead 的到线档位与「队友谁需要 Lead 决策」都摆在眼前（事件驱动；快照 `.scratch/context-relay/team-context/<leadSessionId>.json` 落盘，压缩/重启后仍在）。**每次派活前先读状态、由 Lead 判断（Lead 的活，和 Lead 自己的上下文管理是一条线）**：Lead 派活（`send_message` 给空闲队友）时插件先读该队友档位/状态并**先给一个判断点**（deny：本条消息不发出）——到线/读不到：①先管理再派（relay_checkpoint 收口 → relay_freshen({reset:true, brief}) 清空复用，换身份才 renew，处理完重派）；②直接派（原样重发即放行 = Lead 的判断）。在线内也给判断点（直接派 or 先 checkpoint）。忙队友（running）只有到线/读不到才拦，普通协调消息不拦。队友到线/读不到时跨 phase 必须 `relay_phase({…, team_note:"一行处理结论"})` 作为兜底，否则**拒绝**（零副作用）；处理后快照标 handled、焦点行不再重复催。
 
+## 专职架构师（v0.6.4；仅 relay-long）
+
+- **分工**：Lead 只与用户对齐需求 + 读项目文档理解业务；**工程实现路线交给固定队友 `architect`**。
+- **只建一次**：relay_team_status 看队伍，没有就 `spawn_teammate({name:"architect", description:"专职架构师", prompt:"按 Lead 的需求 brief 产出工程实现文档，不实现代码"})`；之后固定复用，不按任务重建。
+- **每次任务低上下文**：架构师只读必须上下文（需求 brief/文档指针/模块入口），交付工程实现文档（默认 `.scratch/context-relay/architecture/<task>.md`：需求对齐/技术路线/模块接口/数据协议/风险取舍/待决策/实现步骤与验收）；交付后只 `relay_checkpoint` 归档并等新任务；**不要让它交付后自行清空**——新任务到达时由 Lead 按需要决定是否 `relay_freshen({reset:true, brief:新任务})` 再派。
+- **决策回人**：文档里的「待决策」由架构师报 Lead，Lead 与用户敲定后再回传；架构师不直接问用户、不自行拍板。
+- **Lead 按文档派实现**（队友/子代理），只做验收抽样；实现偏离文档 → 回问架构师，不自行改路线。
+- **开关**：composer「预算无上限」旁的「架构师」小胶囊（按会话、relay-long 显示）；关掉则 Lead 不外包路线设计（架构师段不注入）。
+
 ## 禁止
 
 - 不在 phase 中间整理历史（破坏前缀缓存、丢在途上下文）。

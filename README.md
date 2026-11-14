@@ -143,6 +143,15 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 没有台账文件时，一切行为与旧版完全相同——它是可选的。
 
+## 专职架构师（固定队友，relay-long）
+
+长任务里最贵的是「路线没想清就开写」。这个模式给团队配一个**固定架构师队友**（名字固定为 `architect`，只建一次、长期复用）：
+
+- **Lead 只做两件事**：与用户对齐需求（边界/验收/取舍）、读项目文档理解业务与现状；
+- **架构师把需求转成工程路线**：每次任务都以**低上下文**开始——只读必须的上下文（Lead 的需求 brief、文档指针、相关模块入口），产出工程实现文档（默认 `.scratch/context-relay/architecture/<task>.md`，含需求对齐/技术路线/模块接口/数据协议/风险取舍/待决策/实现步骤与验收）；交付后**只 `checkpoint` 归档**并等下一任务——**清空发生在新任务到达时**，由 Lead 按需要决定是否 `freshen(reset)`（brief=新任务）再派；任务连续且上下文还低就直接接着做；
+- **需要用户拍板的**：架构师写进文档「待决策」并报 Lead，由 Lead 拿去找你敲定，再把结论回给架构师——架构师不直接问你、不自行替用户决定；
+- **开关**：composer 里「预算无上限」旁边多一个「架构师」小胶囊（只对「接力·超长任务」会话显示），按会话控制 Lead 是否把工程路线设计交给架构师（默认开）；接力到新会话会继承。
+
 ## 配置
 
 宿主插件配置（可选，进阶项）：
@@ -153,6 +162,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `settings` | 六个字段的默认值 | 侧栏卡片的初始默认值；你在界面上保存的值优先。 |
 | `thresholds` | 0.35 / 0.40 / 0.50 | 旧版阈值，只有没有界面设置来源时才用。 |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | 面板和设置文件位置的覆盖。 |
+| `architect` | `true` | 专职架构师开关的**默认值**（composer「架构师」小胶囊按会话覆盖；只在 relay-long 会话生效）。 |
 | `workItems` | `true` | 启用工作台账（工具 + 闸门 + 面板）；`false` 完全回退旧行为。 |
 | `workItemsGate` | `'strict'` | **交付（ship）阶段**的台账校验强度：`strict`（不合格拒绝）/ `warn`（只提示）/ `off`。交接与压缩始终把台账写进材料、文件损坏只警告（fail-open），不受本项影响。 |
 | `workItemsPhaseGate` | `'strict'` | **切阶段（phase 边界）**收口闸门：本阶段未完成的分点未收口且未 carry → `strict` 拒绝切阶段 / `warn` 放行+提示 / `off`。单线程小任务用 `items:[]` 声明放行。 |

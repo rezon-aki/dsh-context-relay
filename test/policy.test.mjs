@@ -431,8 +431,8 @@ test('buildHandoff clips items by Unicode code points and reports caps.chars in 
   assert.ok(markdown.length > caps.chars.used, 'markdown.length 是 code unit，不能当口径');
 });
 
-test('DEFAULT_PANEL_STATE / normalizePanelState: 13 字段白名单（v0.3.3 模型推荐），handoffPreAuthorized 已删除，unlimitedBudget 三值严格化', () => {
-  const keys = ['authorizeNext', 'autoChoose', 'autoCompress', 'autoDecision', 'autoHandoff', 'defaultOperation', 'handedOff', 'handoffPreset', 'handoffUnlimitedBudget', 'recommendedAt', 'recommendedOperation', 'recommendedReason', 'unlimitedBudget'];
+test('DEFAULT_PANEL_STATE / normalizePanelState: 14 字段白名单（v0.3.3 模型推荐 + v0.6.4 架构师），handoffPreAuthorized 已删除，unlimitedBudget/architect 三值严格化', () => {
+  const keys = ['architect', 'authorizeNext', 'autoChoose', 'autoCompress', 'autoDecision', 'autoHandoff', 'defaultOperation', 'handedOff', 'handoffPreset', 'handoffUnlimitedBudget', 'recommendedAt', 'recommendedOperation', 'recommendedReason', 'unlimitedBudget'];
   assert.deepEqual(Object.keys(DEFAULT_PANEL_STATE).sort(), keys);
   assert.equal('handoffPreAuthorized' in DEFAULT_PANEL_STATE, false);
   const state = normalizePanelState({ handoffPreAuthorized: true, autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
@@ -449,6 +449,11 @@ test('DEFAULT_PANEL_STATE / normalizePanelState: 13 字段白名单（v0.3.3 模
   assert.equal(normalizePanelState({ handoffUnlimitedBudget: false }).handoffUnlimitedBudget, false);
   assert.equal(normalizePanelState({ handoffUnlimitedBudget: 'off' }).handoffUnlimitedBudget, null);
   assert.equal(normalizePanelState({}).handoffUnlimitedBudget, null, '缺省 null = 交接时跟随当前会话');
+  // v0.6.4 专职架构师开关：三值严格化（null=跟随 settings 默认 true）
+  assert.equal(normalizePanelState({ architect: true }).architect, true);
+  assert.equal(normalizePanelState({ architect: false }).architect, false);
+  assert.equal(normalizePanelState({ architect: 'true' }).architect, null);
+  assert.equal(normalizePanelState({}).architect, null);
   // v0.2.14 handoffPreset（下一个接力会话模式）：preset id 字符集 1-64 位、字母/数字开头；其余（含旧 panel.json 脏值）归 null
   assert.equal(DEFAULT_PANEL_STATE.handoffPreset, null);
   for (const ok of ['relay', 'relay-long', 'my.mode_1', 'a', 'A'.repeat(64), '9x']) {
@@ -476,11 +481,11 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   assert.equal(thresholdsFromPercent(20).warnRatio, 0.15);
   // 2026-10-25 v2 口径：侧栏设置 = 阈值基准 + 面板各选项默认值（六字段）。
   assert.deepEqual(normalizeSettings({}), DEFAULT_SETTINGS);
-  assert.deepEqual(DEFAULT_SETTINGS, { threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true });
+  assert.deepEqual(DEFAULT_SETTINGS, { threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true });
   // 2026-11-01 用户裁决：默认基准 40% → 35%（提醒 30 / 二次提醒 35 / 硬线 45）。
   assert.deepEqual(thresholdsFromPercent(DEFAULT_SETTINGS.threshold), { ...DEFAULT_THRESHOLDS, warnRatio: 0.3, organizeRatio: 0.35, relayRatio: 0.45 });
   // 六字段往返（'compress-then-handoff' 是 v2 新挡位）
-  const roundTrip = { threshold: 55, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false };
+  const roundTrip = { threshold: 55, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   assert.deepEqual(normalizeSettings(roundTrip), roundTrip);
   // 阈值裁剪只对合法数值生效；非法默认操作归 null；布尔严格化（非 true 一律 false）
   assert.equal(normalizeSettings({ threshold: 99 }).threshold, 85);
@@ -496,7 +501,7 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   // 旧字段（autoPhase/autoContinue/autoApprove 等）一律忽略，绝不回写。
   assert.deepEqual(
     normalizeSettings({ threshold: 55, autoPhase: true, autoContinue: true, autoApprove: true }),
-    { threshold: 55, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true },
+    { threshold: 55, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true },
   );
   assert.deepEqual(normalizeSettings({ autoPhase: true }), DEFAULT_SETTINGS);
   assert.throws(() => normalizeSettings({ threshold: 'nope' }), /finite percentage/);
@@ -505,6 +510,12 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   assert.equal(normalizeSettings({ unlimitedBudget: false }).unlimitedBudget, false);
   for (const bad of ['yes', 1, null, {}, []]) {
     assert.throws(() => normalizeSettings({ unlimitedBudget: bad }), /unlimitedBudget must be a boolean/, '非法 unlimitedBudget 必须拒绝：' + String(bad));
+  }
+  // v0.6.4 专职架构师默认开；只接受布尔
+  assert.equal(normalizeSettings({}).architect, true);
+  assert.equal(normalizeSettings({ architect: false }).architect, false);
+  for (const bad of ['yes', 1, null, {}, []]) {
+    assert.throws(() => normalizeSettings({ architect: bad }), /architect must be a boolean/, '非法 architect 必须拒绝：' + String(bad));
   }
 });
 

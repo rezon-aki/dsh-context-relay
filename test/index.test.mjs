@@ -25,7 +25,7 @@ const PTC_PATCH_FIXED = '/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modul
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 // v0.2.7：host apply 会把 settings 默认值（DEFAULT_SETTINGS.unlimitedBudget=true）发布成面板默认值，
 // 因此路由返回的面板基线包含 unlimitedBudget:true（handoffUnlimitedBudget 缺省 null）。
-const PANEL_DEFAULT = resolvePanelState({ defaults: { unlimitedBudget: true } });
+const PANEL_DEFAULT = resolvePanelState({ defaults: { unlimitedBudget: true, architect: true } });
 
 beforeEach(() => { clearPanelMemory(); delete globalThis[SETTINGS_KEY]; delete globalThis[Symbol.for('dsh-context-relay.warned')]; });
 afterEach(() => { clearPanelMemory(); delete globalThis[SETTINGS_KEY]; });
@@ -516,7 +516,7 @@ test('host: sessionProjections 缺失时安全跳过并 warn，路由/preset 不
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
-  threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true,
+  threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
 });
 
 test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，旧字段忽略', async () => {
@@ -534,7 +534,7 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   assert.equal(got.json.explicit, false, '无 settings 来源时 explicit=false（agent 走 live settings 默认基准 35% → 30/35/45；legacy thresholds 只在部署显式配置时生效）');
   // apply 时把六个字段一起发布到 globalThis（panel-store 据此得到按会话面板的默认值）
   assert.deepEqual(globalThis[SETTINGS_KEY], { ...DEFAULT_SETTINGS, explicit: false });
-  const putBody = { threshold: 60, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false };
+  const putBody = { threshold: 60, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   // rev5.2 互斥（用户口径「把自动提到模式选择去」）：autoChoose 优先 → 同一次 PUT 里的
   // defaultOperation 被清掉；响应/落盘/发布仍六字段。
   const putExpected = { ...putBody, defaultOperation: null };
@@ -561,7 +561,7 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   });
   assert.equal(legacy.out.statusCode, 200);
   // body 显式给 defaultOperation（非法值归一为 null，语义=「问我」预设模式）→ 新语义：关自动（以 body 为准）。
-  assert.deepEqual(legacy.json.settings, { threshold: 65, defaultOperation: null, autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false });
+  assert.deepEqual(legacy.json.settings, { threshold: 65, defaultOperation: null, autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), legacy.json.settings);
   assert.equal(globalThis[SETTINGS_KEY].autoPhase, undefined);
   assert.equal(globalThis[SETTINGS_KEY].autoContinue, undefined);
@@ -573,9 +573,9 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   // rev5.2 两向互斥（侧栏默认值也不能同时持有 auto 与 preset）：显式预设 + 关自动 → 预设生效；
   // 再开自动 → 预设被清。结果仍六字段。
   const modePreset = await callAsync(route, { method: 'PUT', body: JSON.stringify({ defaultOperation: 'handoff', autoChoose: false }) });
-  assert.deepEqual(modePreset.json.settings, { threshold: 85, defaultOperation: 'handoff', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false });
+  assert.deepEqual(modePreset.json.settings, { threshold: 85, defaultOperation: 'handoff', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   const modeAuto = await callAsync(route, { method: 'PUT', body: JSON.stringify({ autoChoose: true }) });
-  assert.deepEqual(modeAuto.json.settings, { threshold: 85, defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false });
+  assert.deepEqual(modeAuto.json.settings, { threshold: 85, defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   assert.equal((await callAsync(route, { method: 'PUT', body: JSON.stringify({ threshold: 1 }) })).json.settings.threshold, 20);
   // 非法请求：body 不是 JSON / threshold 非数字 → 400；方法不支持 → 405
   assert.equal((await callAsync(route, { method: 'PUT', body: 'not-json' })).out.statusCode, 400);
@@ -585,6 +585,9 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   const badBudget = await callAsync(route, { method: 'PUT', body: JSON.stringify({ unlimitedBudget: 'yes' }) });
   assert.equal(badBudget.out.statusCode, 400, '非法 unlimitedBudget → 400');
   assert.equal(badBudget.json.code, 'invalid-settings');
+  const badArchitect = await callAsync(route, { method: 'PUT', body: JSON.stringify({ architect: 'yes' }) });
+  assert.equal(badArchitect.out.statusCode, 400, '非法 architect → 400');
+  assert.equal(badArchitect.json.code, 'invalid-settings');
   assert.equal((await callAsync(route, { method: 'POST' })).out.statusCode, 405);
 });
 
@@ -960,16 +963,22 @@ test('host: PUT /context-relay/panel 持久化到 panel.json 并 GET 回读，�
   assert.equal(put.out.statusCode, 200);
   assert.equal(put.json.persisted, true);
   // handoffPreAuthorized 已删除、未知键丢弃；rev5.2 互斥：同一次 PUT 里 autoChoose=true 优先 → defaultOperation 被清。
-  const expected = resolvePanelState({ defaults: { unlimitedBudget: true }, patch: { defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true } });
+  const expected = resolvePanelState({ defaults: { unlimitedBudget: true, architect: true }, patch: { defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true } });
   assert.deepEqual(put.json.panel, expected);
   // 持久化：panel.json 形如 { sessions: { <sessionId>: 面板状态 } }
   const file = JSON.parse(readFileSync(panelPath, 'utf8'));
   assert.deepEqual(file.sessions['sess-panel-b'], put.json.panel);
   // GET 回读
   assert.deepEqual((await getPanel(host, 'sess-panel-b')).json.panel, put.json.panel);
+  // v0.6.4：architect（专职架构师开关）可经面板 PUT 写入并持久化
+  const archOff = await putPanel(host, { sessionId: 'sess-panel-b', architect: false });
+  assert.equal(archOff.json.panel.architect, false);
+  assert.equal(JSON.parse(readFileSync(panelPath, 'utf8')).sessions['sess-panel-b'].architect, false);
+  const archOn = await putPanel(host, { sessionId: 'sess-panel-b', architect: true });
+  assert.equal(archOn.json.panel.architect, true);
   // 增量 PUT：只改传入键，其余保持
   const patch = await putPanel(host, { sessionId: 'sess-panel-b', defaultOperation: null, autoChoose: false });
-  assert.deepEqual(patch.json.panel, { ...put.json.panel, defaultOperation: null, autoChoose: false });
+  assert.deepEqual(patch.json.panel, { ...archOn.json.panel, defaultOperation: null, autoChoose: false });
   // 非法默认操作归 null（归一化，不 400）
   const bogus = await putPanel(host, { sessionId: 'sess-panel-c', defaultOperation: 'bogus' });
   assert.equal(bogus.json.panel.defaultOperation, null);
@@ -1095,17 +1104,17 @@ test('host: 未改面板的会话 GET panel 返回侧栏默认；改过面板后
   // rev5.2 互斥：侧栏默认同时传 auto 与 preset → autoChoose 优先，preset 落盘为 null。
   assert.equal(saved.json.settings.autoChoose, true);
   assert.equal(saved.json.settings.defaultOperation, null);
-  const sidebarDefaults = { defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: true };
+  const sidebarDefaults = { defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true };
   // 未改过面板的新会话：GET panel 读到侧栏默认值
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.panel, resolvePanelState({ defaults: sidebarDefaults }));
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.settings, { threshold: 50 }); // 面板 GET 保持 v1 形状
   // 面板切到预设模式：显式预设 + 关自动（互斥）→ 整份当前值快照写入本会话（此后不再跟随侧栏默认）
   const changed = await putPanel(host, { sessionId: 'sess-default-a', defaultOperation: 'continue', autoChoose: false });
   assert.equal(changed.out.statusCode, 200);
-  assert.deepEqual(changed.json.panel, resolvePanelState({ defaults: { autoCompress: true, autoHandoff: true, unlimitedBudget: true }, patch: { defaultOperation: 'continue', autoChoose: false } }));
+  assert.deepEqual(changed.json.panel, resolvePanelState({ defaults: { autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true }, patch: { defaultOperation: 'continue', autoChoose: false } }));
   // 侧栏默认再变：未改面板的新会话跟随新默认；改过的会话保持自己的快照
   await putSettings(host, { threshold: 45, defaultOperation: 'compress', autoChoose: false, autoCompress: false, autoHandoff: false });
-  assert.deepEqual((await getPanel(host, 'sess-default-b')).json.panel, resolvePanelState({ defaults: { defaultOperation: 'compress', unlimitedBudget: true } }));
+  assert.deepEqual((await getPanel(host, 'sess-default-b')).json.panel, resolvePanelState({ defaults: { defaultOperation: 'compress', unlimitedBudget: true, architect: true } }));
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.panel, changed.json.panel);
   // 人类在面板把模式写回 null（问我）后覆盖，不回落到侧栏默认 'compress'
   const consumed = await putPanel(host, { sessionId: 'sess-default-b', defaultOperation: null });

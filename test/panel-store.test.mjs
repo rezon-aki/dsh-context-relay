@@ -471,3 +471,12 @@ test('落盘格式：{ sessions: { <id>: 状态 } }，无残留 tmp 文件；面
   // 增量合并：只改传入键，其余保持
   assert.deepEqual(updatePanelState('sess-u', { defaultOperation: null }), { ...next, defaultOperation: null });
 });
+test('architect（v0.6.4）：settings 默认值合并成面板生效值；会话显式写入后按快照覆盖', () => {
+  configurePanelStore({ panelPath: tmpPanelPath() });
+  assert.equal(panelStateOf('sess-arch').architect, null);
+  globalThis[SETTINGS_KEY] = { threshold: 35, architect: false, explicit: true };
+  assert.equal(panelStateOf('sess-arch').architect, false);
+  updatePanelState('sess-arch', { architect: true });
+  globalThis[SETTINGS_KEY] = { threshold: 35, architect: false, explicit: true };
+  assert.equal(panelStateOf('sess-arch').architect, true, '面板写入后不再跟随默认');
+});

@@ -13,7 +13,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 
@@ -571,4 +571,17 @@ test('v0.2.17 D：fail-open——relay_phase 未注册时只 warn，B 与影子�
   // agent.ctx 缺失：两段 restrict 均只 warn、不抛（不阻断会话创建）
   await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent' } } } }));
   assert.ok(f.warns.some((line) => line.includes('subagent restrict skipped: agent.ctx unavailable')), 'ctx 缺失时 D 也 fail-open + warn');
+});
+// ── v0.6.4 专职架构师协议资产 ─────────────────────────────────────────
+test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两段预算与硬约束', () => {
+  assert.equal(ARCHITECT_NAME, 'architect');
+  assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.length <= 900, 'ARCHITECT_LEAD 超预算: ' + ARCHITECT_LEAD_PROTOCOL_TEXT.length);
+  assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.length <= 700, 'ARCHITECT_WORKER 超预算: ' + ARCHITECT_WORKER_PROTOCOL_TEXT.length);
+  for (const phrase of ['专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'spawn_teammate', '同会话只建一次', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
+    assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
+  }
+  for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码']) {
+    assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_WORKER 缺短语: ' + phrase);
+  }
+  assert.ok(!ARCHITECT_WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });

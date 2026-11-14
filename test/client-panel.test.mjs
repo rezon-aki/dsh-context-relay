@@ -101,6 +101,8 @@ const PANEL_DEFAULT = Object.freeze({
   // v0.2.7：composer「预算无上限」胶囊 / v0.2.8：chip「新会话注入『预算无上限』」开关
   unlimitedBudget: true,
   handoffUnlimitedBudget: null,
+  // v0.6.4：composer「专职架构师」胶囊
+  architect: true,
 });
 const LIVE = (overrides = {}) => ({ band: 'organize', used: 410000, window: 1000000, ratio: 0.41, phase: 'build', organizeCount: 1, overBudget: true, updatedAt: Date.now(), ...overrides });
 const SETTINGS_DEFAULT = Object.freeze({ threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true });
@@ -1790,4 +1792,27 @@ test('工作台账：dock 注册（id relay-ledger / order 2，位于 relay-pane
     assert.ok(source.includes(rule), '缺样式规则：' + rule);
   }
   assert.ok(source.includes('maxHeight: "60vh"'), '面板 60vh 高度上限');
+});
+test('RelayArchitectToggle：relay-long 会话渲染「架构师」胶囊，点击 PUT architect；普通 Relay 不渲染', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  const Component = env.slots['relay-architect-toggle'];
+  const instance = env.mount(Component, { sessionId: 'A' });
+  await instance.flush();
+  const pills = byClass(instance.tree, 'relay-v3-chip');
+  assert.equal(pills.length, 1, '渲染一个 chip 风格小胶囊');
+  assert.equal(pills[0].props['aria-pressed'], true);
+  assert.match(textOf(pills[0]), /架构师/);
+  assert.equal(pills[0].props.style.order, 2, 'order:2 排在预算无上限胶囊（order:1）旁边');
+  pills[0].props.onClick();
+  await instance.flush();
+  const put = env.calls.find((call) => call.url === '/context-relay/panel' && call.method === 'PUT');
+  assert.ok(put);
+  assert.deepEqual(JSON.parse(String(put.body)), { sessionId: 'A', architect: false });
+  assert.equal(byClass(instance.tree, 'relay-v3-chip')[0].props['aria-pressed'], false, '按 host 回读面板渲染关闭态');
+  // 普通 Relay（非 relay-long）：不渲染（专职架构师依赖队友保鲜工具）
+  env.server.panel.B = { relay: true, preset: 'relay', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  instance.render({ sessionId: 'B' });
+  await instance.flush();
+  assert.equal(instance.tree, null);
 });

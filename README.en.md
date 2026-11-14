@@ -143,6 +143,15 @@ Long tasks drift: the agent forgets what it set out to do and how far it got. Th
 
 Without a ledger file nothing changes — it is optional.
 
+## The dedicated architect teammate (relay-long)
+
+In long tasks the expensive failure is "start writing before the route is clear". This mode gives the team a **fixed architect teammate** (always named `architect`; created once and reused):
+
+- **The Lead only does two things**: align requirements with the user (boundaries/acceptance/trade-offs) and read the project docs to understand the business and current state;
+- **The architect turns requirements into an engineering route**: it starts every task from a **low context** — reads only the necessary context (the Lead's requirement brief, doc pointers, relevant module entry points) and delivers an engineering implementation document (default `.scratch/context-relay/architecture/<task>.md`: requirement alignment / technical route / module interfaces / data & protocols / risks & trade-offs / open decisions / implementation steps & acceptance). After delivery it only runs `checkpoint` and waits — **the wipe happens when the next task arrives**, when the Lead decides whether a `freshen(reset)` (brief = the new task) is needed before dispatching; if the context is still low and the work is continuous, it just carries on;
+- **Decisions that need the user**: the architect writes them into the document's "open decisions" and reports to the Lead; the Lead brings them to you and passes the conclusion back — it never asks you directly and never decides for you;
+- **Switch**: a small "architect" pill next to the "unlimited budget" pill in the composer (shown only for Relay · very long tasks) controls per session whether the Lead hands engineering-route design to the architect (default on); a handoff inherits it.
+
 ## Configuration
 
 Optional host plugin config (advanced):
@@ -153,6 +162,7 @@ Optional host plugin config (advanced):
 | `settings` | six-field defaults | Initial sidebar defaults; values you save in the UI win. |
 | `thresholds` | 0.35 / 0.40 / 0.50 | Legacy thresholds, used only when no UI settings exist. |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Overrides for the panel/settings file paths. |
+| `architect` | `true` | Default for the dedicated-architect switch (the composer "architect" pill overrides it per session; relay-long only). |
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
 | `workItemsPhaseGate` | `'strict'` | **Phase-close** gate: unfinished points not closed or carried → `strict` refuses the switch / `warn` proceeds with a notice / `off`. Single-thread work declares `items: []`. |

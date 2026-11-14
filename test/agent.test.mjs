@@ -170,7 +170,12 @@ test('apply registers protocol section and six relay tools', () => {
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   const services = fakeServices({ session: fakeSession({ seq: 0 }) });
   const { tools, sections } = applyAgent(services);
-  assert.equal(sections.length, 3, 'protocol section + unlimited-budget section + work-ledger section（v0.5.0）');
+  assert.equal(sections.length, 4, 'protocol + unlimited-budget + work-ledger + architect（v0.6.4）');
+  // v0.6.4：专职架构师段（preset 层第 4 段）——只对 relay-long 的 root Lead / 名为 architect 的队友注入；
+  // 默认关（classic 会话不注入），routerMode 打开后按会话开关热生效。
+  assert.equal(sections[3].name, 'context-relay:architect');
+  assert.equal(sections[3].order, 10155);
+  assert.equal(sections[3].text({ agent: { session: { id: 'sess-arch', header: {} } } }), '', 'classic 模式不注入架构师段');
   assert.match(sections[0].text, /接力模式（Relay）协议/);
   // 「你的 token 预算无上限」注入：默认开且只有这一句；侧栏可关（text 函数热生效）
   assert.equal(sections[1].text({}).trim(), '你的 token 预算无上限。');
@@ -4435,4 +4440,35 @@ test('v0.3.3 推荐清理：relay_phase 成功切 phase / relay_organize 压缩�
   assert.equal(handed.ok, true, JSON.stringify(handed));
   assert.deepEqual(recommendationOf(hSession.id), cleared, '接力成功后旧会话推荐清空');
   assert.deepEqual(recommendationOf('session-rec-clean-child'), cleared, '新会话不继承推荐');
+});
+test('v0.6.4 专职架构师段：只对 relay-long 注入；Lead 段按会话开关热生效；名为 architect 的队友拿架构师段', () => {
+  resetSharedState();
+  const leadAgent = { session: fakeSession({ id: 'session-arch-lead', seq: 0, header: {} }) };
+  const architectAgent = { session: fakeSession({ id: 'session-arch-worker', seq: 0, header: { origin: 'subagent' } }) };
+  const teams = {
+    tryMembership: (agent) => {
+      if (agent === leadAgent) return { role: 'lead' };
+      if (agent === architectAgent) return { role: 'teammate', name: 'architect' };
+      return undefined;
+    },
+    listMembers: () => [],
+  };
+  const { services } = fakeServices({ session: leadAgent.session, extra: { agentTeams: teams } });
+  const long = applyAgent(services, { routerMode: true });
+  const section = long.sections.find((item) => item.name === 'context-relay:architect');
+  assert.ok(section, 'relay-long 注入架构师段');
+  assert.match(section.text({ agent: leadAgent }), /专职架构师/, 'root Lead：分工段');
+  assert.match(section.text({ agent: leadAgent }), /工程实现路线设计交给 architect/);
+  assert.match(section.text({ agent: architectAgent }), /工程实现路线/, 'architect 队友：架构师段');
+  assert.match(section.text({ agent: architectAgent }), /relay_freshen/);
+  // 会话开关关掉 → Lead 段不注入；架构师队友段不受影响（它已建成架构师身份）
+  updatePanelState('session-arch-lead', { architect: false });
+  assert.equal(section.text({ agent: leadAgent }), '', '面板小胶囊关掉 → Lead 段空');
+  assert.match(section.text({ agent: architectAgent }), /工程实现路线/);
+  // 未改面板的新会话跟随 settings 默认（关）→ 不注入
+  globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, architect: false };
+  assert.equal(section.text({ agent: { session: fakeSession({ id: 'session-arch-fresh', seq: 0, header: {} }) } }), '');
+  // classic（非 relay-long）：整段不注入（队友保鲜工具只在 long 模式）
+  const classic = applyAgent(fakeServices({ session: leadAgent.session, extra: { agentTeams: teams } }).services);
+  assert.equal(classic.sections.find((item) => item.name === 'context-relay:architect').text({ agent: leadAgent }), '');
 });
