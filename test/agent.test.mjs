@@ -2160,9 +2160,11 @@ test('approval gate: handoff / forced second organize ask for official approval;
   assert.equal(missing.info.code, 'relay-approval-unavailable');
   assert.match(missing.reason, /handoffApproval="off"/);
 
-  // handoffApproval='off'：不注册 gate；human_approved 参数仍在工具体内守卫
+  // handoffApproval='off'：不注册审批 gate；human_approved 参数仍在工具体内守卫
+  // （v0.6.3：报数时排除派活闸门——它挂在 pre-execute 上但不属于审批）。
   const off = applyAgent(fakeServices({ session: fakeSession({ id: 'session-approval-off', cwd }) }).services, { handoffApproval: 'off' });
-  assert.equal(off.events.filter((event) => event.name === 'tools/pre-execute').length, 0);
+  const offGates = off.events.filter((event) => event.name === 'tools/pre-execute').map((event) => event.listener);
+  assert.equal(offGates.filter((listener) => listener.name !== 'dshContextRelayDispatchGate').length, 0);
   const offRefused = await off.tools.get('relay_handoff').execute({ status: { goal: 'x' } }, { agent: { session: fakeSession({ id: 'session-approval-off-tool', cwd }), options: {} } });
   assert.equal(offRefused.ok, false);
   assert.equal(offRefused.code, 'human-approval-required');

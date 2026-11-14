@@ -17,6 +17,7 @@ import { createTeamTools } from '../lib/agent/team-tools.js';
 import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
+import { readTeamContext } from '../lib/agent/team-context.js';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
@@ -580,12 +581,12 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   assert.match(injected[2].content[0].text, /未领取：open「补文档」/);
 });
 
-test('relay_phase 跨 phase：有队伍时自动带队友 triage（不轮询）；无队伍不加字段', async () => {
+test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处理未写 team_note 拒绝（零副作用）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-team-triage', cwd, seq: 0 });
   const teams = {
-    tryMembership: () => ({ role: 'lead' }),
+    tryMembership: () => ({ role: 'lead', root: { session: { id: 'session-team-triage' } } }),
     listMembers: () => [
       { id: 'session-m1', name: 'mate-1', role: 'teammate', status: 'inactive' },
       { id: 'session-m2', name: 'mate-2', role: 'teammate', status: 'inactive' },
@@ -598,13 +599,31 @@ test('relay_phase 跨 phase：有队伍时自动带队友 triage（不轮询）�
     },
   };
   const bundle = applyAgent(fakeServices({ session, extra: { agentTeams: teams, sessionQuery } }).services);
-  const result = await bundle.tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  const phase = bundle.tools.get('relay_phase');
+  const ctxFile = join(cwd, '.scratch/context-relay/team-context/session-team-triage.json');
+
+  // 队友 mate-1 到 organize 且没写 team_note：phase 边界拒绝（不静默忘记队友上下文）。
+  await assert.rejects(
+    phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } }),
+    /team context.*mate-1.*team_note/s,
+  );
+  assert.ok(!existsSync(join(cwd, WORK_ITEMS_REL)), '拒绝路径不写台账');
+  assert.ok(!existsSync(ctxFile), '拒绝路径不写队友上下文快照');
+
+  // 写了处理结论才放行；triage 全量返回，快照落盘且 handler 标记已处理（焦点行不再重复催）。
+  const result = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK, team_note: 'mate-1 已 checkpoint，边界后 freshen(reset) 复用' }, { agent: { session, options: {} } });
   assert.equal(result.team.members.length, 2);
   assert.deepEqual(result.team.members.map((row) => row.name), ['mate-1', 'mate-2']);
   assert.equal(result.team.members[0].band, 'organize');
   assert.match(result.team.members[0].action, /relay_freshen\(\{reset:true/);
   assert.deepEqual(result.team.pending, ['mate-1']);
+  assert.deepEqual(result.team.handled, ['mate-1']);
+  assert.match(result.team.note, /freshen/);
   assert.match(result.team.hint, /不要轮询/);
+  const snapshot = JSON.parse(readFileSync(ctxFile, 'utf8'));
+  assert.deepEqual(snapshot.rows.map((row) => row.name), ['mate-1', 'mate-2']);
+  assert.deepEqual(snapshot.handled, ['mate-1']);
+  assert.equal(readTeamContext(cwd, 'session-team-triage').pending.length, 0, '已处理的不再是待处理');
 
   // 无队伍：不加 team 段（旧行为不变）
   const plainSession = fakeSession({ id: 'session-team-triage-plain', cwd, seq: 0 });

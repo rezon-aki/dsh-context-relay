@@ -123,6 +123,7 @@ disable-model-invocation: true
 - **面板**：composer 状态条旁「台账 N/M」胶囊；只读，编辑走工具。
 - **队友状态不轮询**：`relay_team_status` 状态没变的重复查询会被拒绝；回执自动送达；等队友 = 结束回合或推进队列下一分点。
 - **phase 边界自动 triage（v0.6.1）**：跨 phase 的 `relay_phase` 响应带 `team:{members:[{name,band,action}],pending,hint}`（Lead 有队伍时）——按 band 执行：ok 复用 / warn 收口后 checkpoint / organize·relay 清空复用（freshen reset，0 额度）/ 换身份才 renew；不需要主动查 `relay_team_status`。
+- **上下文不靠记忆（v0.6.3）**：焦点行同一次注入还带 `[上下文] band=…（到线时给边界动作）` 与 `[队友] 队友待处理 N：name(band)…`——Lead 的到线档位与「队友谁需要 Lead 决策」都摆在眼前（事件驱动；快照 `.scratch/context-relay/team-context/<leadSessionId>.json` 落盘，压缩/重启后仍在）。**每次派活前先读状态、由 Lead 判断（Lead 的活，和 Lead 自己的上下文管理是一条线）**：Lead 派活（`send_message` 给空闲队友）时插件先读该队友档位/状态并**先给一个判断点**（deny：本条消息不发出）——到线/读不到：①先管理再派（relay_checkpoint 收口 → relay_freshen({reset:true, brief}) 清空复用，换身份才 renew，处理完重派）；②直接派（原样重发即放行 = Lead 的判断）。在线内也给判断点（直接派 or 先 checkpoint）。忙队友（running）只有到线/读不到才拦，普通协调消息不拦。队友到线/读不到时跨 phase 必须 `relay_phase({…, team_note:"一行处理结论"})` 作为兜底，否则**拒绝**（零副作用）；处理后快照标 handled、焦点行不再重复催。
 
 ## 禁止
 
