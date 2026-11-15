@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { clearSharedMemory, markPendingArchitect } from '../lib/agent/shared.js';
@@ -121,9 +121,11 @@ test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执�
   // 度量引用（与 relay_status.delegation 字段联动）
   assert.match(text, /relay_status\.delegation/);
   assert.match(text, /relay_status\.compaction\.debt/);
-  // lead-exec / build/verify owner 口径由 base 与工作台账段承载（ROUTER 不重复）
+  // lead-exec / build/verify owner 口径唯一真源在 base §派活与回执；ROUTER/LEDGER 只留指针（P3 去重）
   assert.ok(PROTOCOL_TEXT.includes('lead-exec'));
-  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('build/verify 分点 owner 必须是 worker'));
+  assert.ok(PROTOCOL_TEXT.includes('build/verify 分点 owner 必须是 worker'));
+  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('见 §派活与回执'));
+  assert.equal(WORK_LEDGER_PROTOCOL_TEXT.includes('build/verify 分点 owner 必须是 worker'), false);
 });
 
 test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () => {
@@ -135,14 +137,12 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '默认 4 人', 'maxActiveSubagents', '容量保全', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER ≤2689', () => {
-  // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
-  // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
-  // v0.5.0：新增「等待纪律」（约 110 字符）后上调到 5550；仍是硬上限，不是取消。
-  // v0.9.0 批次3实测 PROTOCOL 6744 / PROTOCOL_TEXT_LONG 6664 / ROUTER 2639 / TEAM_LEAD 796；预算按实测+50向上取整，保留全部硬约束（ROUTER 因旧 PTC 模板实测小于设计预估，预算取实测 2639+50 向上取整=2689，仍较批次2的 3250 净降）。
-  // 这里约束常驻注入字符体积，不是文档落盘硬门；保留全部必需短语断言。
-  assert.ok(PROTOCOL_TEXT.length <= 6800, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2689, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / LONG ≤6460 / ROUTER ≤2000', () => {
+  // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
+  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / LONG ≤6,460 / ROUTER ≤2,000；实施实测 6,527/6,423/1,944，均有余量（HEAD 6,744/6,664/2,639）。
+  // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
+  assert.ok(PROTOCOL_TEXT.length <= 6560, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '四段式', '只提醒不拒绝', '容量保全', '≥85%', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '默认 4 人', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
@@ -171,12 +171,22 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER �
     'lead-exec',
     '目标 ≤20%',
     'warn 档只提醒',
+    // 合同条款（P3 零删：只删重复说明，纪律本体仍在 base；内容重复断言见下条真源唯一性测试）
+    '验收用户门（实现者自查有盲区）',
+    '必须让新上下文的模型做一次独立审查，再向用户汇报',
+    '边界问题即发现即报',
+    '人类注意力最小高影响',
+    '问题批量一次问清',
+    '不限题数',
+    'P0/不可逆',
+    '超时≠同意',
+    '授权口径（唯一真源）',
   ];
   for (const phrase of protocolRequired) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
   const routerRequired = [
-    '用户汇报规范', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：', '默认 4 人', 'maxActiveSubagents', '满额排队/报阻塞',
+    '用户汇报规范', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
     "不设自做额度",
     "用户交互、决策、派活、验收抽样",
     "验收抽样（≤3 次/phase",
@@ -184,9 +194,15 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER �
     "目标 ≤20%",
     "warn 档只提醒",
     "strict 留 v0.10.0",
-    "面板默认档",
-    "新会话默认=压缩继续",
-    "不继承旧模式/授权",
+    // 固定小队语义：细节真源在 PROTOCOL base/TEAM_LEAD，ROUTER 只留短语 + 指针
+    '固定小队',
+    '成员额度',
+    'relay_team_status',
+    '见 §队友保鲜',
+    '见 §Phase 状态机',
+    '面板默认档',
+    '新会话默认=压缩继续',
+    '不继承旧模式/授权',
     'root Lead，只调度、不执行',
     '不设「小任务自己干」例外',
     'relay_dispatch',
@@ -207,6 +223,11 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER �
   for (const phrase of routerRequired) {
     assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 硬约束短语缺失: ' + phrase);
   }
+  // 已上收到 PROTOCOL base 的小队口径：ROUTER 不再重复（P3 唯一真源）
+  for (const phrase of ['默认 4 人', 'maxActiveSubagents', '满额排队/报阻塞']) {
+    assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺小队口径: ' + phrase);
+    assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复小队口径: ' + phrase);
+  }
   // 阈值不得写死在常驻协议（按百分比/30·35·45 数字判断）
   assert.ok(!/(^|[^0-9])(30|35|45)\s*%/.test(PROTOCOL_TEXT), '协议不得写死阈值百分比');
   // v0.2.15 审查 P1/P2 回归：旧误导措辞不得回到常驻协议（lessons 实际注入 3 条；autoChoose 不是「自动授权」）
@@ -215,6 +236,56 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER �
   for (const text of [PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT]) assert.doesNotMatch(text, /固定 2[-–]4 人|小任务可以自干/);
   // v0.2.17 A1：默认协议注入整个 preset（队友/子智能体也收到），不得再自称「你是 Lead」
   assert.ok(!PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'), '协议不得再对 worker 误称「你是 Lead」');
+});
+
+test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（防删防回潮）', () => {
+  // P3 目标：每句纪律只有一处真源（root 常驻 5 段合起来按出现次数断言），ROUTER/TEAM_LEAD/LEDGER 只留指针/摘要。
+  const resident = [PROTOCOL_TEXT_LONG, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, WORK_LEDGER_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT].join('\n');
+  const countIn = (haystack, phrase) => haystack.split(phrase).length - 1;
+  // 1) 真源句 occurrence==1（base 承载；任何一段复制都会超 1）
+  for (const phrase of ['不产生审批豁免', '免审只来自 autoCompress', '模式只决定「做什么」', '升线 notice 只告知', '派活 brief 五字段缺一不可', '回执契约（写进 worker brief）', '授权口径（唯一真源）', 'lead-exec:<原因>']) {
+    assert.equal(countIn(resident, phrase), 1, '真源句应恰好出现 1 次: ' + phrase + '（实际 ' + countIn(resident, phrase) + '）');
+  }
+  // 2) P3 上收的小队口径：只在 PROTOCOL base 出现；ROUTER/TEAM_LEAD 只留指针
+  for (const phrase of ['默认 4 人', 'maxActiveSubagents', '满额排队/报阻塞']) {
+    assert.equal(countIn(resident, phrase), 1, '上收口径应只出现 1 次: ' + phrase);
+    assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复: ' + phrase);
+    assert.equal(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), false, 'TEAM_LEAD 不应重复: ' + phrase);
+  }
+  // 3) 指针可解析：ROUTER/LEDGER 的「见 §…」对应真源段真实存在
+  for (const phrase of ['见 §队友保鲜', '见 §Phase 状态机']) {
+    assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 缺指针: ' + phrase);
+  }
+  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('见 §派活与回执'), 'LEDGER 缺 §派活与回执 指针');
+  assert.ok(PROTOCOL_TEXT_LONG.includes('## Phase 状态机'), '指针目标缺失: ## Phase 状态机');
+  assert.ok(PROTOCOL_TEXT_LONG.includes('## 派活与回执'), '指针目标缺失: ## 派活与回执');
+  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('## 队友保鲜'), '指针目标缺失: ## 队友保鲜');
+  // 4) 合同条款清单：P3 只删重复句，条款本体必须仍在 PROTOCOL base
+  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承']) {
+    assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 合同条款缺失: ' + phrase);
+  }
+  // 5) 旧口径清零（批次1–3 的既有禁令在 P3 后仍不得回潮）
+  for (const oldPhrase of ['只作异常信号', '不设允许比例', 'PTC dispatch 模板', '小任务可以自干']) {
+    assert.equal(resident.includes(oldPhrase), false, '旧口径回潮: ' + oldPhrase);
+  }
+});
+
+test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防过度删）', () => {
+  const resident = PROTOCOL_TEXT_LONG.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
+  // 批次4 实测 11,324（HEAD 12,572，−1,248 / −9.9%）；预算 11,360/11,000 按设计给定；下限防为预算删过头。
+  assert.ok(resident <= 11360, 'root 常驻合计超预算: ' + resident);
+  assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
+});
+
+test('v0.9.0 批次4 P1：WORK_LEDGER 承载注入去重行为说明（P3 新文本）', () => {
+  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.length <= 1690, 'WORK_LEDGER 超预算: ' + WORK_LEDGER_PROTOCOL_TEXT.length);
+  for (const phrase of ['焦点文本变化', 'rev 变化不算', '同一 step 最多一条 notice', '重启后首次汇总一次', '首次派活或档位/状态变化', '后续派活直接放行', '派活判断点（只在首次/状态变化时打断）']) {
+    assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺 P1 行为句: ' + phrase);
+  }
+  // 其余台账规则逐字保留（P3 只把重复说明改指针）
+  for (const phrase of ['台账是 **Lead 的项目管理队列**', '官方任务板为准', 'officialTaskId', '默认上限 30', 'archive.path/count', 'build→verify 默认 warn 校验', 'strict 留 v0.10.0', 'phase 边界响应自动带队友 triage']) {
+    assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺既有规则: ' + phrase);
+  }
 });
 
 test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/到线/边界/写范围', () => {
@@ -237,8 +308,9 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
   assert.ok(!WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });
 
-test('v0.3.2 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
-  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 850, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
+test('v0.3.2/v0.9.0 批次4 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
+  // 批次4 P3：TEAM_LEAD 796→614（删与 ROUTER/base 重复的「默认 4 人小队」与「不轮询」段），预算 = 实测+50 向上取整。
+  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 670, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
   for (const phrase of ['队友是长期资产', 'relay_team_status', 'relay_checkpoint', 'relay_renew', '没有 checkpoint 不换代', 'escalation', 'ledger/roster']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
@@ -294,14 +366,16 @@ test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁�
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root 注入 Router + 队友保鲜段');
 });
 
-test('v0.3.8/v0.9.0 单模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式」且为唯一注入 base', () => {
-  // 预算与短语：长版本由 classic 派生，仍承载全部硬约束；只去掉长模式不存在的档位。
-  assert.ok(PROTOCOL_TEXT_LONG.length <= 6750, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
+test('v0.3.8/v0.9.0/v0.9.0 批次4 单模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式 / 派生插入句」且为唯一注入 base', () => {
+  // 预算与短语：长版本由 classic 派生（保留 :77/:79 两个 replace），仍承载全部硬约束；只去掉长模式不存在的档位。
+  // 批次4 P3：删除 :78 的第二个 replace（旧 LONG 额外插入「本模式只有这三档，没有『压缩后立即开新会话』档」24 字符）——
+  // 三档说明已由 PROTOCOL base §Phase 状态机 / ROUTER 承载，不再在 LONG 派生里重复。
+  assert.ok(PROTOCOL_TEXT_LONG.length <= 6460, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
   assert.ok(!PROTOCOL_TEXT_LONG.includes('压缩→新会话'), '长模式协议不得出现已移除档位');
   assert.ok(!PROTOCOL_TEXT_LONG.includes('两段式'), '长模式协议不得出现两段式说明');
+  assert.ok(!PROTOCOL_TEXT_LONG.includes('本模式只有这三档'), 'P3 删除的派生插入句不得回归');
   for (const phrase of [
     '继续/压缩继续/接力新会话',
-    '本模式只有这三档',
     '模式只决定「做什么」',
     '不产生审批豁免',
     'phase 边界闸门',
@@ -310,7 +384,7 @@ test('v0.3.8/v0.9.0 单模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩�
   ]) {
     assert.ok(PROTOCOL_TEXT_LONG.includes(phrase), '长模式协议缺短语: ' + phrase);
   }
-  // classic 文本不变：仍支持四档与两段式。
+  // classic 文本不变：仍支持四档与两段式（classic-only 句子保留在派生源）。
   assert.ok(PROTOCOL_TEXT.includes('压缩→新会话'));
   assert.ok(PROTOCOL_TEXT.includes('两段式'));
 

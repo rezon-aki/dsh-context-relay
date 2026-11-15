@@ -768,6 +768,61 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   assert.match(injected[2].content[0].text, /未领取：open「补文档」/);
 });
 
+test('台账闭环：未落账签名去重（同签名不重复；count 不变内容变 → 重提示；落账清空后同签名再提示）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const phaseMeta = { phase: 'build', goal: 'g', since: 1, openedAtRev: 2 };
+  writeLedger(cwd, [{ id: 'p1', title: '实现闸门', status: 'doing', next: '写测试', phase: 'build' }], { rev: 2, currentPhase: phaseMeta });
+  const session = fakeSession({ id: 'session-ledger-sig', cwd, seq: 0 });
+  const bundle = applyAgent(fakeServices({ session }).services);
+  const listener = bundle.events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
+  const post = bundle.events.find((event) => event.name === 'tools/post-execute').listener;
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const step = () => listener({ agent }, async () => undefined);
+  const mutate = (path) => post({ name: 'write', agent, arguments: { file_path: path } }, { isError: false }, async () => undefined);
+
+  await step(); // 首步：只有焦点行
+  assert.equal(injected.length, 1);
+  assert.doesNotMatch(injected[0].content[0].text, /\[闭环\]/);
+
+  await mutate('a.js');
+  await step();
+  assert.equal(injected.length, 2);
+  assert.equal(
+    injected[1].content[0].text,
+    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。',
+    'P1 内容等价：闭环行文本与旧 builder 逐字一致',
+  );
+  await step();
+  assert.equal(injected.length, 2, '同签名不重复提示');
+
+  // count 变化 → 重提示（b/c 两次改动同一步注入一次）
+  await mutate('b.js');
+  await mutate('c.js');
+  await step();
+  assert.equal(injected.length, 3, '签名变化提示一次');
+  assert.match(injected[2].content[0].text, /write\(a\.js\) \/ write\(b\.js\) \/ write\(c\.js\)/);
+
+  // count 封顶 3 后内容滚动（slice(-3)）→ 签名变化必然重提示一次（旧 count 键会漏）
+  await mutate('d.js');
+  await step();
+  assert.equal(injected.length, 4, 'count 不变但内容变 → 重提示');
+  assert.match(injected[3].content[0].text, /write\(b\.js\) \/ write\(c\.js\) \/ write\(d\.js\)/);
+  assert.doesNotMatch(injected[3].content[0].text, /write\(a\.js\)/);
+  await step();
+  assert.equal(injected.length, 4, '同签名不再重复');
+
+  // relay_work_items 成功 = 已落账：清 pending → 再次同样改动 = 新事件，重新提示一次
+  await post({ name: 'relay_work_items', agent, arguments: {} }, { isError: false }, async () => undefined);
+  await step();
+  assert.equal(injected.length, 4, '落账清空本身不注入');
+  await mutate('d.js');
+  await step();
+  assert.equal(injected.length, 5, '清空后同签名重新提示一次');
+  assert.match(injected[4].content[0].text, /\[闭环\] 上一步改动未落账：write\(d\.js\)/);
+});
+
 test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处理未写 team_note 只 warning（放行）', async () => {
   resetSharedState();
   const cwd = tmpCwd();

@@ -8,6 +8,8 @@ disable-model-invocation: true
 
 > **v0.8.0 更新（文档系统 v2）**：所有字节/条数上限只做 advisory——**不拒绝、不截断丢数据**；超界归档或把完整内容落盘 + 给指针。新增 `relay_doc`（index/list/read/search/lint）与文档分层（L0 索引 / L1 先读 / L2 按需 / raw 原始）；handoff 改为「有界摘要注入 + 完整交接单落盘按需取」；progress/lessons/chain/team 超界归档（不淘汰）。旧文中出现的 ≤8KB / ≤4KB / 「淘汰」「拒绝」描述按此更新；其余操作流程不变。
 
+> **v0.9.0 批次4 更新（注入削减 B 档）**：① **P1 注入去重**——台账焦点行只在**焦点文本变化**时注入（rev 变化不算）、`[上下文]` 只在档位/边界动作变化时出现（到线 notice 已带的不重复）、`[闭环]` 同一未落账签名只提示一次、`[队友]` 只在新队友或档位上升时出现；同一 step 最多一条 notice（到线/边界优先），重启后首次汇总一次；派活判断点按（target, band, status）**首次/变化才打断**，同状态后续派活直接放行（退役代恒拦）。② **P2 结果摘要化**——`relay_phase` 成功结果新增人类可读 `text`（`render` 返回 text）；结构化字段保留，仅删除入参回显 `goal`/`exit_criteria`。③ **P3 常驻协议去重**——纪律唯一真源在 PROTOCOL base，ROUTER/队友保鲜/台账段只留摘要与指针（§Phase 状态机 / §派活与回执 / §队友保鲜）；root 常驻 12,572→11,324 字符（−9.9%），合同条款一字不删。
+
 ## 何时用
 
 用户选择「接力模式（Relay）· 超长任务」时使用：v0.9.0 起为唯一生产模式，内部 id `relay-long`；classic `relay` 仅迁移期同行为别名，v0.10.0 删除兼容。
@@ -33,6 +35,8 @@ disable-model-invocation: true
    - 选 B 时：先要一次明确 Go/No-go（目标是否仍正确 / P0 未决项是否裁决 / 丢弃上下文里有没有人类需要的 why）；`relay_handoff` 只在面板 `autoHandoff`=on 或「授权下一次操作」（`authorizeNext`）时跳过官方 `tools/pre-execute` 审批（rev5.5：模式不产生豁免）（否则浏览器面板确认，**fail-closed**，仅宿主 config `handoffApproval='off'` 可关）。旧会话保留为审计档。新会话**默认继承旧会话的模型路由与权限档**（返回体 `inherited`；`inheritOnHandoff=false` 关闭）——注意这等于把旧会话的 `danger-full-access`/`never` 也带过去，人工确认点就是这次审批（或面板显式授权）。
    - 人类/面板也可以选「继续」或「先不压缩也不接力」：按当前上下文继续，不自行决定。
 5. **handoff 半创建**：若返回 `halfCreated:true`（会话已建但 live/followup 失败），插件会 best-effort 清理并提示重试；workspace attach 失败不阻断交付（`ok:true` + `info.code='relay-attach-failed'`，事后在会话列表手动 attach cwd）。
+
+> **v0.9.0 批次4（P2 结果摘要化）**：`relay_phase` 成功结果新增人类可读 `text`（`render` 返回 text，与 `relay_status` 同模式），固定前缀行 `phase:/exit:/context:/budget:/ledger:/team:/user_gate:/warnings:/delegation:/lessons:/next:/hint:/summary:`，总长软上限 1,600；结构化字段保留（PTC/测试仍可读），`goal`/`exit_criteria` 入参回显删除；错误/拒绝/校验顺序与零副作用不变。
 
 ## Lead 职责（只管理，不亲自执行；设计 #63/#64/#59）
 
@@ -139,7 +143,7 @@ disable-model-invocation: true
 
 - **什么时候用**：长任务 / 多分支（多模块、多路调研、多队友各管一块）/ 要跨 phase、压缩或交接时。台账是**当前 phase 的队列**，插件负责把队列摆到眼前，不靠模型自觉。
 - **开 phase 列分点**：`relay_phase({phase, items:["…","…"]})` 登记 1–8 条（单线程小任务 `items: []`）；新条目默认 phase=当前 phase，跨 phase 用 `carry:["id"]` 显式带走（记 carriedFrom）。
-- **闭环（事件驱动，不看时间）**：焦点行 `[台账·build 2/4] doing「…」next「…」` 只在焦点变化时注入；变更类工具（write/edit/bash…）成功但没落账 → 下一步提示「[闭环] 上一步改动未落账」；分点 done 后提示下一个；relay_work_items 成功即视为已落账。
+- **闭环（事件驱动，不看时间）**：焦点行 `[台账·build 2/4] doing「…」next「…」` 只在**焦点文本变化**时注入（rev 变化不算；同一 step 到线/边界 notice 优先，最多一条）；变更类工具（write/edit/bash…）成功但没落账 → 下一步提示「[闭环] 上一步改动未落账」（同一未落账签名只提示一次）；分点 done 后提示下一个；relay_work_items 成功即视为已落账。
 - **关 phase 闸门**：本 phase 未 done 的分点应收口（done 要 evidence / blocked 写原因）或 carry；默认 warn 提示，`workItemsPhaseGate` 可配置 strict 拒绝或 off。
 - **读写**：relay_work_items()读；仅Lead整表替换（rev乐观锁）；队友/子代理不读写；派活/收口用 relay_dispatch/relay_collect（自动写 owner+next 并置 doing / 读 digest 后置 done 或 blocked）。会话级文件 `.scratch/context-relay/work-items/<session>.json`，交接复制到新会话。
 - **字段规则**：执行状态/依赖/验收以官方任务板为准，台账只引用 officialTaskId，不复制；台账status只表示Lead管理动作。open可无next，doing须next，blocked须原因，done须evidence（ship严格校验）；**build/verify 分点 owner 必须写 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`**（build→verify 默认 warn 校验，strict 留 v0.10.0）。默认上限30，超限先归档done到同目录 `<session>-archive.ndjson`；无done可归档才拒绝新增，归档失败不写台账；archive.path/count可查，不自动删。
@@ -148,7 +152,7 @@ disable-model-invocation: true
 - **面板**：composer 状态条旁「台账 N/M」胶囊；只读，编辑走工具。
 - **队友状态不轮询**：`relay_team_status` 状态没变的重复查询会被拒绝；回执自动送达；等队友 = 结束回合或推进队列下一分点。
 - **phase 边界自动 triage（v0.6.1）**：跨 phase 的 `relay_phase` 响应带 `team:{members:[{name,band,action}],pending,hint}`（Lead 有队伍时）——按 band 执行：ok 复用 / warn 收口后 checkpoint / organize·relay 清空复用（freshen reset，0 额度）/ 换身份才 renew；不需要主动查 `relay_team_status`。
-- **上下文不靠记忆（v0.6.3）**：焦点行同一次注入还带 `[上下文] band=…（到线时给边界动作）` 与 `[队友] 队友待处理 N：name(band)…`——Lead 的到线档位与「队友谁需要 Lead 决策」都摆在眼前（事件驱动；快照 `.scratch/context-relay/team-context/<leadSessionId>.json` 落盘，压缩/重启后仍在）。**每次派活前先读状态、由 Lead 判断（Lead 的活，和 Lead 自己的上下文管理是一条线）**：Lead 手工 `send_message` 派活时，插件先读该队友档位/状态并**先给一个判断点**（deny：本条消息不发出；`relay_dispatch` 内置同样的档位检查，脏上下文默认拒绝）——到线/读不到：①先管理再派（relay_checkpoint 收口 → relay_freshen({reset:true, brief}) 清空复用，换身份才 renew，处理完重派）；②直接派（原样重发即放行 = Lead 的判断）。在线内也给判断点（直接派 or 先 checkpoint）。忙队友（running）只有到线/读不到才拦，普通协调消息不拦。队友到线/读不到时跨 phase 建议 `relay_phase({…, team_note:"一行处理结论"})` 作为兜底，缺失只warning，不拒绝；处理后快照标 handled、焦点行不再重复催。
+- **上下文不靠记忆（v0.6.3；批次4 起去重）**：焦点行同一次注入还会带 `[上下文] band=…`（只在档位/边界动作变化时出现，到线 notice 已带的不重复）、`[队友] 队友待处理 N：name(band)…`（只在新队友或档位上升时出现）与 `[闭环]` 提示——事件驱动，同一 step 最多一条 notice，重启后首次汇总一次；快照 `.scratch/context-relay/team-context/<leadSessionId>.json` 落盘，压缩/重启后仍在。**每次派活前先读状态、由 Lead 判断（Lead 的活，和 Lead 自己的上下文管理是一条线）**：Lead 手工 `send_message` 派活时，插件先读该队友档位/状态，**首次派活或档位/状态变化**时给一次判断点（deny：本条消息不发出；`relay_dispatch` 内置同样的档位检查，脏上下文默认拒绝）——到线/读不到：①先管理再派（relay_checkpoint 收口 → relay_freshen({reset:true, brief}) 清空复用，换身份才 renew，处理完重派）；②直接派（原样重发即放行 = Lead 的判断）。同档位/状态的后续派活直接放行，不再重复打断（退役代恒拦）。忙队友（running）只有到线/读不到才拦，普通协调消息不拦。队友到线/读不到时跨 phase 建议 `relay_phase({…, team_note:"一行处理结论"})` 作为兜底，缺失只warning，不拒绝；处理后快照标 handled、焦点行不再重复催。
 
 ## 专职架构师（单一模式）
 

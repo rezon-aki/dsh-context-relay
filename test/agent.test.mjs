@@ -324,9 +324,10 @@ test('apply registers protocol section and six relay tools', () => {
   assert.match(sections[0].text, /phase 边界闸门/);
   assert.match(sections[0].text, /不开新 phase/);
   assert.match(sections[0].text, /不挡当前 phase 的工作/);
-  // v0.9.0 D8=A：两段式档位退役——注入的长模式 base 明确「只有这三档、没有压缩后立即开新会话」；
-  // 直接接力路径仍写明（不要先调 relay_phase 触发闸门）。
-  assert.match(sections[0].text, /没有「压缩后立即开新会话」档/);
+  // v0.9.0 D8=A + 批次4 P3：两段式档位退役；P3 删掉 LONG 派生插入句「本模式只有这三档…」——
+  // 退役口径改由 base §Phase 状态机承载（旧 compress-then-handoff 归一 null），此处同步断言。
+  assert.doesNotMatch(sections[0].text, /没有「压缩后立即开新会话」档/, 'P3：LONG 派生插入句已删除');
+  assert.match(sections[0].text, /旧 compress-then-handoff 归一 null（问我）/);
   assert.match(sections[0].text, /不要先调 relay_phase/);
   // 2026-10-25 面板契约：到线提醒与压缩次数解耦、一次性默认操作、授权/免审口径、不再弹官方审批
   assert.match(sections[0].text, /到线提醒/);
@@ -3274,9 +3275,110 @@ test('relay_phase: discover/decide 必须写 exit_criteria（验收口径），b
   await assert.rejects(call({ phase: 'decide', goal: 'y' }), /exit_criteria/, 'decide 同样必填');
   const ok = await call({ phase: 'discover', goal: 'x', exit_criteria: '报告落盘且含证据，doc_lint 通过' });
   assert.equal(ok.phase, 'discover');
-  assert.equal(ok.exit_criteria, '报告落盘且含证据，doc_lint 通过');
+  // v0.9.0 P2（D5=A）：goal/exit_criteria 是入参回显，已从结果删除（真源在台账 currentPhase/投影/入参本身）。
+  assert.equal('goal' in ok, false, 'P2：goal 回显已删除');
+  assert.equal('exit_criteria' in ok, false, 'P2：exit_criteria 回显已删除');
   const build = await call({ phase: 'build' });
   assert.equal(build.phase, 'build', 'build 不强制 exit_criteria');
+});
+
+test('v0.9.0 P2：relay_phase 成功结果带人类可读 text，output.render 只回 text（非 JSON）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-p2-text', cwd, seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const tool = tools.get('relay_phase');
+  // 缺 contract_check → contractWarning：同时锁定 phase/ledger/warnings 行前缀（模型只看 text，要点不得丢）。
+  const result = await tool.execute({ phase: 'build' }, { agent });
+  assert.equal(result.phase, 'build');
+  assert.equal(typeof result.text, 'string', '成功结果带 text');
+  assert.match(result.text, /^phase: build（discover → build）/m);
+  assert.match(result.text, /^ledger: /m);
+  assert.match(result.text, /^warnings: .*contract_check/m);
+  assert.ok(!result.text.startsWith('{'), 'text 不是 JSON 包络');
+  const rendered = tool.output.render({}, result);
+  assert.deepEqual(rendered, [{ type: 'text', text: result.text }], 'render 直接返回 text（模型唯一可见通道）');
+  assert.ok(!rendered[0].text.startsWith('{'), 'render 非 JSON');
+  // 防御性 fallback：无 text 的旧值仍回 JSON（不丢结构化事实）。
+  assert.equal(tool.output.render({}, { phase: 'build' })[0].text, JSON.stringify({ phase: 'build' }));
+  // 同 phase 声明：只输出少量行（≤300）。
+  const same = await tool.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent });
+  assert.ok(same.text.length <= 300, '同 phase 文本 ≤300，实际 ' + same.text.length);
+  assert.match(same.text, /^summary: phase → build \(was build\)/m);
+});
+
+test('v0.9.0 P2：goal/exit_criteria 删除，budget/context/ledger/user_gate/delegation/lessons/hint 字段保留', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-p2-fields', cwd, seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {}, inject() {} };
+  const call = (args) => tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, ...args }, { agent });
+  const build = await call({ phase: 'build' });
+  assert.equal(build.phase, 'build');
+  for (const field of ['budget', 'context', 'ledger', 'lessons']) assert.ok(field in build, 'P2 保留字段: ' + field);
+  // discover 带退出条件回到主链：hint 行/字段仍在，但 goal/exit_criteria 回显删除。
+  const discover = await call({ phase: 'discover', goal: '目标是 G', exit_criteria: '口径是 E' });
+  assert.equal(discover.phase, 'discover');
+  assert.ok('hint' in discover, 'PHASE_HINTS 提示保留');
+  for (const field of ['goal', 'exit_criteria']) assert.equal(field in discover, false, 'P2 删除入参回显: ' + field);
+  assert.match(discover.text, /^hint: discover：/m);
+  await call({ phase: 'build' });
+  await call({ phase: 'verify' });
+  const ship = await call({ phase: 'ship', user_gate: SHIP_GATE });
+  assert.equal(ship.phase, 'ship');
+  assert.equal(ship.user_gate.review, 'done', 'user_gate 只回摘要（review=done）');
+  assert.equal(typeof ship.user_gate.reportChars, 'number');
+  assert.ok('delegation' in ship, 'ship 带 delegation 快照（P2 保留）');
+  assert.equal('goal' in ship, false, 'ship 的 goal 回显已删除');
+  assert.match(ship.text, /^user_gate: review=done · report=\d+ 字/m);
+});
+
+test('v0.9.0 P2：text 体积（build ≤600 / ship ≤900 / lessons ≤1,600）与隐私（report/review 原文不进 text）', async () => {
+  resetSharedState();
+  const lineMax = (text) => Math.max(...text.split('\n').map((line) => Array.from(line).length));
+  // build 切换：≤600，且 ≤0.6×JSON（无 lessons.selected 才有比例约束）。
+  const buildCwd = tmpCwd();
+  const buildSession = fakeSession({ id: 'session-p2-volume-build', cwd: buildCwd, seq: 0 });
+  const buildTools = applyAgent(fakeServices({ session: buildSession }).services).tools;
+  const build = await buildTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session: buildSession, options: {} } });
+  assert.ok(build.text.length <= 600, 'build 切换 text ≤600，实际 ' + build.text.length);
+  assert.ok(build.text.length <= 0.6 * JSON.stringify(build).length, 'build text ≤0.6×JSON，实际 ' + (build.text.length / JSON.stringify(build).length).toFixed(3));
+  assert.ok(lineMax(build.text) <= 220, '每行 ≤220，实际 ' + lineMax(build.text));
+  // ship：≤900；10KB review/report 输入只回字数/计数/warning code，原文不进 text。
+  const shipCwd = tmpCwd();
+  const shipSession = fakeSession({ id: 'session-p2-volume-ship', cwd: shipCwd, seq: 0 });
+  const shipTools = applyAgent(fakeServices({ session: shipSession }).services).tools;
+  const shipAgent = { session: shipSession, options: {}, inject() {} };
+  await shipTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: shipAgent });
+  await shipTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: shipAgent });
+  const review = '独立审查：' + 'x'.repeat(5000);
+  const report = '汇报：' + 'y'.repeat(5000);
+  const ship = await shipTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review, report } }, { agent: shipAgent });
+  assert.ok(ship.text.length <= 900, 'ship text ≤900，实际 ' + ship.text.length);
+  assert.ok(ship.text.length <= 0.6 * JSON.stringify(ship).length, 'ship text ≤0.6×JSON，实际 ' + (ship.text.length / JSON.stringify(ship).length).toFixed(3));
+  assert.match(ship.text, /^user_gate: review=done · report=5003 字 · questions=0 · warnings: report-format/m);
+  assert.equal(ship.text.includes('x'.repeat(200)), false, 'review 原文不进 text');
+  assert.equal(ship.text.includes('y'.repeat(200)), false, 'report 原文不进 text');
+  assert.equal(ship.text.includes('独立审查：'), false, 'review 原文（含前缀）不进 text');
+  // lessons 回灌：明细保留在 text，总体积 ≤1,600；比例豁免（只查上限）。
+  const lessonsCwd = tmpCwd();
+  const lessonsSession = fakeSession({ id: 'session-p2-volume-lessons', cwd: lessonsCwd, seq: 0 });
+  const lessonsTools = applyAgent(fakeServices({ session: lessonsSession }).services).tools;
+  const lessonsAgent = { session: lessonsSession, options: {} };
+  const longText = (ch) => ch.repeat(190);
+  await lessonsTools.get('relay_phase').execute({ phase: 'discover', goal: 'g', exit_criteria: 'e', lessons: [
+    { tag: 'a', text: longText('甲'), evidence: 'p:1' },
+    { tag: 'b', text: longText('乙'), evidence: 'p:2' },
+    { tag: 'c', text: longText('丙'), evidence: 'p:3' },
+  ] }, { agent: lessonsAgent });
+  const withLessons = await lessonsTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK, lessons: [{ tag: 'a', text: longText('甲'), evidence: 'p:4' }] }, { agent: lessonsAgent });
+  assert.ok(withLessons.text.length <= 1600, 'lessons 回灌 text ≤1,600，实际 ' + withLessons.text.length);
+  assert.match(withLessons.text, /^lessons: 3 条/m, '回灌条数保留在 text');
+  assert.match(withLessons.text, /^  - \[a\] 甲/m, '回灌明细（≤3 条）保留在 text');
+  assert.equal(withLessons.lessons.selected.length, 3, '结构化 selected 仍保留（PTC/测试读对象）');
+  assert.ok(lineMax(withLessons.text) <= 220, '每行 ≤220，实际 ' + lineMax(withLessons.text));
 });
 
 test('relay_phase: lessons 存档（≤3、必须带证据、重复合并）；仅跨 phase 回灌相关经验', async () => {
