@@ -2,6 +2,22 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.8.0 (2026-11-15)
+
+文档系统 v2：从「固定字节上限 + 超限拒绝/截断/丢数据」改为「索引 + 分层 + 按需取用」（对齐官方 DSH 指令文件 / 技能目录模式）。用户裁定：caps = 只留建议不强制；链式记忆与高价值文档分层保留。
+
+- 新增 `relay_doc` 工具：`index`（L0 索引，自动生成不落盘）/ `list` / `read`（按标题、行区间精读，有界）/ `search`（只回 path:line + 摘要）/ `lint`（advisory 体检）。团队先读索引，再取 1–3 份最小上下文。
+- 新增 `lib/docs.js`：会话文档扫描与分层（L1 摘要 / L2 详情 / raw 原始）、frontmatter（title/role/layer/when/owner/updated）、索引渲染与 digest、坏指针检测。
+- handoff：不再因超长拒绝——注入有界摘要（默认 ≤16KB），完整交接单（全部证据/决策/未决/清理清单/台账段）完整落盘并在首条消息给路径；删除 `handoff-truncated` 拒绝路径。摘要与列表条数只做 advisory。
+- progress：advisory 阈值 8KB→32KB；被裁剪/移除的条目（含状态段）完整原文进 `progress-archive-<年>.md`，主文件只留摘要与归档指针（无数据丢失）。
+- lessons：超 40 条/8KB 不再淘汰，移入 `lessons-archive.ndjson`；注入仍 ≤1KB 摘要。
+- chain：超 100 条/32KB 不再丢最旧，旋转到 `chain-archive-<年>.ndjson`；新增 `readChainArchive`。
+- team：checkpoint 全量落盘（prompt 用有界渲染 + 指针）；ledger 超界旋转 `ledger-archive-<年>.ndjson`；renew prompt 不再硬截断内容。
+- doc_lint：L0/L1 配额由 hard FAIL 降为 advisory WARN（banned 仍 FAIL）；新增 relay 会话文档检查（frontmatter / 坏指针 / 超大 / L1 超阈值）。
+- 协议：新增 docs v2 分层/索引/advisory 段（PROTOCOL 约 +280 字符），交接 cap 文案改为「摘要 + 完整文件」语义；worker 回执 4KB 标注 advisory。
+- 测试：新增 `test/docs.test.mjs`；handoff/progress/lessons/chain/team/work-items 相关「拒绝/截断/丢最旧」断言改为「不拒绝 / 落盘 + 指针 / 归档不丢」。
+- 版本 0.8.0。
+
 ## v0.7.0 (2026-11-15)
 
 按 2026-11-15 设计目标收敛 relay 边界。**只支持 DSH 0.2.2-rc.2+**（用户裁决：只保 rc.2）：

@@ -1,17 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  CHAIN_ARCHIVE_PREFIX,
+  CHAIN_MAX_BYTES,
   CHAIN_MAX_ENTRIES,
   CHAIN_RELATIVE,
   appendChainEntry,
   buildRecallSection,
+  chainArchivePathOf,
   chainPathOf,
   formatChainPointers,
   normalizeChainEntry,
   readChain,
+  readChainArchive,
   workspaceRelativePath,
 } from '../lib/agent/chain.js';
 
@@ -34,14 +38,61 @@ test('appendChainEntry writes bounded ndjson; readChain returns newest', () => {
   assert.equal(all[1].childSessionId, 'session-b');
 });
 
-test('appendChainEntry keeps entries and bytes bounded (drops oldest)', () => {
+test('appendChainEntry 超界旋转：live 保持上限，旧条目原样进归档（不丢数据）', () => {
   const cwd = tmpCwd();
-  for (let i = 0; i < CHAIN_MAX_ENTRIES + 20; i += 1) {
-    appendChainEntry(cwd, { kind: 'compaction', sessionId: 'session-' + i, shadowedStart: i, shadowedEnd: i + 1 });
+  const total = CHAIN_MAX_ENTRIES + 20;
+  let archivedTotal = 0;
+  for (let i = 0; i < total; i += 1) {
+    const out = appendChainEntry(cwd, {
+      kind: 'handoff',
+      sessionId: 'session-' + i,
+      goal: i % 3 === 0 ? 'g'.repeat(120) : 'g' + i,
+      handoffPath: '.scratch/context-relay/handoff-' + i + '.md',
+      note: i % 5 === 0 ? 'n'.repeat(200) : 'n' + i,
+    });
+    assert.ok(out.entries <= CHAIN_MAX_ENTRIES, 'entries ' + out.entries);
+    assert.ok(out.bytes <= CHAIN_MAX_BYTES, 'bytes ' + out.bytes);
+    archivedTotal += out.archived;
   }
-  const entries = readChain(cwd, CHAIN_MAX_ENTRIES + 50);
-  assert.equal(entries.length, CHAIN_MAX_ENTRIES);
-  assert.equal(entries[entries.length - 1].sessionId, 'session-' + (CHAIN_MAX_ENTRIES + 19));
+  const live = readChain(cwd, total);
+  const archive = readChainArchive(cwd, total);
+  assert.ok(live.length <= CHAIN_MAX_ENTRIES);
+  // 总数不丢：live + 归档 = 追加总数（归档条数 = 旋转出去的最旧条目数）
+  assert.equal(live.length + archive.length, total);
+  assert.equal(archivedTotal, total - live.length);
+  assert.deepEqual(
+    new Set([...live, ...archive].map((entry) => entry.sessionId)),
+    new Set(Array.from({ length: total }, (_, i) => 'session-' + i)),
+  );
+  // 最旧先归档、最新留在 live；readChain 只读 live。
+  assert.equal(archive[0].sessionId, 'session-0');
+  assert.equal(live[live.length - 1].sessionId, 'session-' + (total - 1));
+  assert.equal(readChain(cwd, total).length, live.length);
+  assert.ok(existsSync(chainArchivePathOf(cwd, String(new Date().getFullYear()))));
+});
+
+test('chain 归档按条目 ts 年份分文件（解析失败用当前年）', () => {
+  const cwd = tmpCwd();
+  for (let i = 0; i < CHAIN_MAX_ENTRIES; i += 1) appendChainEntry(cwd, { kind: 'compaction', sessionId: 'old-' + i, ts: '2020-01-01T00:00:00.000Z' });
+  const out = appendChainEntry(cwd, { kind: 'compaction', sessionId: 'newest' });
+  assert.equal(out.archived, 1);
+  assert.ok(existsSync(chainArchivePathOf(cwd, '2020')));
+  assert.equal(readChainArchive(cwd, 5)[0].sessionId, 'old-0');
+});
+
+test('readChainArchive tolerates corrupt lines/files and missing dir; missing file → []', () => {
+  const cwd = tmpCwd();
+  assert.deepEqual(readChainArchive(cwd), []);
+  mkdirSync(join(cwd, '.scratch', 'context-relay'), { recursive: true });
+  writeFileSync(chainArchivePathOf(cwd, '2023'), 'not-json\n{"kind":"handoff","sessionId":"a1"}\n[]\n"x"\n', 'utf8');
+  writeFileSync(chainArchivePathOf(cwd, '2024'), '{"kind":"handoff","sessionId":"a2"}\n(broken\n', 'utf8');
+  const entries = readChainArchive(cwd, 10);
+  assert.deepEqual(entries.map((entry) => entry.sessionId), ['a1', 'a2']);
+  assert.equal(readChainArchive(cwd, 1).length, 1);
+  // 坏文件命名不算归档：readChain 只读 live，不读归档。
+  writeFileSync(chainPathOf(cwd), '', 'utf8');
+  assert.deepEqual(readChain(cwd), []);
+  assert.equal(CHAIN_ARCHIVE_PREFIX, 'chain-archive-');
 });
 
 test('readChain tolerates corrupt lines and missing file', () => {

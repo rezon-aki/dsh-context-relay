@@ -177,6 +177,16 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 数据文件：`~/.dsh/data/dsh-context-relay/settings.json` 与 `panel.json`；对话内容仍由 DSH 自己存储。
 
+## 文档分层与索引（v0.8.0）
+
+跨会话文档不再用固定字节上限拒绝/截断，而是「索引 + 分层 + 按需取用」（对齐 DSH 官方指令文件 / 技能目录的模式）：
+
+- **L0 索引**：`relay_doc index` 返回自动生成的文档索引（路径相对 `.scratch/context-relay/`，每条含「何时读」与大小/更新时间）；交接摘要与 phase brief 也自动带索引。索引按内容 digest 更新，不落盘、不会漂移。
+- **分层**：L1 = handoff / phase brief / progress / lessons（新会话先读）；L2 = architecture / docs / decisions / research（按需）；reports/归档 = 原始指针（`relay_doc search` 取）。判断标准：新会话/新队友第一次开工必须看到吗？是 → L1，否则 → L2。
+- **按需取用**：`relay_doc read` 支持按标题/行区间精读；`relay_doc search` 只回 `path:line` + 摘要；`relay_doc lint` 是 advisory 体检（缺 frontmatter / 坏指针 / 超大 / L1 超阈值）。团队派活给「必读：INDEX + 1–3 份」。
+- **上限只做建议**：handoff / progress / lessons / chain / team 的字节/条数上限不再拒绝或丢数据——超了自动归档（`*-archive-*.ndjson`、`progress-archive-*.md`）或把完整内容落盘、消息里给指针；常驻注入仍保持有界。
+- **写文档纪律**：持久文档加 frontmatter（`role:` 一句话 / `layer: L2` / `when:` 何时读）；写前先 `relay_doc search` 防重复；消息里不贴长文，细节落 L2。
+
 ## 技术参考：agent 工具与 HTTP 接口
 
 | 工具 | 作用 |
@@ -184,10 +194,11 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `relay_status` | 读当前上下文占用、到线状态、阶段、剩余预算和建议。 |
 | `relay_phase` | 声明或切换阶段；校验进入条件和自查，交付阶段要求独立审查与汇报。 |
 | `relay_organize` | 写那一页交接材料（自动附文档体检结论和关键文件索引）→ 官方压缩 → 材料注入回对话（含「压缩后需要时重读」提示）。每会话默认最多一次；人类在面板选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
-| `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件与工作台账），创建新接力会话并清理旧会话树。 |
+| `relay_handoff` | 生成交接摘要 + 完整交接单文件（含滚动进度与工作台账），创建新接力会话并清理旧会话树；**超长不再拒绝**——摘要注入首条消息，完整内容落盘并按需取。 |
 | `relay_work_items` | 读写 Leader 自己的工作台账：无参数 = 读；Lead 整表替换（可带 `rev` 乐观锁）；队友/子代理不可读写。 |
 | `relay_recommend` | Lead 专用：把模型建议的做法写进面板（切阶段、压缩、交接、人类选择后清空）。 |
-| `doc_lint` | 四项文档体检（配额 / 违禁措辞 / 索引 / git），输出 ≤2KB。 |
+| `doc_lint` | 文档体检（配额 / 违禁措辞 / 索引 / git / relay 会话文档），输出 ≤2KB；配额与体积只做 advisory。 |
+| `relay_doc` | 会话文档分层与索引：`index`（L0 索引）/ `list` / `read`（按标题/行区间精读）/ `search`（path:line 摘要）/ `lint`（advisory）。先读索引，再按需取最小上下文。 |
 
 **接力 · 超长任务**另有团队工具：`relay_team_status`、`relay_renew`、`relay_architect`（Lead）与 `relay_checkpoint`、`relay_freshen`（队友）。架构师模型在输入框的模型菜单里选择（「架构师模型 / 架构师推理等级」两行；未选择时 Lead 先问你一次；handoff 继承）。
 

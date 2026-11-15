@@ -683,7 +683,9 @@ test('relay_handoff：台账未闭合项进 next_actions（用户→台账→旧
   assert.match(file, /## 工作台账/);
   assert.match(file, /\[api-export\] 导出 API/);
   assert.match(file, /\[docs-1\] 补文档/);
-  assert.ok(Buffer.byteLength(file, 'utf8') <= 8192);
+  assert.ok(result.caps.bytes.used <= result.caps.bytes.limit, '注入摘要 ≤ advisory 预算');
+  assert.ok(Buffer.byteLength(followed[0].content[0].text, 'utf8') <= result.caps.bytes.limit + 2048, '首条消息 = 摘要 + 指针 + 入口，总量有界');
+  assert.equal(result.handoffFileBytes, Buffer.byteLength(file, 'utf8'), '完整文件字节记账');
   assert.equal(followed.length, 1);
   const text = followed[0].content[0].text;
   assert.match(text, /## 接手入口/);
@@ -717,7 +719,7 @@ test('relay_handoff：空台账 = 旧行为不变（无台账段/入口行/返�
   assert.ok(userIdx >= 0 && inventoryIdx > userIdx, '旧行为：用户条目在前、清单在后');
 });
 
-test('relay_handoff：台账段追加后文件仍 ≤8KB——超出截断并写明，不静默', async () => {
+test('relay_handoff：台账段完整追加（不截断）——摘要 ≤ advisory 预算，完整文件含全部台账/用户内容', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const longTitle = (index) => ('T' + index + '-').padEnd(120, 'x');
@@ -731,20 +733,27 @@ test('relay_handoff：台账段追加后文件仍 ≤8KB——超出截断并写
   const result = await tools.get('relay_handoff').execute({
     status: {
       phase: 'build',
-      goal: '8kb cap handoff',
+      goal: 'large handoff',
       done: Array.from({ length: 12 }, (_, index) => ('done-' + index + '-').padEnd(200, 'd')),
     },
-    evidence: Array.from({ length: 11 }, (_, index) => ('ev-' + index + '-').padEnd(200, 'e')).concat([('doc_lint: ' + 'L'.repeat(170)).slice(0, 200)]),
+    // 15 条 evidence（> 摘要 advisory 12 条）：摘要裁剪、完整版全收。
+    evidence: Array.from({ length: 14 }, (_, index) => ('ev-' + index + '-').padEnd(200, 'e')).concat([('doc_lint: ' + 'L'.repeat(170)).slice(0, 200)]),
     human_approved: true,
   }, { agent: { session, options: {} } });
   assert.equal(result.ok, true, JSON.stringify(result));
-  const file = readFileSync(result.handoffPath, 'utf8');
-  const bytes = Buffer.byteLength(file, 'utf8');
-  assert.ok(bytes <= 8192, '追加台账段后 handoff 文件 ≤8KB，实际 ' + bytes);
-  assert.match(file, /\[工作台账段因 8KB 上限截断\]/, '超限必须有明确截断说明，不静默');
-  assert.match(file, /## 工作台账/, '台账段头部尽量保留');
-  assert.ok(result.caps.bytes.used <= result.caps.bytes.limit);
   assert.equal(followed.length, 1);
+  assert.ok(result.caps.split, '摘要与完整版不同（evidence > advisory 条数）');
+  assert.ok(result.caps.warnings.length > 0, 'advisory 说明');
+  assert.ok(result.caps.bytes.used <= result.caps.bytes.limit, '摘要 ≤ advisory 预算');
+  assert.ok(Buffer.byteLength(followed[0].content[0].text, 'utf8') <= result.caps.bytes.limit + 2048, '首条消息总量有界');
+  const file = readFileSync(result.handoffPath, 'utf8');
+  assert.equal(result.handoffFileBytes, Buffer.byteLength(file, 'utf8'), '完整文件字节记账 = caps.fullBytes');
+  assert.equal(result.caps.fullBytes, result.handoffFileBytes);
+  assert.match(file, /## 工作台账/, '完整文件含台账段');
+  assert.match(file, /\[wi-09\]/, '台账 10 条全部落盘');
+  assert.match(file, /done-11-/, '用户 done 内容完整落盘');
+  assert.ok(file.includes('ev-13-'), '超摘要上限的 evidence 也完整落盘');
+  assert.ok(!file.includes('工作台账段因 8KB 上限截断'), '不再有台账截断说明');
 });
 
 test('relay_handoff：workItems=false 完全回退旧行为（台账文件存在也不读/不追加）', async () => {

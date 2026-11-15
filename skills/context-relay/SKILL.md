@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Context Relay 操作手册
 
+> **v0.8.0 更新（文档系统 v2）**：所有字节/条数上限只做 advisory——**不拒绝、不截断丢数据**；超界归档或把完整内容落盘 + 给指针。新增 `relay_doc`（index/list/read/search/lint）与文档分层（L0 索引 / L1 先读 / L2 按需 / raw 原始）；handoff 改为「有界摘要注入 + 完整交接单落盘按需取」；progress/lessons/chain/team 超界归档（不淘汰）。旧文中出现的 ≤8KB / ≤4KB / 「淘汰」「拒绝」描述按此更新；其余操作流程不变。
+
 ## 何时用
 
 用户在会话模式里选择「接力模式（Relay）」，或明确要求「按 phase 管理上下文 / 到阈值就整理 / 换会话接力 / 团队按阶段接管」时。

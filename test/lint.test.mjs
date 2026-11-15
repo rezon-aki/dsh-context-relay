@@ -45,6 +45,8 @@ test('checkQuota is pure and enforces L0/L1 quotas', () => {
   const missing = checkQuota({ l0Size: null, l1Size: null });
   assert.equal(missing.ok, true);
   assert.match(missing.detail, /缺失/);
+  assert.equal(checkQuota({ l0Size: 2049, l1Size: 0 }).level, 'soft', 'quota 是 advisory（只警告不拦截）');
+  assert.equal(checkQuota({ l0Size: 0, l1Size: 0, level: 'hard' }).level, 'hard');
 });
 
 test('checkBanned flags decision-history wording', () => {
@@ -314,7 +316,7 @@ test('formatDocLint / docLintEvidence stay within budgets', () => {
   assert.match(text, /截断/);
   const evidence = docLintEvidence(result);
   assert.ok(evidence.length <= 200, 'chars ' + evidence.length);
-  assert.match(evidence, /^doc_lint: FAIL/);
+  assert.match(evidence, /^doc_lint: WARN/);
 });
 
 test('formatDocLint counts UTF-8 bytes for CJK details and truncates safely', () => {

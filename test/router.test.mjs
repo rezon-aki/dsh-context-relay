@@ -120,8 +120,9 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5550 / ROUTER �
   // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
   // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
   // v0.5.0：新增「等待纪律」（约 110 字符）后上调到 5550；仍是硬上限，不是取消。
-  assert.ok(PROTOCOL_TEXT.length <= 5550, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  // v0.8.0: docs v2 分层/索引/advisory 段（约 +280 字符），预算上调到 5850（仍是硬上限）。
+  assert.ok(PROTOCOL_TEXT.length <= 5850, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2020, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '模式只决定「做什么」',
     '不产生审批豁免',
@@ -135,8 +136,9 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5550 / ROUTER �
     'phase 边界闸门',
     '不开新 phase',
     '升线 notice 只告知',
-    '单条 ≤200 字符、整篇 ≤8KB',
-    'evidence 用户 ≤11 条',
+    '交接单 = 摘要 + 完整文件',
+    '不因超长拒绝交接',
+    '所有字节/条数上限只是 advisory',
     'handoff 不是验收',
     '每轮召回 ≤3 条',
     '先写好文档再交接',
@@ -249,7 +251,7 @@ test('classic 行为不变：默认不注入超长任务协议段；root 不裁�
 
 test('v0.3.8 长模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式」，classic 不变且装配按模式选择', () => {
   // 预算与短语：长版本由 classic 派生，仍承载全部硬约束；只去掉长模式不存在的档位。
-  assert.ok(PROTOCOL_TEXT_LONG.length <= 5550, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
+  assert.ok(PROTOCOL_TEXT_LONG.length <= 5850, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
   assert.ok(!PROTOCOL_TEXT_LONG.includes('压缩→新会话'), '长模式协议不得出现已移除档位');
   assert.ok(!PROTOCOL_TEXT_LONG.includes('两段式'), '长模式协议不得出现两段式说明');
   for (const phrase of [

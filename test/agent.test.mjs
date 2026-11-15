@@ -242,7 +242,7 @@ test('apply registers protocol section and six relay tools', () => {
   assert.match(tools.get('relay_phase').description, /composer panel/);
   assert.match(tools.get('relay_handoff').description, /composer panel/);
   const names = [...tools.keys()].sort();
-  assert.deepEqual(names, ['doc_lint', 'relay_handoff', 'relay_organize', 'relay_phase', 'relay_recommend', 'relay_status', 'relay_work_items']);
+  assert.deepEqual(names, ['doc_lint', 'relay_doc', 'relay_handoff', 'relay_organize', 'relay_phase', 'relay_recommend', 'relay_status', 'relay_work_items']);
 });
 
 test('v0.2.7：unlimitedBudget 注入段按会话读 composer 小胶囊设置（热生效；面板快照覆盖全局默认）', () => {
@@ -1099,7 +1099,7 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.match(handoffFile, /## 交接清单（旧会话残留，自动盘点）/);
   assert.match(handoffFile, /## 交接清理结果/);
   assert.match(handoffFile, /bash-old → killed/, '清理结果逐行细节仍落在 handoff 文件（不再发给新会话）');
-  assert.match(text, /## Handoff 文件/, '首条消息给出 handoff 文件路径');
+  assert.match(text, /## 完整交接单（全部细节）/, '首条消息给出完整交接单路径');
   // 接手入口（progress.md 长线状态 + chain.ndjson 召回索引合并为一段）：首条消息给两个路径
   assert.match(text, /## 接手入口/);
   assert.match(text, /progress\.md/);
@@ -1373,7 +1373,7 @@ test('relay_handoff inheritOnHandoff=false leaves the new session on deployment 
   assert.deepEqual(await request.listener({ agent: { session: childSession } }, async () => base), base);
 });
 
-test('relay_handoff preflight：超大 evidence 先拒绝（不建会话/不写文件），精简后 agents.create 回退成功', async () => {
+test('relay_handoff：超大 evidence 不再拒绝——摘要 advisory 收短、完整文件含全部原文', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ cwd, seq: 0 });
@@ -1396,33 +1396,28 @@ test('relay_handoff preflight：超大 evidence 先拒绝（不建会话/不写�
   });
   const { tools } = applyAgent(services);
   const oversized = Array.from({ length: 20 }, (_, index) => 'e' + index + '-' + 'x'.repeat(300));
-  const refused = await tools.get('relay_handoff').execute({
+  const result = await tools.get('relay_handoff').execute({
     status: { goal: 'bounded handoff', phase: 'verify' },
     evidence: oversized,
     human_approved: true,
   }, { agent: { session, options: {} } });
-  assert.equal(refused.ok, false, JSON.stringify(refused).slice(0, 200));
-  assert.equal(refused.code, 'handoff-truncated');
-  assert.equal(refused.caps.truncated, true);
-  assert.ok(refused.caps.truncatedSections.includes('chars:evidence'), '单条 200 字符裁剪记账：' + JSON.stringify(refused.caps.truncatedSections));
-  assert.match(refused.hint, /未创建会话/);
-  assert.equal(created.length, 0, '预检拒绝不建会话（修改后重试即可，不重复接力）');
-  assert.equal(followed.length, 0);
-  // 精简后重试：caps 合规 → agents.create 回退路径成功
-  const evidence = Array.from({ length: 11 }, (_, index) => 'e' + index + '-' + 'x'.repeat(150));
-  const result = await tools.get('relay_handoff').execute({
-    status: { goal: 'bounded handoff', phase: 'verify' },
-    evidence,
-    human_approved: true,
-  }, { agent: { session, options: {} } });
   assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
-  assert.equal(result.caps.truncated, false, '合规 handoff 不标截断');
-  assert.equal(created.length, 1);
+  assert.equal(result.code, undefined, '不再有 handoff-truncated 拒绝');
+  assert.equal(result.caps.truncated, true, '摘要按 advisory 阈值收短');
+  assert.ok(result.caps.truncatedSections.includes('chars:evidence'), '单条裁剪记账：' + JSON.stringify(result.caps.truncatedSections));
+  assert.ok(result.caps.split, '完整版单独输出');
+  assert.ok(result.caps.fullBytes > result.caps.bytes.used);
+  assert.equal(created.length, 1, '直接交接（agents.create 回退路径）');
   assert.equal(created[0].meta.agentPreset, 'relay');
   assert.equal(created[0].meta.cwd, cwd);
   assert.equal(followed.length, 1, '只发 handoff 首条消息（清理报告不再另发）');
-  const bytes = Buffer.byteLength(followed[0].content[0].text, 'utf8');
-  assert.ok(bytes <= result.caps.bytes.limit, 'handoff bytes ' + bytes);
+  const message = followed[0].content[0].text;
+  assert.ok(Buffer.byteLength(message, 'utf8') <= result.caps.bytes.limit + 2048, '首条消息有界');
+  assert.match(message, /## 完整交接单（全部细节）/);
+  assert.match(message, /完整交接单：\.scratch\/context-relay\/handoff-\d+\.md — 用 read 或 relay_doc read 按需取/);
+  const full = readFileSync(result.handoffPath, 'utf8');
+  assert.ok(full.includes('e0-' + 'x'.repeat(300)), '完整文件保留第 1 条原文');
+  assert.ok(full.includes('e19-' + 'x'.repeat(300)), '完整文件保留第 20 条原文');
 });
 
 test('relay_handoff 用面板 handoffPreset 选择下一个会话模式（controller 路径；sticky 不消费；不继承子会话）', async () => {
@@ -3816,8 +3811,10 @@ test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语
     descriptionChars += definition.description.length;
     parameterChars += JSON.stringify(definition.parameters).length;
   }
-  assert.ok(descriptionChars <= 2000, '七条工具描述总字符 <=2000，实际 ' + descriptionChars);
-  assert.ok(parameterChars <= 7500, '参数 schema 总字符 <=7500（v0.5.0：relay_work_items 结构化 items/updates），实际 ' + parameterChars);
+  // v0.8.0：新增 relay_doc（文档索引/按需读）→ 工具数 7→8，总预算按每条 ~275 上调到 2200。
+  assert.ok(descriptionChars <= 2200, '八条工具描述总字符 <=2200，实际 ' + descriptionChars);
+  // v0.8.0：新增 relay_doc 后工具数 7→8，参数 schema 预算相应上调（仍逐条受 ≤400/单行约束）。
+  assert.ok(parameterChars <= 8200, '参数 schema 总字符 <=8200（v0.8.0：relay_work_items + relay_doc），实际 ' + parameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权规则在协议里完整复述（描述只留指针）
   const protocol = sections[0].text;
@@ -3928,7 +3925,7 @@ test('approval gate: 验收（relay_phase 进 ship）不弹审批；organize/han
   assert.equal(outcome, 'allowed-once');
 });
 
-test('relay_handoff 预检：超 8KB 直接拒绝（不写文件/不建会话），hint 给原因与重写指引、不写用户可见说明', async () => {
+test('relay_handoff：超大输入不再拒绝（handoff-truncated 已删除）——摘要注入有界、完整文件含全部原文', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-truncate', cwd, seq: 0 });
@@ -3956,62 +3953,65 @@ test('relay_handoff 预检：超 8KB 直接拒绝（不写文件/不建会话）
       blocked: fill('blk', 8),
       open_questions: fill('q', 5),
       risks: fill('risk', 8),
-      discarded: fill('dis', 8),
     },
-    evidence: fill('ev', 12),
+    evidence: fill('ev', 20),
     decisions: fill('dec', 10),
     constraints: fill('con', 8),
+    discarded: fill('dis', 8),
     human_approved: true,
   }, { agent: { session, options: {} } });
-  assert.equal(result.ok, false, JSON.stringify(result).slice(0, 300));
-  assert.equal(result.code, 'handoff-truncated');
-  assert.equal(result.caps.truncated, true, '超 8KB 必须标 truncated');
+  assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
+  assert.equal(result.code, undefined, '不再有 handoff-truncated');
+  assert.equal(result.caps.truncated, true, '摘要按 advisory 阈值分层');
   assert.ok(result.caps.truncatedSections.length > 0, 'truncatedSections 记账');
-  assert.ok(result.caps.truncatedSections.includes('bytes'), 'bytes 记账：' + JSON.stringify(result.caps.truncatedSections));
-  assert.ok(result.caps.bytes.used <= result.caps.bytes.limit, '记账用正文不超硬上限');
-  assert.equal(typeof result.hint, 'string', '拒绝时返回 hint 管理提示');
-  assert.match(result.hint, /8KB 上限/);
-  assert.match(result.hint, /丢掉的段|超过 200 字符/);
-  assert.match(result.hint, /改短|精简/);
-  assert.match(result.hint, /key_docs/, '长材料走 key_docs 引用');
-  assert.match(result.hint, /未写 handoff 文件、未创建会话/, '预检拒绝零副作用：不写文件/不建会话，重试不重复接力');
-  assert.match(result.hint, /不要写进 progress\.md/, 'progress.md 自身会裁剪，不是溢出目的地（审查 P1）');
-  assert.match(result.hint, /不要在给用户的汇报里写截断说明/, '不写用户可见的截断说明（用户 2026-11-01 裁决）');
-  assert.match(result.summary, /refused/);
-  assert.equal(followed.length, 0, '预检拒绝不发首条消息（不建会话）');
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, '预检拒绝不写 handoff/progress 文件');
+  assert.equal(result.caps.split, true, '完整版单独输出');
+  assert.ok(result.caps.warnings.length > 0, 'advisory 说明');
+  assert.ok(result.caps.bytes.used <= result.caps.bytes.limit, '摘要不超 advisory 预算');
+  assert.equal(followed.length, 1);
+  const full = readFileSync(result.handoffPath, 'utf8');
+  assert.ok(full.includes('ev19' + long), '第 20 条 evidence 完整原文落在完整文件');
+  assert.ok(full.includes('dis7' + long), 'discarded 段完整原文落在完整文件');
+  assert.ok(Buffer.byteLength(full, 'utf8') > result.caps.bytes.limit, '完整文件可以超过摘要预算');
+  const message = followed[0].content[0].text;
+  assert.match(message, /## 完整交接单（全部细节）/);
+  assert.match(result.summary, /saved/);
+  assert.match(result.summary, /完整内容在文件/);
 });
 
-test('relay_handoff 预检：单条 200 字符裁剪 → 拒绝，hint 不误报 8KB（2026-11-01 用户反馈）', async () => {
+test('relay_handoff：单条超 200 字符只影响摘要，完整文件保留原文', async () => {
   resetSharedState();
   const h = handoffPanelHarness({ oldId: 'session-item-clip-old', newId: 'session-item-clip-new' });
-  const result = await h.handoff('item clip', { status: { goal: 'item clip', next_actions: ['长'.repeat(260)] } });
-  assert.equal(result.ok, false, JSON.stringify(result));
-  assert.equal(result.code, 'handoff-truncated');
+  const item = '长'.repeat(260);
+  const result = await h.handoff('item clip', { status: { goal: 'item clip', next_actions: [item] } });
+  assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(result.caps.truncatedSections, ['chars:next_actions'], '只有单条字符裁剪，不是字节预算/条数');
-  assert.ok(result.caps.bytes.used < result.caps.bytes.limit, '文档本体没到 8KB：' + JSON.stringify(result.caps.bytes));
-  assert.match(result.hint, /超过 200 字符/, 'hint 必须说清是单条字符裁剪');
-  assert.ok(!result.hint.includes('8KB 上限'), '单条裁剪不得误报 8KB 上限：' + result.hint);
-  assert.match(result.hint, /不要在给用户的汇报里写截断说明/);
-  assert.equal(h.followed.length, 0, '预检拒绝不建会话/不发消息');
+  assert.ok(result.caps.bytes.used < result.caps.bytes.limit, '摘要远没到预算：' + JSON.stringify(result.caps.bytes));
+  assert.equal(h.followed.length, 1, '交接照常完成');
+  const summary = h.followed[0].content[0].text;
+  assert.ok(summary.includes('长'.repeat(199) + '…'), '摘要保留 200 字 advisory 截断');
+  assert.ok(!summary.includes(item), '摘要不含未截断原文');
+  const full = readFileSync(result.handoffPath, 'utf8');
+  assert.ok(full.includes('下一步（DoD）：' + item), '完整文件保留 260 字原文');
   resetSharedState();
 });
 
-test('relay_handoff 预检：列表条数超上限 → 拒绝且不误报 200 字符/8KB（2026-11-01 审查 P2）', async () => {
+test('relay_handoff：列表条数超 advisory 上限只影响摘要，完整文件含全部条目', async () => {
   resetSharedState();
   const h = handoffPanelHarness({ oldId: 'session-count-clip-old', newId: 'session-count-clip-new' });
-  const result = await h.handoff('count clip', { status: { goal: 'count clip', next_actions: ['u0', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7', 'u8'] } });
-  assert.equal(result.ok, false, JSON.stringify(result));
-  assert.equal(result.code, 'handoff-truncated');
+  const nextActions = ['u0', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7', 'u8'];
+  const result = await h.handoff('count clip', { status: { goal: 'count clip', next_actions: nextActions } });
+  assert.equal(result.ok, true, JSON.stringify(result));
   assert.deepEqual(result.caps.truncatedSections, ['items:next_actions'], '条数超上限记 items:');
-  assert.match(result.hint, /列表条数超出上限/);
-  assert.ok(!result.hint.includes('超过 200 字符'), '条数裁剪不得误报字符裁剪：' + result.hint);
-  assert.ok(!result.hint.includes('8KB 上限'), '条数裁剪不得误报 8KB：' + result.hint);
-  assert.equal(h.followed.length, 0);
+  assert.ok(result.caps.truncated, '摘要按 advisory 条数上限裁剪');
+  assert.equal(h.followed.length, 1);
+  const summary = h.followed[0].content[0].text;
+  assert.ok(!summary.includes('下一步（DoD）：u8'), '摘要只收前 8 条');
+  const full = readFileSync(result.handoffPath, 'utf8');
+  for (const entry of nextActions) assert.ok(full.includes('下一步（DoD）：' + entry), '完整文件含 ' + entry);
   resetSharedState();
 });
 
-test('relay_handoff：仅自动交接清单被 cap 裁时不阻断（用户文档本身合规、不返 hint 引导重复接力）', async () => {
+test('relay_handoff：自动交接清单只进完整文件（摘要保留用户 next_actions，不再拒绝/丢用户内容）', async () => {
   resetSharedState();
   const jobs = {
     list: (owner) => (owner === 'session-inv-old' ? [{ id: 'bash-x', kind: 'bash', label: 'job', status: 'running', owner: 'session-inv-old' }] : []),
@@ -4020,19 +4020,19 @@ test('relay_handoff：仅自动交接清单被 cap 裁时不阻断（用户文�
   const h = handoffPanelHarness({ oldId: 'session-inv-old', newId: 'session-inv-new', extraServices: { jobs, subagents: undefined } });
   const result = await h.handoff('inv cap', { status: { goal: 'inv cap', next_actions: Array.from({ length: 8 }, (_, index) => 'u' + index) } });
   assert.equal(result.ok, true, JSON.stringify(result).slice(0, 400));
-  assert.equal(result.caps.truncated, true, '自动清单挤不进 next_actions cap 8');
+  assert.equal(result.caps.truncated, true, '自动清单挤不进摘要 next_actions 条数上限');
   assert.deepEqual(result.caps.truncatedSections, ['items:next_actions'], '只有 next_actions 槽位冲突，用户章节/字节都合规');
-  assert.equal(result.hint, undefined, '仅自动清单裁剪不返回 hint（不引导重复接力）');
+  assert.equal(result.hint, undefined, '正常路径不返回 hint');
   assert.equal(h.followed.length, 1, '交接照常完成');
-  assert.match(result.summary, /自动交接清单未全部放进 next_actions/, result.summary);
-  // 用户 8 条 next_actions 必须全部保留（自动清单排在其后，只能它被裁）
   for (let index = 0; index < 8; index += 1) {
     assert.ok(h.followed[0].content[0].text.includes('下一步（DoD）：u' + index), '用户 next_actions 保留：u' + index);
   }
+  const full = readFileSync(result.handoffPath, 'utf8');
+  assert.match(full, /旧会话残留-后台任务/, '自动清单完整落在完整文件');
   resetSharedState();
 });
 
-test('relay_handoff：自动清单若会把用户章节挤掉 → 丢弃清单行用干净用户版交接（P1 回归，2026-11-01 二轮审查）', async () => {
+test('relay_handoff：近预算时用户内容与自动清单都完整落盘（摘要分层，不丢数据）', async () => {
   resetSharedState();
   const big = (label) => label + '-' + 'x'.repeat(190);
   const jobs = {
@@ -4052,22 +4052,21 @@ test('relay_handoff：自动清单若会把用户章节挤掉 → 丢弃清单�
     risks: Array.from({ length: 3 }, (_, index) => big('risk' + index)),
   });
   assert.equal(result.ok, true, JSON.stringify(result).slice(0, 500));
-  assert.equal(result.caps.truncated, false, '自动清单被丢弃后用户版交接必须干净：' + JSON.stringify(result.caps.truncatedSections));
-  assert.equal(result.caps.items.decisions.used, 6, '用户 decisions 不被自动清单挤掉');
-  assert.equal(result.caps.items.next_actions.used, 6, '自动清单未放入 next_actions（用户 6 条）');
-  assert.match(result.summary, /自动交接清单未放进 next_actions（保护用户章节：8KB 预算）/, result.summary);
-  assert.match(result.summary, /完整清单见本工具返回的 handover 字段/, '不谎称清单在 handoff 文件追加段（8KB 满时追加段可能为空）');
-  assert.equal(result.inventoryDropped, true, '返回体显式告知清单被丢弃');
-  assert.equal(result.inventoryDropReason, '8KB 预算');
+  assert.equal(result.caps.items.decisions.used, 6, '摘要保留用户 decisions');
+  assert.ok(result.caps.items.next_actions.used >= 6, '摘要保留用户 next_actions（自动清单排在后面被条数上限裁）');
+  assert.ok(result.caps.split, '摘要与完整版分层（不拒绝）');
+  assert.ok(result.caps.warnings.length > 0, 'advisory 说明');
+  assert.equal(result.inventoryDropped, undefined, '不再有 inventoryDropped 降级');
   const raw = readFileSync(result.handoffPath, 'utf8');
-  assert.match(raw, /dec5-/, '用户 decisions 仍完整写入 handoff 文件（不静默丢内容）');
+  assert.match(raw, /dec5-/, '用户 decisions 完整写入完整文件');
+  assert.match(raw, /done8-/, '用户 done 完整写入完整文件');
+  assert.match(raw, /旧会话残留-后台任务/, '自动清单也完整写入完整文件');
   resetSharedState();
 });
 
-test('relay_handoff：自动清单仅因字节预算（无 chars:）挤掉用户章节也会被丢弃（P3 覆盖缺口，2026-11-01 三轮审查）', async () => {
+test('relay_handoff：纯字节超限（无 chars:）也走摘要分层 + 完整文件（不拒绝）', async () => {
   resetSharedState();
   const big = (label) => label + '-' + 'x'.repeat(190);
-  // 短清单行（都 ≤200 字符）：full 只会出现 items:next_actions + bytes/section:，不会出现 chars:。
   const jobs = {
     list: (owner) => (owner === 'session-bytes-old' ? [{ id: 'bash-1', kind: 'bash', label: 'job', status: 'running', owner: 'session-bytes-old' }] : []),
     kill: () => 'requested',
@@ -4085,16 +4084,17 @@ test('relay_handoff：自动清单仅因字节预算（无 chars:）挤掉用户
     risks: Array.from({ length: 3 }, (_, index) => big('risk' + index)),
   });
   assert.equal(result.ok, true, JSON.stringify(result).slice(0, 500));
-  assert.equal(result.caps.truncated, false, '用户版交接干净：' + JSON.stringify(result.caps.truncatedSections));
-  assert.equal(result.inventoryDropped, true);
-  assert.equal(result.inventoryDropReason, '8KB 预算', '字节/丢段原因，不是 chars:（清单行都很短）');
-  assert.equal(result.caps.items.done.used, 10, '用户 done 段不被挤掉');
-  assert.equal(result.caps.items.decisions.used, 6, '用户 decisions 段不被挤掉');
-  assert.equal(result.caps.items.risks.used, 3, '用户 risks 段不被挤掉');
+  assert.ok(!result.caps.truncatedSections.some((entry) => entry.startsWith('chars:')), '清单行都很短，不误报 chars:');
+  assert.equal(result.caps.items.done.used, 10, '摘要保留用户 done 段');
+  assert.equal(result.caps.items.decisions.used, 6, '摘要保留用户 decisions 段');
+  assert.equal(result.caps.items.risks.used, 3, '摘要保留用户 risks 段');
+  const full = readFileSync(result.handoffPath, 'utf8');
+  assert.match(full, /done9-/, '完整文件含全部用户 done');
+  assert.match(full, /risk2-/, '完整文件含全部用户 risks');
   resetSharedState();
 });
 
-test('relay_handoff：清理报告 append 后 handoff 文件仍 ≤8KB（2026-11-01 审查 P2）', async () => {
+test('relay_handoff：清理报告完整追加到完整文件（不再 8KB 截断）', async () => {
   resetSharedState();
   const big = (label) => label + '-' + 'x'.repeat(190);
   const jobs = {
@@ -4103,7 +4103,6 @@ test('relay_handoff：清理报告 append 后 handoff 文件仍 ≤8KB（2026-11
   };
   const schedule = { list: async () => [], create: async () => ({ id: 'sched-new' }), delete: async () => ({ deleted: true }) };
   const h = handoffPanelHarness({ oldId: 'session-append-old', newId: 'session-append-new', extraServices: { jobs, schedule, subagents: undefined } });
-  // 交接前就把用户文档写到接近 8KB（预检必须通过：用户内容不截断），让清理报告 append 放不下。
   const result = await h.handoff('append cap', {
     status: {
       goal: 'append cap',
@@ -4118,12 +4117,14 @@ test('relay_handoff：清理报告 append 后 handoff 文件仍 ≤8KB（2026-11
   assert.equal(result.ok, true, JSON.stringify(result).slice(0, 300));
   assert.ok(result.caps.bytes.used <= result.caps.bytes.limit);
   assert.equal(typeof result.handoffFileBytes, 'number');
-  assert.ok(result.handoffFileBytes <= result.caps.bytes.limit, '最终 handoff 文件 ' + result.handoffFileBytes + ' 字节 ≤ 上限 ' + result.caps.bytes.limit);
-  assert.equal(result.cleanupReportTruncated, true, 'append 放不下时必须截断并显式标注');
-  // 放不下时可能整段不 append（文件保持 ≤8KB），截断事实由返回字段 + summary 兜底；完整清单在工具返回的 handover 字段里。
-  const rawBytes = Buffer.byteLength(readFileSync(result.handoffPath, 'utf8'), 'utf8');
-  assert.ok(rawBytes <= result.caps.bytes.limit, '实际文件 ' + rawBytes + ' ≤ 上限');
-  assert.match(result.summary, /8KB 上限截断/, result.summary);
+  assert.equal(result.caps.fullBytes, result.handoffFileBytes, 'fullBytes = 最终完整文件字节');
+  assert.equal(result.cleanupReportTruncated, false, '清理报告不再截断');
+  const raw = readFileSync(result.handoffPath, 'utf8');
+  assert.equal(Buffer.byteLength(raw, 'utf8'), result.handoffFileBytes, '实际文件字节 = 记账');
+  assert.match(raw, /## 交接清理结果/, '清理报告完整落盘');
+  assert.match(raw, /bash-long-label/, '清理明细逐行落盘');
+  assert.doesNotMatch(raw, /因 handoff 8KB 上限已截断/);
+  assert.match(result.summary, /saved/);
   resetSharedState();
 });
 
@@ -4172,8 +4173,8 @@ test('交接顺序保证：新会话收到首条消息前 handoff 快照 + progr
   assert.ok(result.handoffPath.endsWith(first.handoffs[0]), '结果里的 handoff 路径就是已写盘的文件');
   assert.ok(first.handoffBytes > 0, 'handoff 快照内容非空');
   assert.match(first.text, /# Handoff · order guarantee/);
-  assert.match(first.text, /## Handoff 文件\n/);
-  assert.ok(first.text.includes(result.handoffPath), '首条消息含 handoff 文件路径');
+  assert.match(first.text, /## 完整交接单（全部细节）\n/);
+  assert.ok(first.text.includes('.scratch/context-relay/handoff-'), '首条消息含完整交接单 workspace 相对路径');
   assert.match(first.text, /\.scratch\/context-relay\/progress\.md/, '首条消息指向滚动进度文件');
   assert.equal(result.progress.updated, true);
   assert.equal(result.progress.path, '.scratch/context-relay/progress.md');

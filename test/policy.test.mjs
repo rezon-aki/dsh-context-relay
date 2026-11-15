@@ -5,6 +5,7 @@ import {
   DEFAULT_SETTINGS,
   DEFAULT_THRESHOLDS,
   HANDOFF_LIMITS,
+  HANDOFF_SUMMARY_BYTES,
   PANEL_OPERATIONS,
   PHASES,
   bandFor,
@@ -196,9 +197,9 @@ test('buildHandoff truncates over-limit arrays and reports caps', () => {
   }
 });
 
-test('buildHandoff enforces total 8KB byte cap on pathological input', () => {
+test('buildHandoff 摘要按 advisory 预算分层，完整版 fullMarkdown 不截断不丢段', () => {
   const big = (prefix) => Array.from({ length: 40 }, () => prefix.repeat(195));
-  const { markdown, caps } = buildHandoff({
+  const { markdown, fullMarkdown, caps } = buildHandoff({
     status: {
       goal: 'x',
       done: big('d'),
@@ -213,16 +214,24 @@ test('buildHandoff enforces total 8KB byte cap on pathological input', () => {
     open_questions: big('q'),
     discarded: big('x'),
   });
-  assert.ok(Buffer.byteLength(markdown, 'utf8') <= HANDOFF_LIMITS.totalBytes, 'bytes ' + Buffer.byteLength(markdown));
-  assert.ok(caps.bytes.used <= HANDOFF_LIMITS.totalBytes);
+  // 摘要：advisory 预算（默认 16KB）内；超限整段/尾部截断 + 显式 marker 记账。
+  assert.ok(Buffer.byteLength(markdown, 'utf8') <= HANDOFF_SUMMARY_BYTES, 'summary bytes ' + Buffer.byteLength(markdown));
+  assert.ok(caps.bytes.used <= caps.bytes.limit);
+  assert.equal(caps.bytes.limit, HANDOFF_SUMMARY_BYTES);
   assert.equal(caps.truncated, true);
-  // 字节预算用尽后整段跳过的 section 必须全部记入 caps.truncatedSections（SPEC:69/112）。
+  assert.equal(caps.split, true, '摘要与完整版不同');
+  assert.ok(caps.fullBytes > caps.bytes.used, '完整版比摘要大：' + caps.fullBytes + ' vs ' + caps.bytes.used);
+  assert.match(markdown, /摘要已分层/, '超预算留显式 marker');
+  assert.ok(caps.warnings.length > 0, 'advisory 说明');
   const sectionTitles = ['状态', '首条指令', '证据（文件/命令/URL/会话 id）', '已定决策（含理由）', '未决问题（按 P0/P1/P2 标注，P0 必须人类裁决）', '风险与回滚', '硬约束', '明确丢弃的上下文'];
   const missing = sectionTitles.filter((title) => !markdown.includes('## ' + title));
-  assert.ok(missing.length > 0, 'pathological input must drop whole sections');
   for (const title of missing) {
     assert.ok(caps.truncatedSections.includes('section:' + title), 'unreported dropped section: ' + title);
   }
+  // 完整版：全部段/条目/原文都在（40 条 done/evidence 等不截断）。
+  for (const title of sectionTitles) assert.ok(fullMarkdown.includes('## ' + title), '完整版缺段：' + title);
+  assert.equal(fullMarkdown.split('\n').filter((line) => line.startsWith('- 已完成：' + 'd'.repeat(195))).length, 40, 'done 40 条全部保留');
+  assert.ok(fullMarkdown.includes('- ' + 'e'.repeat(195)), 'evidence 原文保留');
 });
 
 test('continueChoice: compress-vs-handoff choice only at organize/relay bands, with recommendation', () => {
@@ -348,7 +357,9 @@ test('buildHandoff sanitizes list items to one line and clips an oversized goal'
 
 test('buildHandoff keeps the status section and retries later short sections under budget pressure', () => {
   const big = (prefix) => Array.from({ length: 12 }, () => prefix + 'x'.repeat(194));
-  const { markdown, caps } = buildHandoff({
+  // 显式 advisory 预算 8KB：小预算下仍保留状态段并继续尝试后续短段（完整版不受影响）。
+  const { markdown, fullMarkdown, caps } = buildHandoff({
+    summaryBytes: 8192,
     status: {
       goal: 'bounded status survives',
       success_criteria: big('s'),
@@ -362,7 +373,8 @@ test('buildHandoff keeps the status section and retries later short sections und
     risks: Array.from({ length: 8 }, () => 'r' + 'x'.repeat(194)),
     constraints: ['c'],
   });
-  assert.ok(Buffer.byteLength(markdown, 'utf8') <= HANDOFF_LIMITS.totalBytes, 'bytes ' + Buffer.byteLength(markdown));
+  assert.ok(Buffer.byteLength(markdown, 'utf8') <= 8192, 'summary bytes ' + Buffer.byteLength(markdown));
+  assert.equal(caps.bytes.limit, 8192);
   // 状态段排在最前，先拿预算且目标仍在
   assert.match(markdown, /## 状态/);
   assert.match(markdown, /目标：bounded status survives/);
@@ -370,6 +382,8 @@ test('buildHandoff keeps the status section and retries later short sections und
   assert.match(markdown, /## 硬约束/);
   assert.ok(caps.truncated, 'budget pressure reported');
   assert.ok(caps.truncatedSections.some((entry) => entry.startsWith('section:')), 'dropped sections reported');
+  assert.ok(caps.split, '摘要分层：完整版在 fullMarkdown');
+  assert.ok(fullMarkdown.includes('## 硬约束') && fullMarkdown.split('\n').filter((line) => line.startsWith('- 成功标准：sx')).length === 12, '完整版不截断（success_criteria 12 条原文）');
   for (const title of ['证据（文件/命令/URL/会话 id）', '已定决策（含理由）', '未决问题（按 P0/P1/P2 标注，P0 必须人类裁决）', '风险与回滚']) {
     if (!markdown.includes('## ' + title)) {
       assert.ok(caps.truncatedSections.includes('section:' + title), 'unreported dropped section: ' + title);

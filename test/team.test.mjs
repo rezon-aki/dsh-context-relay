@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
@@ -28,13 +28,16 @@ import {
   genOf,
   handoffPathOf,
   isValidTeammateName,
+  ledgerArchivePathOf,
   ledgerPathOf,
   lineageOf,
   nextGenName,
   partitionRelativePath,
   readCheckpoint,
   readLedger,
+  readLedgerArchive,
   readRoster,
+  renderCheckpointForPrompt,
   retireGeneration,
   writeCheckpoint,
   writeRoster,
@@ -71,7 +74,7 @@ test('lineage/gen/next 名：<lineage>-g<N>，无后缀视为首代，跳过已�
   assert.equal(isValidTeammateName('a'.repeat(30) + '-g2'), false, '长 lineage 的后代名超过 32');
 });
 
-test('buildCheckpointMarkdown：一行结论必填；列表/单条超限裁剪；整份 ≤4KB 标记', () => {
+test('buildCheckpointMarkdown：一行结论必填；写盘完整（不截断/不丢条目）；prompt 渲染有界+指针', () => {
   const empty = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl', gen: 1, input: {} });
   assert.equal(empty.ok, false);
   assert.equal(empty.code, 'checkpoint-empty');
@@ -86,24 +89,64 @@ test('buildCheckpointMarkdown：一行结论必填；列表/单条超限裁剪�
   assert.match(built.markdown, /impl 第 3 代/);
   assert.match(built.markdown, /## 一行结论\n完成登录修复/);
   assert.match(built.markdown, /## 完成/);
-  assert.equal(built.caps.items, TEAM_LIMITS.checkpointItems + 1, 'done 截到 8 条 + evidence 1 条');
-  assert.equal(built.caps.truncated, true);
-  const line = built.markdown.split('\n').find((item) => item.startsWith('- aaa'));
-  assert.ok(line.length <= TEAM_LIMITS.checkpointItemChars + 2, '单条 ≤200 字符');
-  const huge = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl', gen: 1, input: { one_line: 'x', done: Array.from({ length: 8 }, () => 'y'.repeat(200)), evidence: Array.from({ length: 8 }, () => 'e'.repeat(200)), decisions: Array.from({ length: 8 }, () => 'd'.repeat(200)), constraints: Array.from({ length: 8 }, () => 'c'.repeat(200)) } });
-  assert.ok(Buffer.byteLength(huge.markdown, 'utf8') <= TEAM_LIMITS.checkpointBytes, '整份 ≤4096B');
-  assert.ok(huge.markdown.includes('[checkpoint truncated'), '超限有截断标记');
+  assert.equal(built.caps.items, 13, '不丢条目：12 done + 1 evidence 全部写入');
+  assert.equal(built.caps.truncated, false, '写盘不截断（truncated 仅保留兼容字段）');
+  for (const item of many) assert.ok(built.markdown.includes('- ' + item), '每条都在：' + item);
+  assert.ok(built.markdown.includes('a'.repeat(400)), '单条不再裁到 200 字符');
+  assert.equal(built.full, built.markdown);
+  assert.equal(renderCheckpointForPrompt(''), '');
+  // 落盘完整：writeCheckpoint 原样写 full（不再生成截断版）
+  const dir = tempWorkspace();
+  try {
+    const written = writeCheckpoint(dir, 'impl', built.markdown);
+    const read = readCheckpoint(dir, 'impl');
+    assert.equal(read.text, built.full, '文件内容 = 完整 markdown');
+    assert.equal(read.bytes, written.bytes);
+  } finally { cleanup(dir); }
+  // 超建议体积：markdown(full) 完整；promptText 有界 + 指针 + 显式 marker（高优先级段保留）
+  const huge = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl', gen: 1, input: {
+    one_line: 'x',
+    done: Array.from({ length: 8 }, (_, index) => 'DONE-' + index + '-' + 'd'.repeat(190)),
+    decisions: Array.from({ length: 8 }, (_, index) => '决策-' + index + '-' + 'm'.repeat(190)),
+    evidence: Array.from({ length: 8 }, (_, index) => '证据-' + index + '-' + 'e'.repeat(190)),
+    constraints: Array.from({ length: 8 }, (_, index) => '约束-' + index + '-' + 'c'.repeat(190)),
+  } });
+  assert.ok(huge.caps.bytes > TEAM_LIMITS.checkpointBytes, '完整内容可超建议体积');
+  assert.equal(huge.caps.over, true);
+  assert.equal(huge.caps.truncated, false);
+  assert.ok(huge.markdown.includes('DONE-7-'), '超限也不丢低优先级条目（写盘完整）');
+  assert.ok(Buffer.byteLength(huge.promptText, 'utf8') <= TEAM_LIMITS.checkpointBytes, 'prompt 渲染有界');
+  assert.match(huge.promptText, /完整 checkpoint 见 .*checkpoint\.md/);
+  assert.match(huge.promptText, /超建议体积/);
+  assert.ok(huge.promptText.includes('## 决策'), 'prompt 保留高优先级段');
+  assert.ok(!huge.promptText.includes('DONE-0-'), 'prompt 丢弃低优先级段（内容仍在完整文件里）');
+  assert.equal(renderCheckpointForPrompt(huge.markdown, { maxBytes: TEAM_LIMITS.checkpointBytes }), huge.promptText, 'renderCheckpointForPrompt 与 promptText 同一出口');
 });
 
-test('ledger：有界（≤200 条 / ≤8KB），坏行跳过；roster 退役代际', () => {
+test('ledger：live 有界（≤200 条 / ≤8KB）+ 超界归档不丢数据 + readLedgerArchive 可读；坏行跳过；roster 退役代际', () => {
   const dir = tempWorkspace();
   try {
     for (let index = 0; index < 205; index += 1) appendLedger(dir, 'impl', { event: 'checkpoint', gen: 1, name: 'impl', n: index });
+    const appended = appendLedger(dir, 'impl', { event: 'checkpoint', gen: 1, name: 'impl', n: 205 });
+    assert.ok(appended.archived > 0, 'appendLedger 返回 archived 计数');
     const entries = readLedger(dir, 'impl', 500);
-    assert.ok(entries.length <= TEAM_LIMITS.ledgerEntries && entries.length > 1, '条数 ≤200 且仍有历史');
-    assert.equal(entries[entries.length - 1].n, 204);
-    assert.ok(entries[0].n > 0, '按字节上限淘汰最旧');
-    assert.ok(Buffer.byteLength(readFileSync(ledgerPathOf(dir, 'impl'), 'utf8'), 'utf8') <= TEAM_LIMITS.ledgerBytes);
+    assert.ok(entries.length <= TEAM_LIMITS.ledgerEntries && entries.length > 1, 'live 条数 ≤200 且仍有历史');
+    assert.equal(entries[entries.length - 1].n, 205);
+    assert.ok(entries[0].n > 0, 'live 只保留最新有界窗口');
+    assert.ok(Buffer.byteLength(readFileSync(ledgerPathOf(dir, 'impl'), 'utf8'), 'utf8') <= TEAM_LIMITS.ledgerBytes, 'live 文件 ≤8KB');
+    const archive = readLedgerArchive(dir, 'impl', 500);
+    assert.ok(archive.length > 0, '归档可读');
+    assert.equal(archive[0].n, 0, '归档保留最旧条目（原样 JSONL）');
+    assert.deepEqual(
+      entries.map((entry) => entry.n).concat(archive.map((entry) => entry.n)).sort((left, right) => left - right),
+      Array.from({ length: 206 }, (_, index) => index),
+      '206 条一条不丢：live + 归档',
+    );
+    const archivePath = ledgerArchivePathOf(dir, 'impl');
+    assert.ok(existsSync(archivePath), '归档路径 ledger-archive-<年份>.ndjson');
+    assert.match(readFileSync(archivePath, 'utf8'), /"n":0/, '归档是原样 JSONL');
+    appendFileSync(archivePath, '{bad json\n', 'utf8');
+    assert.equal(readLedgerArchive(dir, 'impl', 500).length, archive.length, '归档坏行跳过');
     const roster = { version: 1, lineages: {} };
     const entry = ensureLineage(roster, 'impl', { name: 'impl-g1', sessionId: 's1' });
     ensureLineage(roster, 'impl', { name: 'impl-g2', sessionId: 's2' });
@@ -117,7 +160,7 @@ test('ledger：有界（≤200 条 / ≤8KB），坏行跳过；roster 退役代
   } finally { cleanup(dir); }
 });
 
-test('checkpoint 文件：写/读/换代归档；buildRenewPrompt 含 profile+交接+召回且 ≤6KB', () => {
+test('checkpoint 文件：写/读/换代归档；buildRenewPrompt 有界+指针（完整 checkpoint 落盘）', () => {
   const dir = tempWorkspace();
   try {
     const built = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl-g1', gen: 1, input: { one_line: '完成 A', decisions: ['选 B 因为 C'], next_actions: ['跑测试'] } });
@@ -128,15 +171,40 @@ test('checkpoint 文件：写/读/换代归档；buildRenewPrompt 含 profile+�
     const prompt = buildRenewPrompt({ lineage: 'impl', newName: 'impl-g2', gen: 2, prevName: 'impl-g1', profile: '# 职责\n实现登录', checkpoint: read.text, ledger: [{ gen: 1, name: 'impl-g1', sessionId: 's1' }], leadSessionId: 'session-lead' });
     assert.match(prompt, /impl-g2/);
     assert.match(prompt, /team\/session-lead\/impl\//, 'renew prompt 记录目录带 Lead 分区');
+    assert.match(prompt, /完整 checkpoint.*session-lead\/impl\/checkpoint\.md/, 'prompt 始终给完整 checkpoint 指针');
+    assert.doesNotMatch(prompt, /超建议体积/, '未超预算：完整交接直接注入');
     const legacyPrompt = buildRenewPrompt({ lineage: 'impl', newName: 'impl-g2', gen: 2, prevName: 'impl-g1', profile: '# 职责', checkpoint: '# 旧交接', ledger: [], leadSessionId: 'session-lead', recordDir: '.scratch/context-relay/team/impl' });
     assert.match(legacyPrompt, /team\/impl\/（profile/, 'legacy-only 记录时按实际记录目录给指针');
     assert.doesNotMatch(legacyPrompt, /team\/session-lead\/impl\/（profile/, '不指向不存在的分区记录目录');
     assert.match(prompt, /实现登录/);
     assert.match(prompt, /选 B 因为 C/);
+    assert.match(prompt, /跑测试/);
     assert.match(prompt, /session_event_read/);
     assert.ok(Buffer.byteLength(prompt, 'utf8') <= TEAM_LIMITS.promptBytes);
+    // 超预算：checkpoint 完整落盘；prompt 有界 + marker + 指针，按优先级保留
+    const hugeBuilt = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl-g1', gen: 1, input: {
+      one_line: '大交接',
+      done: Array.from({ length: 8 }, (_, index) => 'DONE-LOW-' + index + '-' + 'd'.repeat(180)),
+      decisions: Array.from({ length: 8 }, (_, index) => '决策-' + index + '-' + 'm'.repeat(180)),
+      evidence: Array.from({ length: 8 }, (_, index) => '证据-' + index + '-' + 'e'.repeat(180)),
+      constraints: Array.from({ length: 8 }, (_, index) => '约束-' + index + '-' + 'c'.repeat(180)),
+      open_questions: Array.from({ length: 8 }, (_, index) => '未决-' + index + '-' + 'q'.repeat(180)),
+      next_actions: Array.from({ length: 8 }, (_, index) => '下一步-' + index + '-' + 'n'.repeat(180)),
+    } });
+    writeCheckpoint(dir, 'impl', hugeBuilt.markdown);
+    const hugeRead = readCheckpoint(dir, 'impl');
+    assert.ok(hugeRead.bytes > TEAM_LIMITS.checkpointBytes, 'checkpoint 落盘完整（可超建议体积）');
+    assert.ok(hugeRead.text.includes('DONE-LOW-7-'), '低优先级条目也完整落盘');
+    const hugePrompt = buildRenewPrompt({ lineage: 'impl', newName: 'impl-g2', gen: 2, prevName: 'impl-g1', profile: '# 职责\n实现登录', checkpoint: hugeRead.text, ledger: [{ gen: 1, name: 'impl-g1', sessionId: 's1' }], leadSessionId: 'session-lead' });
+    assert.ok(Buffer.byteLength(hugePrompt, 'utf8') <= TEAM_LIMITS.promptBytes, 'prompt 有界');
+    assert.match(hugePrompt, /超建议体积/, 'prompt 带显式 marker');
+    assert.match(hugePrompt, /完整 checkpoint 见 \.scratch\/context-relay\/team\/session-lead\/impl\/checkpoint\.md/);
+    assert.ok(hugePrompt.includes('## 决策') && hugePrompt.includes('## 证据'), '按优先级保留高价值段');
+    assert.ok(!hugePrompt.includes('DONE-LOW-0-') && !hugePrompt.includes('下一步-0-'), '低优先级段让位（完整内容在 checkpoint 文件）');
     const archived = archiveCheckpoint(dir, 'impl', 1);
     assert.ok(archived !== undefined);
+    assert.equal(archived.bytes, hugeRead.bytes, '换代归档保留完整 checkpoint');
+    assert.ok(readFileSync(handoffPathOf(dir, 'impl', 1), 'utf8').includes('DONE-LOW-7-'), '归档内容完整');
     assert.ok(existsSync(handoffPathOf(dir, 'impl', 1)));
     assert.equal(existsSync(checkpointPathOf(dir, 'impl')), false);
   } finally { cleanup(dir); }

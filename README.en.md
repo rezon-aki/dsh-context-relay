@@ -177,6 +177,16 @@ Panel state (per session): persistent mode (not consumed; inherited by the next 
 
 Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conversation content stays stored by DSH itself.
 
+## Document layers and index (v0.8.0)
+
+Cross-session documents are no longer capped by hard byte limits that reject or truncate; they follow the official DSH instruction-file / skill-catalog pattern: an index, layers, and on-demand reads.
+
+- **L0 index**: `relay_doc index` renders an auto-generated index (paths relative to `.scratch/context-relay/`, each entry with "when to read", size and update time); handoff summaries and phase briefs include it automatically. It is derived from content digests and never goes stale.
+- **Layers**: L1 = handoff / phase brief / progress / lessons (read first by a new session); L2 = architecture / docs / decisions / research (on demand); reports/archive = raw pointers (via `relay_doc search`). Rule of thumb: must a new session/teammate see it on day one? Yes -> L1, otherwise -> L2.
+- **On-demand reads**: `relay_doc read` supports section/line-range reads; `relay_doc search` returns only `path:line` + snippet; `relay_doc lint` is an advisory check (missing frontmatter / broken pointers / oversize / L1 over threshold). Delegation carries a "must read: INDEX + 1-3 docs" list.
+- **Caps are advisory**: byte/count limits on handoff / progress / lessons / chain / team no longer reject or drop data — overflow is archived (`*-archive-*.ndjson`, `progress-archive-*.md`) or written in full with a pointer in the message; always-injected content stays bounded.
+- **Writing discipline**: durable docs carry frontmatter (`role:`, `layer: L2`, `when:`); run `relay_doc search` before writing to avoid duplicates; never paste long documents into messages — keep details in L2.
+
 ## Technical reference: agent tools and HTTP API
 
 | Tool | Purpose |
@@ -184,10 +194,11 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 | `relay_status` | Read current context usage, line state, phase, budget headroom and advice. |
 | `relay_phase` | Declare or switch phase; validates entry conditions and the self-check; delivery requires an independent review and a report. |
 | `relay_organize` | Write the handover page (with automatic documentation check and key-file index) → official compaction → inject the page back (with a re-read-when-needed reminder). At most once per session by default; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode the second one needs an explicit human request (`force`). |
-| `relay_handoff` | Produce a handover of at most 8KB (including the rolling progress file and the work ledger), create a new relay session and clean up the old session tree. |
+| `relay_handoff` | Produce a handover summary plus the full handover file (including the rolling progress file and the work ledger), create a new relay session and clean up the old session tree. Oversize content is never refused: the summary is injected, the full content stays on disk and is fetched on demand. |
 | `relay_work_items` | Read or maintain the Leader work ledger: no args = read; the Lead replaces the whole list (optional `rev` optimistic lock); teammates/subagents cannot read or write it. |
 | `relay_recommend` | Lead only: write the model advice into the panel (cleared on phase switch, compaction, handoff or human choice). |
-| `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output at most 2KB. |
+| `doc_lint` | Documentation check (quota / banned wording / index / git / relay session docs), output at most 2KB; quota and size are advisory only. |
+| `relay_doc` | Session-document layers and index: `index` (L0 index) / `list` / `read` (by section or line range) / `search` (path:line snippets) / `lint` (advisory). Read the index first, then fetch only the minimal context you need. |
 
 **Relay · very long tasks** adds team tools: `relay_team_status`, `relay_renew`, `relay_architect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; the Lead asks you once if unset; handoff inherits it).
 

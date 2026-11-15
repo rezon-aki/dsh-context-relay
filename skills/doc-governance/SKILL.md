@@ -45,12 +45,21 @@ description: 文档治理（分层归属 / 写入前检查 / 去重 / 收尾体�
 relay 模式会话里跑 relay preset 的只读工具 `tools.doc_lint({paths?})`（它吸收自 dsh-doc-kit，默认跑全量、输出 ≤2KB 摘要；部署级额外文档可经代码级 `options.extraDocs` 传入，host config 通道留待后续）。
 普通会话看不到 relay 工具时，若装了 dsh-doc-kit 就用它的同名工具；都没有就按下面四项人工检查。它查四项：
 
-- `[FAIL] quota`：注入层超出自律配额（默认全局 ≤ 2 KB、工作区 ≤ 4 KB）——有人在往注入层塞东西。
+- `[WARN] quota`：注入层超出自律配额（默认全局 ≤ 2 KB、工作区 ≤ 4 KB，**advisory：只提示不拦截**）——有人在往注入层塞东西。
 - `[FAIL] banned`：注入层出现「曾用 / 已废弃 / 已被推翻 / 别再试 / 不再使用」这类决策史。
 - `[WARN] index`：索引点名的文档不存在。（描述**他人惯例**的单元格会被自动跳过，不算命中。）
 - `[WARN/UNKNOWN] git`：治理文件未进 git —— 没有 diff 历史，漂移无从发现；**探测不到是 UNKNOWN，不是 ok**，要在结论里写明原因。检查目标 = 工作区 `AGENTS.md` + 本工作区约定的 `docs/machine.md`/`docs/workflow.md`（存在才纳入）+ 传给 doc_lint 的额外文档；通用部署缺这些约定文件时 git 检查恒 UNKNOWN，属预期降级。
 
 硬失败的必须处理；提示项逐条判断。relay 协议要求：`relay_organize` 后必跑 `doc_lint`，把结论压进 brief / handoff 的 evidence。
+
+## relay 会话文档（docs v2）
+
+relay 长会话的交接文档也是文档治理：handoff / progress / phase brief / architecture / reports 都在 `.scratch/context-relay/`。
+
+- **先索引后正文**：`relay_doc index` 看自动生成的 L0 索引（路径相对 `.scratch/context-relay/`，含「何时读」）；按 when 只取 1–3 份，`relay_doc read` 支持 section/offset 精读，`relay_doc search` 只回 path:line + 摘要。
+- **分层**：L1 = handoff / phase brief / progress / lessons（新会话先读）；L2 = architecture / docs / decisions / research（按需）；reports/归档 = raw（search 取）。判断标准：新会话/新队友第一次开工必须看到吗？是 → L1，否则 → L2。
+- **写持久文档带 frontmatter**：`role:` 一句话、`layer: L2`、`when:` 何时读；写前先 `relay_doc search` 防重复。
+- **上限只做 advisory**：字节/条数超了归档/分层/给指针（progress-archive、lessons-archive、chain-archive、handoff 完整文件），**不拒绝、不丢数据**；常驻注入仍保持有界。
 
 ## 对外发布前（上传仓库前过一遍）
 
