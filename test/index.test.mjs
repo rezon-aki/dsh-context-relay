@@ -312,8 +312,8 @@ test('preset：官方 ptc 行数据 + relay agent 行插入 compaction 隔离组
   // 缺省不传 agent 选项：不写入行 config（不污染 preset 定义）。
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'injectBrief'), false);
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'handoffApproval'), false);
-  // PTC 呈现是 relay preset 的前提。
-  assert.ok(flat.some((row) => row.id === 'tool-presentation' && row.config?.mode === 'ptc'));
+  // PTC 执行面是 relay preset 的前提（0.2.2 起官方行是 tool-executor-ptc）。
+  assert.ok(flat.some((row) => row.id === 'tool-executor-ptc' && row.name === '@deepseek-ai/dsh-tool-executor-ptc'));
   // 数据资产只含官方行；relay 专属行由 relayPresetDefinition 叠加。
   assert.equal(PTC_BASE_PLUGINS.some((row) => row.id === 'relay-agent'), false);
   // 组合不得污染冻结的数据资产。

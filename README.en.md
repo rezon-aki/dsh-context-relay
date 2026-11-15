@@ -62,7 +62,7 @@ Both modes stay human-gated: no autonomous loop, no automatic approval on your b
 
 ## Install
 
-Requires DSH `>=0.2.1-rc.2` and Node.js `>=20`.
+Requires DSH `>=0.2.1-rc.2` and Node.js `>=20`. Verified on DSH 0.2.2-rc.1 (current kernel) and 0.2.2-rc.2 (upgrade target): official preset rows are selected per kernel version, and team features (status/renew/rehydrate) adapt to the subagent tree on rc.2.
 
 ### Option A (recommended): DSH Web UI sidebar Plugins
 
@@ -219,7 +219,9 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - UI text is Chinese-only; the Chinese docs are the source of truth.
 - The work ledger is **shared per workspace**: several relay sessions in the same workspace see the same ledger (the `rev` optimistic lock prevents silent overwrites); the panel is read-only and edits go through the agent tool; the default cap is 30 items and an overflow write is refused (no automatic deletion of done items).
 - Resource reclamation is a fallback: the kernel usually auto-releases at natural settlement, so a compaction usually has nothing left (no memory-saving promise); only rare cases such as a still-resident old identity at renewal actually free anything.
-- The team-first hard gate matches the exact tool names `subagent` / `subagent_fork`; other custom delegation tools are out of scope.
+- The team-first hard gate matches the exact tool names `subagent` / `subagent_fork`; other custom delegation tools are out of scope. From DSH 0.2.2-rc.2 teammates are subagent-tree members, so the gate cannot distinguish "open a subagent" from "use a teammate" and lets the call through.
+- From DSH 0.2.2-rc.2 Agent Teams is only a shared task board; the plugin adapts teammates through the subagent tree. Per-id resource release has no equivalent API (handoff still drains the whole tree), so reclamation is a no-op on rc.2.
+- Preset rows follow the official ptc patches of 0.2.2-rc.1 / 0.2.2-rc.2; earlier 0.2.1-series kernels no longer have separately maintained rows.
 
 ## Development
 

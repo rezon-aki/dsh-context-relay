@@ -2,6 +2,16 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.6.5 (2026-11-15)
+
+兼容 DSH 0.2.2-rc.1（当前内核）与 0.2.2-rc.2（升级目标）：
+
+- 新增：团队能力适配层 `lib/team-api.js`——能力探测（`agentTeams.tryMembership` → rc.1 路径；否则 `subagents.rootOf/namesOf` → rc.2 路径），业务代码统一走 `roleOf/listMembers/sendToMember/interruptMember/startMember`，不再直接访问 `agentTeams`。
+- 兼容：rc.2 的 `@deepseek-ai/dsh-agent-team` 只剩共享任务板（无 tryMembership/listMembers/spawnTeammate/sendMessage/interrupt），队友改由 subagent 树表达——角色按根/后代判定，成员用 `listDescendants` 映射，消息用 `sendMessage(sender,targetId,content,options)`，中断用 `interrupt(targetId,{kind:'ancestor',agent})`，换代/rehydrate 用 `startActivation({provider:'spawn-in-process'|'spawn',delivery:'parent'})`。
+- 降级（显式、不抛、不断主流程）：rc.2 没有逐 id 释放（`drainChildren`）的等价能力 → 资源释放返回 unsupported 并跳过（交接仍走 `drainDescendants`）；rc.2 没有同步成员目录 → 「已有团队时开子代理需确认」软闸门不适用（rc.2 队友本身即 subagent，无法区分），闸门放行；列表/发送/新建失败一律返回 `{ok:false, code, reason}`，工具以结构化错误说明原因，rc.1 行为不变。
+- 兼容：preset 官方行数据按内核版本自适应（两套数据 + 选择逻辑，版本从 `@deepseek-ai/dsh/package.json` 读取）——rc.1 使用 0.2.2-rc.1 的官方行（`tool-executor-ptc`、无 `tool-presentation`/`tool-subagent-list-agents`），rc.2 额外使用 `tool-office` 与 `tool-subagent-control.config.interrupt=false`；旧内核不再出现无法解析的行。
+- 版本：0.6.5；新增 `test/team-api.test.mjs`（9 条适配层/版本选择用例），全量 554 通过。
+
 ## v0.6.4 (2026-11-15)
 
 新增「专职架构师」固定队友（用户需求）：
