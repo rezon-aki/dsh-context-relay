@@ -9,7 +9,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
@@ -96,6 +96,9 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /Lead 只调度/);
   assert.match(text, /写文件、改代码、跑命令\/测试、查日志一律派 worker/);
   assert.match(text, /不设「小任务自己干」例外/);
+  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '只作异常信号，不设允许比例', '面板默认档', 'v0.9.0 已实现', '接力新会话沿用旧会话档']) {
+    assert.ok(text.includes(phrase), 'ROUTER 缺短语: ' + phrase);
+  }
   // 回执契约：文件 ≤4KB + 单条消息 ≤200 字 + 头 3 行机读 + verdict
   assert.match(text, /≤4KB/);
   assert.match(text, />4KB 只提示分层/);
@@ -118,14 +121,22 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /relay_status\.compaction\.debt/);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5850 / ROUTER ≤2050', () => {
+test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () => {
+  const text = readFileSync(new URL('../skills/context-relay/SKILL.md', import.meta.url), 'utf8');
+  for (const phrase of ['## Lead 职责', '用户交互、决策（裁决）、派活、验收抽样', '不亲自改码/跑测试/写实现文档/读长日志', '不设自做额度', '派活或拆票', '≤3 次/phase', '不设允许比例/额度、不作为闸门', 'worker 必须亲自写/跑', '新长会话默认档=**压缩继续**', 'v0.9.0 已实现', '接力新会话沿用旧会话档', '默认值跟随「模型」选择器', '已选过则沿用该选择', '默认（跟随模型选择）', 'handoff 继承']) {
+    assert.ok(text.includes(phrase), 'SKILL 缺短语: ' + phrase);
+  }
+  assert.ok(!text.includes('当前实现仍 seed'));
+});
+
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5850 / ROUTER ≤2250', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
   // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
   // v0.5.0：新增「等待纪律」（约 110 字符）后上调到 5550；仍是硬上限，不是取消。
-  // v0.8.0 docs v2 后 PROTOCOL 实测 5822，预算 5850；v0.8.1 修正 advisory 矛盾后 ROUTER 实测 2023，预算 2050。
+  // v0.8.0 docs v2 后 PROTOCOL 实测 5822，预算 5850；v0.9.0 补齐 Lead 纪律与 #52 后 ROUTER 实测 2221，预算 2250。
   // 这里约束常驻注入字符体积，不是文档落盘硬门；保留全部必需短语断言。
   assert.ok(PROTOCOL_TEXT.length <= 5850, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2050, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2250, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '模式只决定「做什么」',
     '不产生审批豁免',
@@ -151,6 +162,14 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5850 / ROUTER �
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
   const routerRequired = [
+    "不设自做额度",
+    "用户交互、决策、派活、验收抽样",
+    "验收抽样（≤3 次/phase",
+    "写实现文档、读长日志也派 worker",
+    "只作异常信号，不设允许比例",
+    "面板默认档",
+    "v0.9.0 已实现",
+    "接力新会话沿用旧会话档",
     'root Lead，只调度、不执行',
     '不设「小任务自己干」例外',
     'PTC dispatch 模板',
@@ -469,17 +488,17 @@ test('live settings 覆盖 routerMode（内部验证用）：host 进程内可�
   assert.deepEqual(sections, [], '清理后 root 不注入 router 段');
 });
 
-test('v0.3.1 relay-long 新根会话默认操作种子=continue（不覆盖显式值；classic 不种；fail-open）', async () => {
+test('v0.9.0 relay-long 新根会话默认操作种子=compress（不覆盖显式值；classic 不种；fail-open）', async () => {
   // 面板状态是进程级单例 + 持久化：固定到临时 panel.json，避免读写真实 home 数据。
   clearPanelMemory();
   configurePanelStore({ panelPath: join(mkdtempSync(join(tmpdir(), 'relay-router-panel-')), 'panel.json') });
   try {
-    // routerMode（relay-long）：root 无显式面板 → 种 defaultOperation='continue'
+    // routerMode（relay-long）：root 无显式面板 → 种 defaultOperation='compress'
     const long = fakeCtx();
     apply(long.ctx, { routerMode: true });
     const longListener = agentListener(long);
     await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed' }) });
-    assert.equal(panelStateOf('session-long-seed').defaultOperation, 'continue', 'relay-long 新根会话默认操作=继续');
+    assert.equal(panelStateOf('session-long-seed').defaultOperation, 'compress', 'relay-long 新根会话默认操作=压缩继续');
 
     // 人类显式保存的值不被覆盖（含显式 null=问我）
     updatePanelState('session-long-seed-handoff', { defaultOperation: 'handoff' });
@@ -488,6 +507,11 @@ test('v0.3.1 relay-long 新根会话默认操作种子=continue（不覆盖显�
     updatePanelState('session-long-seed-ask', { defaultOperation: null }, { force: true });
     await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed-ask' }) });
     assert.equal(panelStateOf('session-long-seed-ask').defaultOperation, null, '显式「问我」(null) 不被种子覆盖');
+
+    updatePanelState('session-long-seed-auto', { autoChoose: true });
+    await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed-auto' }) });
+    assert.equal(panelStateOf('session-long-seed-auto').defaultOperation, null, 'autoChoose=on 不种');
+    assert.equal(panelStateOf('session-long-seed-auto').autoChoose, true, '保留模型自决档');
 
     // v0.3.8：长模式升级残留的面板预设也在根会话创建时清空（长模式没有该档）
     updatePanelState('session-long-seed-stale-cth-preset', { defaultOperation: 'compress-then-handoff' });
@@ -499,7 +523,7 @@ test('v0.3.1 relay-long 新根会话默认操作种子=continue（不覆盖显�
     await longListener.listener({ agent: makeAgent({}, [], [], { sessionId: 'session-long-seed-stale-cth' }) });
     assert.equal(panelStateOf('session-long-seed-stale-cth').recommendedOperation, null, '升级残留 cth 推荐清空');
     assert.equal(panelStateOf('session-long-seed-stale-cth').recommendedReason, '');
-    assert.equal(panelStateOf('session-long-seed-stale-cth').defaultOperation, 'continue', '种子照常');
+    assert.equal(panelStateOf('session-long-seed-stale-cth').defaultOperation, 'compress', '种子照常');
 
     // 非 root（队友/子代理）不种：长模式下 worker 会话保持未设置
     await longListener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 1 }, [], [], { sessionId: 'session-long-seed-worker' }) });
@@ -628,7 +652,7 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   assert.equal(ARCHITECT_NAME, 'architect');
   assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.length <= 900, 'ARCHITECT_LEAD 超预算: ' + ARCHITECT_LEAD_PROTOCOL_TEXT.length);
   assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.length <= 700, 'ARCHITECT_WORKER 超预算: ' + ARCHITECT_WORKER_PROTOCOL_TEXT.length);
-  for (const phrase of ['专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
+  for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承', '专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
     assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
   }
   for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码']) {

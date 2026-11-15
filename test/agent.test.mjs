@@ -3457,6 +3457,17 @@ test('v0.4.0 模式接力继承：defaultOperation 带到新会话；目标为�
   resetSharedState();
 });
 
+test('v0.9.0 handoff 保留 architectModel=null，接力后仍未显式选择', async () => {
+  resetSharedState();
+  const h = handoffPanelHarness({ oldId: 'session-arch-null-old', newId: 'session-arch-null-new' });
+  updatePanelState(h.session.id, { architectModel: null }, { force: true });
+  updatePanelState(h.newId, { architectModel: { provider: 'geekai', model: 'gpt-6.1-sol' } });
+  const result = await h.handoff();
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(panelStateOf(h.newId).architectModel, null, '未显式选择随接力继承，不沿用目标会话旧选择');
+  resetSharedState();
+});
+
 test('§3.8 handoff 失败路径不同步面板设置（新会话不写入继承记录）', async () => {
   resetSharedState();
   const h = handoffPanelHarness({ oldId: 'session-sync-fail-old', newId: 'session-sync-fail-new', failFollowup: true });
@@ -4451,6 +4462,9 @@ test('v0.6.4 专职架构师段：只对 relay-long 注入；Lead 段按会话�
   assert.ok(section, 'relay-long 注入架构师段');
   assert.match(section.text({ agent: leadAgent }), /专职架构师/, 'root Lead：分工段');
   assert.match(section.text({ agent: leadAgent }), /工程实现路线设计交给 architect/);
+  for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承']) {
+    assert.ok(section.text({ agent: leadAgent }).includes(phrase), '架构师注入缺短语: ' + phrase);
+  }
   // 架构师自己的协议由 agent/created 的 ARCHITECT_WORKER 影子注入（见 router 测试），
   // preset 层架构师段只给 Lead，避免与 TEAMMATE/TEAM_WORKER 叠加。
   assert.equal(section.text({ agent: architectAgent }), '', 'preset 层架构师段不重复注入 worker');

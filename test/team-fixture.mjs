@@ -65,6 +65,7 @@ export function subagentsFromLegacy(legacy) {
         prompt: request.prompt,
         context: 'fresh',
         provider: request.provider,
+        agentOptions: request.agentOptions,
         signal: request.signal,
       });
       const member = result?.member;

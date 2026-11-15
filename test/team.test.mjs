@@ -419,20 +419,25 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
   } finally { clearTeamStatusMemory(); cleanup(dir); }
 });
 
-test('relay_architect：未选择架构师模型时拒绝，不静默继承 Lead 模型', async () => {
+test('relay_architect：未显式选择时用模型默认，显式传路由且不阻塞', async () => {
   const dir = tempWorkspace();
   try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
     const lead = makeAgent({ sessionId: LEAD, cwd: dir });
     const teams = makeTeamService({ memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
-    const ctx = fakeCtx({ agentTeams: teams });
-    const { leadTools } = createTeamTools(makeRuntime(ctx.ctx));
-    const tool = leadTools.find((item) => item.name === 'relay_architect');
+    const route = { provider: 'p', model: 'last-used', reasoningEffort: 'high' };
+    const sessionProjections = { stateOf: (_session, key) => key === 'modelSelection' ? { lastUsed: route } : [{ provider: 'other', model: 'allowlisted' }] };
+    const ctx = fakeCtx({ agentTeams: teams, sessionProjections });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
     assert.ok(tool, 'relay_architect 已注册');
     const result = await tool.execute({ brief: '设计登录模块' }, { agent: lead });
-    assert.equal(result.ok, false);
-    assert.equal(result.code, 'architect-model-unselected');
-    assert.match(result.summary, /choose the architect model/);
-    assert.equal(teams.calls.spawn.length, 0, '未选模型不得创建成员');
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.notEqual(result.code, 'architect-model-unselected');
+    assert.equal(result.modelSource, 'default');
+    assert.deepEqual(result.model, route);
+    assert.match(result.text, /默认跟随模型选择；可覆盖/);
+    assert.equal(teams.calls.spawn.length, 1);
+    assert.deepEqual(teams.calls.spawn[0].agentOptions, route);
   } finally { cleanup(dir); }
 });
 
@@ -458,6 +463,8 @@ test('relay_architect：面板已选模型时创建 architect（legacy 路径；
     assert.deepEqual(result.model, { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' });
     assert.equal(teams.calls.spawn.length, 1);
     assert.equal(teams.calls.spawn[0].name, 'architect');
+    assert.equal(result.modelSource, 'panel');
+    assert.deepEqual(teams.calls.spawn[0].agentOptions, result.model);
     assert.match(teams.calls.spawn[0].prompt[0].text, /设计登录模块/);
     assert.match(teams.calls.spawn[0].prompt[0].text, /context-relay\/architecture\/login\.md/);
     assert.ok(existsSync(join(dir, '.scratch', 'context-relay', 'team', LEAD, 'roster.json')), 'architect lineage 写入 roster');
@@ -496,6 +503,74 @@ test('relay_architect：没有白名单记录时只允许 Lead 当前路由（�
     const result = await tool.execute({ brief: '设计登录模块' }, { agent: lead });
     assert.equal(result.code, 'architect-model-not-allowed');
     assert.deepEqual(result.allowedModels, [{ provider: 'deepseek', model: 'test' }]);
+    assert.equal(teams.calls.spawn.length, 0);
+  } finally { cleanup(dir); }
+});
+
+test('relay_architect：pending 优先/部署默认/无服务继承/显式 sticky/非法 effort', async () => {
+  const scenarios = [
+    { selection: { pending: { provider: 'p', model: 'pending' }, lastUsed: { provider: 'p', model: 'last' } }, expected: { provider: 'p', model: 'pending' } },
+    { deployment: { provider: 'p', model: 'deployment' }, expected: { provider: 'p', model: 'deployment' } },
+    { expected: null },
+    { selected: { provider: 'p', model: 'sticky', reasoningEffort: 'max' }, selection: { pending: { provider: 'z', model: 'changed' } }, expected: { provider: 'p', model: 'sticky', reasoningEffort: 'max' } },
+    { selection: { lastUsed: { provider: 'p', model: 'valid', reasoningEffort: 'bad effort' } }, expected: { provider: 'p', model: 'valid' } },
+    { selection: { lastUsed: { provider: 'p', model: 'valid' } }, expected: { provider: 'p', model: 'valid' } },
+  ];
+  for (const scenario of scenarios) {
+    const dir = tempWorkspace();
+    try {
+      configurePanelStore({ panelPath: join(dir, 'panel.json') });
+      const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+      lead.session.requestHeader = () => ({});
+      updatePanelState(LEAD, { architectModel: scenario.selected ?? null });
+      const teams = makeTeamService({ memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+      const services = { agentTeams: teams };
+      if (scenario.selection) services.sessionProjections = { stateOf: (_session, key) => key === 'modelSelection' ? scenario.selection : scenario.selected ? [scenario.selected] : undefined };
+      if (scenario.deployment) services.agentDefaultModel = { currentSelection: () => scenario.deployment };
+      const ctx = fakeCtx(services);
+      const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+      const result = await tool.execute({ brief: '设计' }, { agent: lead });
+      assert.equal(result.ok, true, JSON.stringify(result));
+      assert.equal(result.modelSource, scenario.selected ? 'panel' : 'default');
+      assert.deepEqual(result.model, scenario.expected);
+      assert.equal(teams.calls.spawn.length, 1);
+      assert.deepEqual(teams.calls.spawn[0].agentOptions, scenario.expected ?? undefined);
+      if (scenario.expected === null) assert.match(result.text, /默认跟随 Lead（官方继承）/);
+    } finally { cleanup(dir); }
+  }
+});
+
+test('relay_architect：continue 未选也可复用已有代与模型，不 spawn', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    const teams = makeTeamService({ members: [{ id: 'session-architect', name: 'architect', role: 'teammate', status: 'inactive' }], memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+    updatePanelState(LEAD, { architectModel: null });
+    writeCheckpoint(dir, 'architect', '## 架构师记录', LEAD);
+    const ctx = fakeCtx({ agentTeams: teams });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '继续设计', mode: 'continue' }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.model, null);
+    assert.equal(result.modelSource, 'default');
+    assert.equal(teams.calls.spawn.length, 0);
+    assert.equal(teams.calls.send.length, 1);
+    assert.match(result.text, /默认值只影响 fresh 新建/);
+  } finally { cleanup(dir); }
+});
+
+test('relay_architect：显式选择且投影读取失败仍拒绝，零 spawn', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { architectModel: { provider: 'p', model: 'explicit' } });
+    const teams = makeTeamService({ memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+    const ctx = fakeCtx({ agentTeams: teams, sessionProjections: { stateOf() { throw new Error('unavailable'); } } });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '设计' }, { agent: lead });
+    assert.equal(result.code, 'architect-model-policy-unavailable');
     assert.equal(teams.calls.spawn.length, 0);
   } finally { cleanup(dir); }
 });

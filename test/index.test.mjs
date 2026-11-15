@@ -85,7 +85,7 @@ const rowKey = (row, withDisabled) => row.id + '|' + row.name + '|' + (withDisab
 /** 测试隔离用的临时路径（每次 unique，避免测到开发机真实 ~/.dsh 配置/面板状态）。 */
 const tmpPath = (prefix, name = 'store.json') => join(mkdtempSync(join(tmpdir(), prefix)), name);
 
-function fakeHost({ connection, noGet = false, agentPresets, config, sessionProjections, sessions, llm } = {}) {
+function fakeHost({ connection, noGet = false, agentPresets, config, sessionProjections, sessions, llm, agentDefaultModel, agents } = {}) {
   // 测试隔离：settingsPath/panelPath 默认指向临时文件，避免读写开发机真实 ~/.dsh/... 配置
   // （真实 settings.json 的默认值会经 panel-store 合并进 panel 默认值）。
   const isolatedConfig = { ...(config ?? {}) };
@@ -123,7 +123,7 @@ function fakeHost({ connection, noGet = false, agentPresets, config, sessionProj
           },
         };
         // headless / 极简 fake ctx 可能没有 get：验证放行路径时不注入。
-        if (!noGet) injected.get = (name) => (name === 'connection' ? connection : name === 'sessions' ? sessions : name === 'sessionProjections' ? sessionProjections : name === 'llm' ? llm : undefined);
+        if (!noGet) injected.get = (name) => (name === 'connection' ? connection : name === 'sessions' ? sessions : name === 'sessionProjections' ? sessionProjections : name === 'llm' ? llm : name === 'agentDefaultModel' ? agentDefaultModel : name === 'agents' ? agents : undefined);
         callback(injected);
       }
       if (wanted.includes('sessionProjections') && sessionProjections !== undefined) {
@@ -827,6 +827,7 @@ test('host: GET /context-relay/panel 默认面板 + live null + 生效阈值，�
     preset: null, // 无 sessions 服务 → 当前 preset 不可得
     modes: { relay: 'relay', long: 'relay-long' }, // v0.2.14：下一个新会话可选的两种模式
     panel: PANEL_DEFAULT,
+    architectDefault: null,
     live: null,
     thresholds: thresholdsFromPercent(DEFAULT_SETTINGS.threshold),
     settings: { threshold: DEFAULT_SETTINGS.threshold },
@@ -994,6 +995,56 @@ test('host: 发布值超 TTL 后回退派生值（不闪回旧 live）', async (
   assert.equal(res.json.live.phase, 'discover');
   assert.equal(res.json.live.overBudget, false);
   assert.equal(res.json.live.derived, true);
+});
+
+test('host: GET panel architectDefault follows projection, deployment, options and fails open', async () => {
+  const selected = { provider: 'p', model: 'selected', reasoningEffort: 'high' };
+  const session = { id: 'sess-model-default', header: { agentPreset: 'relay-long' } };
+  const projectionHost = fakeHost({ sessions: { get: () => session }, sessionProjections: { register: () => () => {}, stateOf: (_session, key) => key === 'modelSelection' ? { lastUsed: selected } : undefined } });
+  const projected = await getPanel(projectionHost, session.id);
+  assert.equal(projected.out.statusCode, 200);
+  assert.deepEqual(projected.json.architectDefault, selected);
+  assert.deepEqual(projected.json.panel, PANEL_DEFAULT);
+  assert.equal(projected.json.sessionId, session.id);
+  const deployment = { provider: 'p', model: 'deployment' };
+  const host = fakeHost({ agentDefaultModel: { currentSelection: () => deployment } });
+  assert.deepEqual((await getPanel(host, session.id)).json.architectDefault, deployment);
+  const explicit = { provider: 'p', model: 'override', reasoningEffort: 'max' };
+  const saved = await putPanel(host, { sessionId: session.id, architectModel: explicit });
+  assert.deepEqual(saved.json.panel.architectModel, explicit);
+  assert.deepEqual(JSON.parse(readFileSync(host.config.panelPath, 'utf8')).sessions[session.id].architectModel, explicit);
+  assert.deepEqual((await getPanel(host, session.id)).json.architectDefault, deployment);
+  const restored = await putPanel(host, { sessionId: session.id, architectModel: null });
+  assert.equal(restored.json.panel.architectModel, null);
+  assert.deepEqual((await getPanel(host, session.id)).json.architectDefault, deployment);
+  const optionsHost = fakeHost({ agents: { get: () => ({ options: deployment }) } });
+  assert.deepEqual((await getPanel(optionsHost, session.id)).json.architectDefault, deployment);
+  for (const config of [{}, { noGet: true }, { sessions: { get: () => { throw new Error('unavailable'); } } }]) {
+    const response = await getPanel(fakeHost(config), session.id);
+    assert.equal(response.out.statusCode, 200);
+    assert.equal(response.json.architectDefault, null);
+    assert.deepEqual(response.json.panel, PANEL_DEFAULT);
+  }
+});
+
+test('host: architectDefault source exceptions retain projection/deployment fallback before null', async () => {
+  const selected = { provider: 'p', model: 'pending' };
+  const deployment = { provider: 'p', model: 'deployment' };
+  const unavailable = () => { throw new Error('unavailable'); };
+  const session = { id: 'sess-model-errors', header: { agentPreset: 'relay-long' } };
+  const projection = { register: () => () => {}, stateOf: (_session, key) => key === 'modelSelection' ? { pending: selected } : undefined };
+  const scenarios = [
+    { services: { sessions: { get: () => session }, agents: { get: unavailable }, sessionProjections: projection, agentDefaultModel: { currentSelection: () => deployment } }, expected: selected },
+    { services: { sessions: { get: unavailable }, agentDefaultModel: { currentSelection: () => deployment } }, expected: deployment },
+    { services: { sessions: { get: () => session }, agents: { get: unavailable }, sessionProjections: { register: () => () => {}, stateOf: unavailable }, agentDefaultModel: { currentSelection: () => deployment } }, expected: deployment },
+    { services: { sessions: { get: unavailable }, agents: { get: unavailable }, sessionProjections: { register: () => () => {}, stateOf: unavailable }, agentDefaultModel: { currentSelection: unavailable } }, expected: null },
+  ];
+  for (const { services, expected } of scenarios) {
+    const response = await getPanel(fakeHost(services), session.id);
+    assert.equal(response.out.statusCode, 200);
+    assert.deepEqual(response.json.architectDefault, expected);
+    assert.deepEqual(response.json.panel, PANEL_DEFAULT);
+  }
 });
 
 test('host: PUT /context-relay/panel 持久化到 panel.json 并 GET 回读，非法 body 400', async () => {
