@@ -269,8 +269,8 @@ async function openPopover(instance) {
 
 test('RelayPanel：会话切换重置 popover 展开态与 layout（B-P2-13，宿主复用组件实例）', async () => {
   const env = createEnv();
-  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress-then-handoff' }, live: LIVE({ band: 'organize' }) };
-  env.server.panel.B = { relay: true, panel: { ...PANEL_DEFAULT, autoChoose: true }, live: LIVE({ band: 'ok', overBudget: false, ratio: 0.12 }) };
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE({ band: 'organize' }) };
+  env.server.panel.B = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'handoff' }, live: LIVE({ band: 'ok', overBudget: false, ratio: 0.12 }) };
   const RelayPanel = env.slots['conversation.composer.dock'];
   const instance = env.mount(RelayPanel, { sessionId: 'A' });
   await instance.flush();
@@ -1035,7 +1035,7 @@ test('RelayPanel：relay-long 表盘只 4 档（问我/继续/压缩继续/接�
   assert.match(textOf(instance.tree), /团队重启/, '读出行 hint 标注团队重启');
 });
 
-test('v0.4.0 chip 显示当前模式（单一模式 4 档；退役 cth/auto 存量值视觉归一「继续」）', async () => {
+test('v0.4.0 chip 显示当前模式（单一模式 4 档；host 已归一，chip 不再特判退役值）', async () => {
   // ① 当前模式 = 压缩继续：chip 显示模式名（持久不消费）
   const env = createEnv();
   env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE({ band: 'organize', organizeCount: 1 }) };
@@ -1044,47 +1044,49 @@ test('v0.4.0 chip 显示当前模式（单一模式 4 档；退役 cth/auto 存�
   await instance.flush();
   const chipText = textOf(byClass(instance.tree, 'relay-v3-chip')[0]);
   assert.match(chipText, /压缩/, 'chip 显示当前模式');
-  // ② 退役档 cth（存量值）：视觉按「继续」显示，不显示已退役档名（host 同样归一）
+  // ② 继续档：chip 显示「继续」；已退役档名不出现（host 归一后不会下发 cth/auto，客户端不再做视觉兜底）
   const env2 = createEnv();
-  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress-then-handoff' }, live: LIVE() };
+  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'continue' }, live: LIVE() };
   const instance2 = env2.mount(env2.slots['conversation.composer.dock'], { sessionId: 'A' });
   await instance2.flush();
   const chip2 = byClass(instance2.tree, 'relay-v3-chip')[0];
-  assert.match(textOf(chip2), /继续/, 'cth 存量值视觉按「继续」');
+  assert.match(textOf(chip2), /继续/, 'chip 显示当前模式「继续」');
   assert.equal(textOf(chip2).includes('压缩→新会话'), false, 'chip 不显示已退役档名');
 });
 
-test('RelayPanel：退役隐藏档存量值视觉按「继续」显示、不写盘（单模式，host 做语义归一）', async () => {
+test('RelayPanel：单一模式 4 档有效模式（问我/继续/压缩继续/接力新会话）展示正确、轮询不写盘', async () => {
   const env = createEnv();
-  env.server.panel.A = longEnv({ defaultOperation: 'compress-then-handoff' });
+  env.server.panel.A = longEnv({ defaultOperation: 'compress' });
   const RelayPanel = env.slots['conversation.composer.dock'];
   const instance = env.mount(RelayPanel, { sessionId: 'A' });
   await instance.flush();
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '打开/轮询不得主动写盘');
-  const chipText = textOf(byClass(instance.tree, 'relay-v3-chip')[0]);
-  assert.match(chipText, /继续/, 'chip 当前模式视觉按「继续」');
-  assert.equal(chipText.includes('压缩→新会话'), false, 'chip 不显示隐藏档');
+  assert.match(textOf(byClass(instance.tree, 'relay-v3-chip')[0]), /压缩/, 'chip 显示当前模式');
   assert.ok(await openPopover(instance));
-  const orders = dialOrders(instance);
-  assert.equal(orders.length, 4);
-  const checked = orders.filter((node) => node.props['aria-checked'] === true);
-  assert.equal(checked.length, 1);
-  assert.match(JSON.stringify(checked[0].children), /继续/, '存量「压缩→新会话」按「继续」高亮');
-  assert.equal(needleTransform(instance), 'rotate(90deg)', '指针停在「继续」档（90°）');
-  assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '隐藏档不触发任何写盘');
+  assert.equal(dialOrders(instance).length, 4, '单一模式 4 档');
+  assert.equal(Math.abs(needleDeg(instance)), 180, '指针停在「压缩继续」档（±180°）');
+  // 轮询到其他有效档：展示跟随 host 归一后的值、不写盘（客户端不再特判退役值）。
+  const cases = [
+    { value: 'continue', chip: /继续/, dial: /继续/, deg: 90 },
+    { value: null, chip: /问我/, dial: /问我/, deg: 0 },
+    { value: 'handoff', chip: /新会话/, dial: /接力新会话/, deg: 270 },
+  ];
+  for (const item of cases) {
+    env.server.panel.A = longEnv({ defaultOperation: item.value });
+    env.pollAll();
+    await instance.flush();
+    assert.match(textOf(byClass(instance.tree, 'relay-v3-chip')[0]), item.chip, 'chip=' + String(item.value));
+    const checked = dialOrders(instance).filter((node) => node.props['aria-checked'] === true);
+    assert.equal(checked.length, 1);
+    assert.match(JSON.stringify(checked[0].children), item.dial, '高亮档=' + String(item.value));
+    assert.equal(wrapDeg(needleDeg(instance)), wrapDeg(item.deg), '指针停在 ' + item.deg + '°');
+  }
+  assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '轮询/展示不写盘');
   // 点「压缩继续」→ 写真实字段；指针走到 180°
   orderWithText(instance, '压缩继续').props.onClick();
   await instance.flush();
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress', autoChoose: false });
-  assert.equal(needleTransform(instance), 'rotate(180deg)');
-  // 存量「自动（模型决定）」→ 同样按「继续」显示、不写盘
-  env.server.panel.A = longEnv({ autoChoose: true, defaultOperation: null });
-  env.pollAll();
-  await instance.flush();
-  assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 1, '轮询到存量隐藏档不写盘（仍只有上面那次点击写入）');
-  const checkedAuto = dialOrders(instance).filter((node) => node.props['aria-checked'] === true);
-  assert.match(JSON.stringify(checkedAuto[0].children), /继续/, '存量「自动」按「继续」高亮');
-  assert.equal(needleTransform(instance), 'rotate(90deg)');
+  assert.equal(Math.abs(needleDeg(instance)), 180, '指针停在「压缩继续」档（±180°）');
 });
 
 test('RelayPanel：单一模式键盘/点击/拖动都按 4 档换挡，指针全程走最短弧（≤90°）', async () => {

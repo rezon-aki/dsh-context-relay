@@ -448,6 +448,27 @@ test('archive（v0.9.0 #39）：最旧 done 优先、readArchive 计数/坏行�
   assert.deepEqual(readWorkItems(safe).items.map((item) => item.id), ['keep'], '归档失败台账不变');
 });
 
+test('P3-4 归档顺序：validate 失败先于 append——不留孤儿归档、台账不变', () => {
+  const cwd = tempCwd();
+  const seeded = writeWorkItems(cwd, { items: [{ id: 'keep', title: 'K', status: 'open' }], max: 2 });
+  assert.equal(seeded.ok, true);
+  // 超限计划本可归档 done-a（最旧 done），但剩余条目重复 id → validate 拒绝：不得先 append。
+  const refused = writeWorkItems(cwd, {
+    items: [
+      { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'dup', title: 'A', status: 'open', updatedAt: '2026-02-01T00:00:00.000Z' },
+      { id: 'dup', title: 'B', status: 'open', updatedAt: '2026-03-01T00:00:00.000Z' },
+    ],
+    max: 2,
+    rev: seeded.ledger.rev,
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'duplicate-id');
+  assert.equal(readArchive(cwd).count, 0, 'validate 失败不得新增归档');
+  assert.equal(existsSync(archivePathOf(cwd)), false, '不产生孤儿归档文件');
+  assert.deepEqual(readWorkItems(cwd).items.map((item) => item.id), ['keep'], '台账不变');
+});
+
 // ---- counts / ordering ----
 
 test('countsOf/pendingFirst：pending=未 done；排序 blocked→doing→open、组内 updatedAt 倒序、done 不出现', () => {

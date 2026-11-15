@@ -269,6 +269,35 @@ test('relay_work_items：officialTaskId 透传/继承；archive 返回与 over-c
   assert.equal(readLedgerFile(failCwd).items.length, 2, '归档失败台账不变');
 });
 
+test('P3-4 归档顺序（整表替换）：stale-rev/validate 失败不留孤儿归档；成功才归档 removed-done', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const archiveFile = join(cwd, '.scratch/context-relay/work-items-archive.ndjson');
+  writeLedger(cwd, [
+    { id: 'keep-1', title: '保留', status: 'doing', next: '继续' },
+    { id: 'done-old', title: '已完成', status: 'done', evidence: ['e:1'] },
+  ], { rev: 3 });
+  const session = fakeSession({ id: 'session-wi-archive-order', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_work_items');
+  const agent = { session, options: {} };
+  // stale rev：移除 done-old 本会归档——但 rev 校验失败必须零副作用（不得先 append）。
+  const items = [{ id: 'keep-1', title: '保留', status: 'doing', next: '继续' }];
+  const stale = await tool.execute({ items, rev: 2 }, { agent });
+  assert.equal(stale.code, 'stale-revision');
+  assert.equal(existsSync(archiveFile), false, 'stale 拒绝不得先归档');
+  assert.equal(readLedgerFile(cwd).rev, 3, 'stale 拒绝不落盘');
+  // validate 失败：保留 keep-1、新条目 doing 缺 next → 整次拒绝，归档不新增。
+  const invalid = await tool.execute({ items: [...items, { id: 'bad-1', title: '缺 next', status: 'doing' }], rev: 3 }, { agent });
+  assert.equal(invalid.code, 'invalid-item');
+  assert.equal(existsSync(archiveFile), false, 'validate 失败不得先归档');
+  assert.equal(readLedgerFile(cwd).rev, 3, '校验失败不落盘');
+  // 成功路径：removed-done 归档照旧（校验通过后才 append）。
+  const replaced = await tool.execute({ items, rev: 3 }, { agent });
+  assert.equal(replaced.ok, true, JSON.stringify(replaced));
+  assert.deepEqual(replaced.archived, { count: 1, path: '.scratch/context-relay/work-items-archive.ndjson' });
+  assert.equal(JSON.parse(readFileSync(archiveFile, 'utf8').trim()).reason, 'removed-done');
+});
+
 test('relay_phase：carry 无效 id 显式报告；items 非字符串拒绝', async () => {
   resetSharedState();
   const cwd = tmpCwd();
@@ -942,16 +971,16 @@ test('relay_handoff：台账损坏 fail-open（不拒绝交接）+ workItemsWarn
 test('sentinelText：台账非空 pending>0 时正文末尾追加台账行（Lead/队友都加）；空/未传不加', () => {
   const state = { band: 'organize' };
   const ledger = { exists: true, counts: { total: 5, pending: 2, doing: 1, blocked: 1, open: 0, done: 3 } };
-  const leadText = sentinelText('build', state, false, undefined, undefined, false, ledger);
+  const leadText = sentinelText('build', state, false, undefined, undefined, ledger);
   assert.match(leadText, /\n工作台账：未闭合 2 \/ 共 5（relay_work_items 查看\/更新；phase 边界前收口）$/);
   assert.doesNotMatch(leadText, /更新于 \d+ 分钟前|已停滞/, '不再按时间提示台账新鲜度');
-  const subText = sentinelText('build', state, true, undefined, { sent: true }, false, ledger);
+  const subText = sentinelText('build', state, true, undefined, { sent: true }, ledger);
   assert.match(subText, /工作台账：未闭合 2 \/ 共 5/);
   const empty = { exists: false, counts: { total: 0, pending: 0 } };
-  assert.ok(!sentinelText('build', state, false, undefined, undefined, false, empty).includes('工作台账'));
-  assert.ok(!sentinelText('build', state, false, undefined, undefined, false, undefined).includes('工作台账'));
+  assert.ok(!sentinelText('build', state, false, undefined, undefined, empty).includes('工作台账'));
+  assert.ok(!sentinelText('build', state, false, undefined, undefined, undefined).includes('工作台账'));
   const doneLedger = { exists: true, counts: { total: 3, pending: 0, done: 3 } };
-  assert.ok(!sentinelText('build', state, false, undefined, undefined, false, doneLedger).includes('工作台账'));
+  assert.ok(!sentinelText('build', state, false, undefined, undefined, doneLedger).includes('工作台账'));
 });
 
 test('到线提醒接入：台账非空时注入的 notice 带台账行；空台账 notice 与旧版一致', async () => {

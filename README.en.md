@@ -60,6 +60,15 @@ The single mode stays human-gated: no autonomous loop, no automatic approval on 
 
 Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path.
 
+## Design documents
+
+Publishable design summaries for repository readers (the internal point-by-point design log and audit records are not published):
+
+- [Design (DESIGN)](docs/design/DESIGN.md): positioning, the seven design goals, boundaries, key design points and acceptance criteria.
+- [Migration (MIGRATION)](docs/design/MIGRATION.md): v0.9.0 normalization actions and read-only fallbacks, and what v0.10.0 removes.
+
+Usage lives in this README; per-release behavior changes are in [CHANGELOG.md](CHANGELOG.md).
+
 ## Install
 
 Requires DSH `>=0.2.2-rc.2` (this kernel generation only) and Node.js `>=20`. Verified on DSH 0.2.2-rc.2: preset rows follow the official ptc patch; team features (status/renew/architect) adapt to the subagent tree; the work ledger is Leader-only and teammates do not read or write it.

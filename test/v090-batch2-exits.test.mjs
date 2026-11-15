@@ -302,10 +302,10 @@ test('panel-gate：relay_handoff status.phase 允许 blocked/cancel（不再误�
     agent: { session, options: {} },
     arguments: { human_approved: true, status: { phase, goal: 'g' } },
   });
-  const blocked = approvalGateOf(ctx, exec('blocked'), thresholds, true);
+  const blocked = approvalGateOf(ctx, exec('blocked'), thresholds);
   assert.equal(blocked?.kind, undefined, '出口 phase 不判 handoff-invalid（进入审批询问）');
   assert.match(blocked.reason, /human Go\/No-go/);
-  const bogus = approvalGateOf(ctx, exec('bogus'), thresholds, true);
+  const bogus = approvalGateOf(ctx, exec('bogus'), thresholds);
   assert.equal(bogus, undefined, '非法 phase 仍不弹无谓审批（handoff-invalid 预判）');
 });
 

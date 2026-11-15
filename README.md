@@ -60,6 +60,15 @@
 
 默认 4 人小队，优先复用；按需扩到部署 `maxActiveSubagents`，满额排队/报阻塞。派活 brief 五字段缺一不可：目标 / 必读 1–3 份（指针+when/role，按序自取）/ 写范围 / 验收 / 回执路径。
 
+## 设计文档
+
+仓库内提供可发布的设计摘要（面向仓库读者；内部逐条设计点与审计记录不随仓库发布）：
+
+- [设计说明（DESIGN）](docs/design/DESIGN.md)：定位、七条设计目标、边界、关键设计点摘要与验收口径。
+- [迁移说明（MIGRATION）](docs/design/MIGRATION.md)：v0.9.0 旧形态归一动作、只读兜底清单与 v0.10.0 删除项。
+
+用户使用方式见本 README；逐版本行为变更见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 安装
 
 要求：DSH `>=0.2.2-rc.2`（只支持这一代内核）、Node.js `>=20`。已验证 DSH 0.2.2-rc.2：preset 行跟随官方 ptc patch；团队能力（体检/换代/架构师）由 subagent 树适配；台账为 Leader-only，队友不读写。
