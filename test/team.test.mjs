@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
@@ -13,6 +13,11 @@ import { clearTeamStatusMemory, createTeamTools } from '../lib/agent/team-tools.
 import { TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPendingResets, hasPendingReset } from '../lib/agent/reset.js';
 import { clearSentinelMemory, LAST_BAND } from '../lib/agent/sentinel.js';
+import { DISPATCH_HEALTHS, clearDelegationMemory, createDelegationTools, dispatchHealthOf } from '../lib/agent/delegation-tools.js';
+import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
+import { readTeamContext } from '../lib/agent/team-context.js';
+import { markPendingArchitect } from '../lib/agent/shared.js';
+import { COLLECT_OK_PREFIX, DISPATCH_OK_PREFIX } from '../lib/projection.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { configurePanelStore, updatePanelState } from '../lib/panel-store.js';
@@ -944,6 +949,468 @@ test('pre-step：无 pending 时直接 next()，不做任何 IO', async () => {
   } finally { cleanup(dir); }
 });
 
+// ── 派活/收口（relay_dispatch / relay_collect，v0.9.0 批次3） ──────────────
+
+/** 标准派活参数（用例按需浅覆盖 itemId/worker/force 等字段）。 */
+const DISPATCH_ARGS = Object.freeze({
+  itemId: 'a1',
+  brief: '实现登录修复并自测',
+  docs: ['.scratch/context-relay/architecture/v090.md（when：开工前读设计）'],
+  writeScope: ['lib/foo.js'],
+  acceptance: 'node --test test/foo.test.mjs',
+});
+
+function seedLedger(dir, items) {
+  const written = writeWorkItems(dir, { items, updatedBy: LEAD, scopeId: LEAD });
+  assert.equal(written.ok, true, '台账 seed 写入成功');
+  return written;
+}
+
+function ledgerItem(dir, itemId) {
+  return readWorkItems(dir, { scopeId: LEAD }).items.find((item) => item.id === itemId);
+}
+
+function ledgerRev(dir) {
+  return readWorkItems(dir, { scopeId: LEAD }).rev;
+}
+
+function writeReportRaw(dir, itemId, text) {
+  const reports = join(dir, '.scratch', 'context-relay', 'reports');
+  mkdirSync(reports, { recursive: true });
+  writeFileSync(join(reports, itemId + '.md'), text, 'utf8');
+}
+
+function writeReceipt(dir, itemId, options = {}) {
+  const dispatchId = options.dispatchId ?? ('d-' + itemId + '-test');
+  const verdict = options.verdict ?? 'done';
+  const conclusion = options.conclusion ?? ('完成 ' + itemId);
+  writeReportRaw(dir, itemId, [
+    'task: ' + itemId,
+    'revision: ' + dispatchId,
+    'verdict: ' + verdict,
+    '',
+    '## 结论',
+    conclusion,
+    '',
+    '## 证据',
+    '- lib/foo.js:1',
+    '',
+  ].join('\n'));
+  return dispatchId;
+}
+
+function delegationToolsOf(ctx) {
+  const tools = createDelegationTools(makeRuntime(ctx.ctx));
+  return {
+    dispatch: tools.find((tool) => tool.name === 'relay_dispatch'),
+    collect: tools.find((tool) => tool.name === 'relay_collect'),
+  };
+}
+
+function dispatchCtx({ dir, members = [], pressures = {}, spawnResult } = {}) {
+  const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+  const teams = makeTeamService({
+    members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }, ...members],
+    memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+    ...(spawnResult === undefined ? {} : { spawnResult }),
+  });
+  const ctx = fakeCtx({
+    agentTeams: teams,
+    ...(Object.keys(pressures).length > 0 ? { sessionQuery: pressureQuery(pressures) } : {}),
+  });
+  return { lead, teams, ctx };
+}
+
+test('relay_dispatch：复用空闲干净 worker → 标准 5 字段 brief + 台账 doing+owner+next + 返回 worker/reportPath/dispatchId', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive', description: '实现' }],
+      pressures: { 'session-w1': 2000 },
+    });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(result.itemId, 'a1');
+    assert.match(result.dispatchId, /^d-a1-[0-9a-z]+$/);
+    assert.equal(result.reportPath, '.scratch/context-relay/reports/a1.md');
+    assert.deepEqual(result.worker, { name: 'worker-1', reused: true, spawned: false, status: 'inactive' });
+    assert.ok(result.text.startsWith(DISPATCH_OK_PREFIX + 'a1 '), '投影成功 marker（与投影常量同源，防漂移）');
+    // 派活消息 = 标准 5 字段 brief + reportPath + dispatchId
+    assert.equal(teams.calls.send.length, 1);
+    const briefText = teams.calls.send[0].content[0].text;
+    for (const marker of [
+      '1) 目标：实现登录修复并自测',
+      '2) 必读（1–3 份',
+      '3) 写范围：lib/foo.js',
+      '4) 验收：node --test test/foo.test.mjs',
+      '5) 回执：',
+    ]) assert.ok(briefText.includes(marker), 'brief 含 ' + marker);
+    assert.ok(briefText.includes(result.dispatchId), 'brief 含 dispatchId');
+    assert.ok(briefText.includes(result.reportPath), 'brief 含 reportPath');
+    assert.match(briefText, /verdict: done\|needs-human\|blocked/);
+    // 台账 doing + owner + next
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'doing');
+    assert.equal(stored.owner, 'worker-1');
+    assert.match(stored.next, /reports\/a1\.md/);
+    assert.equal(result.ledger.status, 'doing');
+    assert.equal(result.ledger.owner, 'worker-1');
+    assert.equal(result.brief.fields.length, 5);
+    assert.equal(existsSync(join(dir, '.scratch', 'context-relay', 'reports')), true, 'reports/ 目录按需创建（设计 §2.4.2 步骤 4）');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：缺 brief/docs/writeScope/acceptance 或非法写范围 → invalid-args 且零副作用', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 2000 },
+    });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const bad = [
+      { itemId: 'a1', docs: DISPATCH_ARGS.docs, writeScope: DISPATCH_ARGS.writeScope, acceptance: DISPATCH_ARGS.acceptance },
+      { itemId: 'a1', brief: 'x', writeScope: DISPATCH_ARGS.writeScope, acceptance: DISPATCH_ARGS.acceptance },
+      { itemId: 'a1', brief: 'x', docs: DISPATCH_ARGS.docs, acceptance: DISPATCH_ARGS.acceptance },
+      { itemId: 'a1', brief: 'x', docs: DISPATCH_ARGS.docs, writeScope: DISPATCH_ARGS.writeScope },
+      { ...DISPATCH_ARGS, writeScope: ['/etc/passwd'] },
+      { ...DISPATCH_ARGS, writeScope: ['../outside.js'] },
+      { ...DISPATCH_ARGS, docs: [] },
+      { ...DISPATCH_ARGS, docs: ['a', 'b', 'c', 'd'] },
+    ];
+    for (const args of bad) {
+      const refused = await dispatch.execute(args, { agent: lead });
+      assert.equal(refused.ok, false, '应拒绝: ' + JSON.stringify(args).slice(0, 80));
+      assert.equal(refused.code, 'invalid-args');
+    }
+    assert.equal(teams.calls.send.length, 0, '拒绝不发消息');
+    assert.equal(teams.calls.spawn.length, 0, '拒绝不 spawn');
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'open', '台账不变');
+    assert.equal(stored.owner, null);
+    assert.equal(ledgerRev(dir), 1, '台账 rev 不变');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：item 不存在/done/already-dispatched 结构化拒绝；force 只重发不写台账', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 2000 },
+    });
+    seedLedger(dir, [
+      { id: 'a2', title: '已关闭', status: 'done', evidence: ['.scratch/context-relay/reports/a2.md'] },
+      { id: 'a3', title: '进行中', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a3.md' },
+    ]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const missing = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'zz' }, { agent: lead });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.code, 'item-not-found');
+    const closed = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2' }, { agent: lead });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.code, 'item-closed');
+    const doing = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a3' }, { agent: lead });
+    assert.equal(doing.ok, false);
+    assert.equal(doing.code, 'already-dispatched');
+    assert.equal(doing.owner, 'worker-1');
+    assert.match(doing.recovery, /relay_collect/);
+    assert.equal(teams.calls.send.length, 0);
+    assert.equal(teams.calls.spawn.length, 0);
+    const revBefore = ledgerRev(dir);
+    const forced = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a3', force: true }, { agent: lead });
+    assert.equal(forced.ok, true, 'force 重发成功');
+    assert.equal(forced.worker.reused, true);
+    assert.ok(forced.text.startsWith(DISPATCH_OK_PREFIX + 'a3 '));
+    assert.equal(teams.calls.send.length, 1, 'force 只发消息');
+    assert.equal(teams.calls.spawn.length, 0, 'force 不 spawn');
+    assert.equal(ledgerRev(dir), revBefore, 'force 不写台账');
+    assert.equal(ledgerItem(dir, 'a3').status, 'doing');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：无空闲 worker → 按 worker-1 新建（prompt=标准 brief）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({ dir });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.worker, { name: 'worker-1', reused: false, spawned: true, status: 'provisioning' });
+    assert.equal(teams.calls.spawn.length, 1);
+    assert.equal(teams.calls.spawn[0].name, 'worker-1');
+    assert.ok(teams.calls.spawn[0].prompt[0].text.includes('1) 目标：'), 'prompt 即标准 brief');
+    assert.equal(ledgerItem(dir, 'a1').owner, 'worker-1');
+    assert.equal(ledgerItem(dir, 'a1').status, 'doing');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：member-limit → 结构化失败 + 台账回滚', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({ dir, spawnResult: () => { throw new Error('member limit reached'); } });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'member-limit');
+    assert.equal(result.effect, 'ledger rolled back');
+    assert.match(result.summary, /reset|handoff/);
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'open', '台账回滚为 open');
+    assert.equal(stored.owner, null, 'owner 回滚');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：脏上下文队友默认拒绝（先管理再派指引 + 快照）；accept_dirty:true 放行', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 38000 },
+    });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const refused = await dispatch.execute({ ...DISPATCH_ARGS, worker: 'worker-1' }, { agent: lead });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'worker-needs-management');
+    assert.match(refused.recovery, /relay_freshen\(\{reset:true/);
+    assert.equal(refused.worker.band, 'organize');
+    assert.equal(teams.calls.send.length, 0, '拒绝不发消息');
+    assert.equal(ledgerItem(dir, 'a1').status, 'open', '拒绝零台账副作用');
+    const snapshot = readTeamContext(dir, LEAD);
+    assert.ok(snapshot.pending.some((row) => row.name === 'worker-1'), '写团队上下文快照（phase 边界兜底）');
+    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, worker: 'worker-1', accept_dirty: true }, { agent: lead });
+    assert.equal(accepted.ok, true, 'accept_dirty 放行');
+    assert.equal(teams.calls.send.length, 1);
+    assert.equal(ledgerItem(dir, 'a1').owner, 'worker-1');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch 自动选人 health：仅 fresh/watch 可复用（stale/spent/unknown 排除；设计 §2.4.2 步骤 3b）', async () => {
+  // 判定纯函数：显式 health 优先（官方 seam 带 health 时），否则按设计口径由 band(+checkpoint) 派生。
+  assert.equal(dispatchHealthOf({ health: 'stale' }, { band: 'ok', ratio: 0.1 }), 'stale');
+  assert.equal(DISPATCH_HEALTHS.includes('stale'), false, 'stale 即使压力 band=ok 也不可自动复用');
+  assert.equal(dispatchHealthOf({}, { band: 'ok' }), 'fresh');
+  assert.equal(dispatchHealthOf({}, { band: 'warn' }), 'watch');
+  assert.equal(dispatchHealthOf({}, { band: 'organize' }), 'spent');
+  assert.equal(dispatchHealthOf({}, { band: 'relay' }), 'spent');
+  assert.equal(dispatchHealthOf({}, { band: 'unknown' }), 'unknown');
+  assert.equal(DISPATCH_HEALTHS.includes(dispatchHealthOf({}, { band: 'organize' })), false);
+  assert.equal(DISPATCH_HEALTHS.includes(dispatchHealthOf({}, { band: 'unknown' })), false);
+  // 集成 A：worker-1 到线（38% → band=organize → health=spent/stale）→ 不自动复用，改新建 worker-2。
+  const dirA = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir: dirA,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 38000 },
+    });
+    seedLedger(dirA, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(result.worker.spawned, true, 'stale/spent 队友不自动复用');
+    assert.equal(result.worker.name, 'worker-2', 'worker-1 名字已占用，沿用既有 spawn 路径新建 worker-2');
+    assert.equal(teams.calls.send.length, 0);
+    assert.equal(teams.calls.spawn.length, 1);
+  } finally { cleanup(dirA); clearDelegationMemory(); }
+  // 集成 B：读不到队友档位（无 sessionQuery → band=unknown → health=unknown）→ 不自动复用。
+  const dirB = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({ dir: dirB, members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }] });
+    seedLedger(dirB, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(result.worker.spawned, true, '读不到档位（unknown）的队友不自动复用');
+    assert.equal(result.worker.name, 'worker-2');
+    assert.equal(teams.calls.send.length, 0);
+  } finally { cleanup(dirB); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：worker-1..9 名字耗尽 → worker-name-exhausted（与 spawn 满额 member-limit 区分）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const busy = [];
+    for (let index = 1; index <= 9; index += 1) busy.push({ id: 'session-w' + index, name: 'worker-' + index, role: 'teammate', status: 'running' });
+    const { lead, teams, ctx } = dispatchCtx({ dir, members: busy });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'worker-name-exhausted', '名字耗尽独立 code（不是 member-limit）');
+    assert.match(result.recovery, /复用|改名/);
+    assert.equal(teams.calls.spawn.length, 0, '名字耗尽不尝试 spawn（spawn 额度可能仍有）');
+    assert.equal(teams.calls.send.length, 0);
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'open', '零台账副作用');
+    assert.equal(stored.owner, null);
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch/relay_collect：非 Lead → lead-only（零副作用）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 2000 },
+    });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch, collect } = delegationToolsOf(ctx);
+    const teammate = makeAgent({ sessionId: 'session-w1', cwd: dir });
+    const dispatched = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: teammate });
+    assert.equal(dispatched.ok, false);
+    assert.equal(dispatched.code, 'lead-only');
+    const collected = await collect.execute({ itemId: 'a1' }, { agent: teammate });
+    assert.equal(collected.ok, false);
+    assert.equal(collected.code, 'lead-only');
+    assert.equal(teams.calls.send.length, 0);
+    assert.equal(ledgerItem(dir, 'a1').status, 'open');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_collect：立即读回执头 3 行 + digest（≤600）→ 台账 done（evidence=reportPath）、只回 digest；重复 collect 幂等', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({ dir });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a1.md' }]);
+    writeReceipt(dir, 'a1', { dispatchId: 'd-a1-test', conclusion: '登录修复完成，node --test 全绿' });
+    const { collect } = delegationToolsOf(ctx);
+    const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-test' }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(result.status, 'collected');
+    assert.equal(result.verdict, 'done');
+    assert.equal(result.digest, '登录修复完成，node --test 全绿');
+    assert.ok(Array.from(result.digest).length <= 600);
+    assert.ok(!result.text.includes('## 证据'), '只回 digest，不返回报告正文');
+    assert.equal(result.reportPath, '.scratch/context-relay/reports/a1.md');
+    assert.equal(result.ledger.status, 'done');
+    assert.ok(result.text.startsWith(COLLECT_OK_PREFIX + 'a1 '), '投影成功 marker（与投影常量同源，防漂移）');
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'done');
+    assert.deepEqual(stored.evidence, ['.scratch/context-relay/reports/a1.md']);
+    assert.equal(stored.next, null);
+    // 幂等：同 digest + alreadyCollected；不写盘
+    const revAfter = ledgerRev(dir);
+    const again = await collect.execute({ itemId: 'a1' }, { agent: lead });
+    assert.equal(again.ok, true);
+    assert.equal(again.alreadyCollected, true);
+    assert.equal(again.digest, result.digest);
+    assert.equal(ledgerRev(dir), revAfter, '幂等路径不写盘');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_collect：needs-human/blocked → 台账 blocked + 原因', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({ dir });
+    seedLedger(dir, [
+      { id: 'a1', title: '需要确认', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a1.md' },
+      { id: 'a2', title: '被阻塞', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a2.md' },
+    ]);
+    writeReceipt(dir, 'a1', { verdict: 'needs-human', conclusion: '需要用户确认权限模型' });
+    writeReceipt(dir, 'a2', { verdict: 'blocked', conclusion: '依赖的接口尚未发布' });
+    const { collect } = delegationToolsOf(ctx);
+    const needsHuman = await collect.execute({ itemId: 'a1' }, { agent: lead });
+    assert.equal(needsHuman.ok, true);
+    assert.equal(needsHuman.verdict, 'needs-human');
+    assert.equal(needsHuman.ledger.status, 'blocked');
+    assert.equal(ledgerItem(dir, 'a1').status, 'blocked');
+    assert.equal(ledgerItem(dir, 'a1').blocked, '需要用户确认权限模型');
+    const blocked = await collect.execute({ itemId: 'a2' }, { agent: lead });
+    assert.equal(blocked.ok, true);
+    assert.equal(blocked.verdict, 'blocked');
+    assert.equal(ledgerItem(dir, 'a2').blocked, '依赖的接口尚未发布');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_collect：报告缺失/坏头/revision 不匹配 → pending 且不改台账；未派活 → invalid-args', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({ dir });
+    seedLedger(dir, [
+      { id: 'a1', title: '等进行中', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a1.md' },
+      { id: 'a2', title: '未派活', status: 'open' },
+    ]);
+    const { collect } = delegationToolsOf(ctx);
+    const revBefore = ledgerRev(dir);
+    const missing = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-x' }, { agent: lead });
+    assert.equal(missing.ok, true);
+    assert.equal(missing.status, 'pending');
+    assert.equal(missing.reason, 'report-missing');
+    assert.ok(!missing.text.startsWith(COLLECT_OK_PREFIX), 'pending 不算成功 marker');
+    assert.equal(ledgerItem(dir, 'a1').status, 'doing');
+    assert.equal(ledgerRev(dir), revBefore, 'pending 不写台账');
+    writeReportRaw(dir, 'a1', '这不是回执\n没有头 3 行\n');
+    const invalid = await collect.execute({ itemId: 'a1' }, { agent: lead });
+    assert.equal(invalid.status, 'pending');
+    assert.equal(invalid.reason, 'report-invalid');
+    assert.ok(Array.isArray(invalid.head) && invalid.head.length > 0, 'report-invalid 附已读头部片段供排查');
+    writeReceipt(dir, 'a1', { dispatchId: 'd-a1-old' });
+    const stale = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-new' }, { agent: lead });
+    assert.equal(stale.status, 'pending');
+    assert.equal(stale.reason, 'stale-report');
+    assert.ok(Array.isArray(stale.head) && stale.head.length === 3, 'stale 附已读头部片段');
+    assert.equal(ledgerItem(dir, 'a1').status, 'doing');
+    const notDispatched = await collect.execute({ itemId: 'a2' }, { agent: lead });
+    assert.equal(notDispatched.ok, false);
+    assert.equal(notDispatched.code, 'invalid-args');
+    const badWait = await collect.execute({ itemId: 'a1', waitMs: 999999 }, { agent: lead });
+    assert.equal(badWait.ok, false);
+    assert.equal(badWait.code, 'invalid-args');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('dispatch → fake worker 回执 → collect 全流程：台账 done（evidence=reportPath）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({
+      dir,
+      members: [{ id: 'session-w1', name: 'worker-1', role: 'teammate', status: 'inactive' }],
+      pressures: { 'session-w1': 2000 },
+    });
+    seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch, collect } = delegationToolsOf(ctx);
+    const dispatched = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(dispatched.ok, true);
+    writeReceipt(dir, 'a1', { dispatchId: dispatched.dispatchId, conclusion: '登录修复完成；node --test 全绿' });
+    const collected = await collect.execute({ itemId: 'a1', dispatchId: dispatched.dispatchId }, { agent: lead });
+    assert.equal(collected.ok, true);
+    assert.equal(collected.status, 'collected');
+    assert.equal(collected.verdict, 'done');
+    assert.equal(collected.ledger.status, 'done');
+    assert.ok(Array.from(collected.digest).length <= 600);
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'done');
+    assert.deepEqual(stored.evidence, ['.scratch/context-relay/reports/a1.md']);
+    assert.equal(stored.next, null);
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
 // ── agent 装配 ────────────────────────────────────────────────────────
 
 test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode 参数）', async () => {
@@ -955,7 +1422,7 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   const rootCalls = [];
   const rootSections = [];
   await listener.listener({ agent: makeAgent({ calls: rootCalls, sections: rootSections }) });
-  assert.deepEqual(rootCalls, ['relay_team_status', 'relay_renew', 'relay_architect'], 'root 拿到 Lead 保鲜/架构师工具');
+  assert.deepEqual(rootCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], 'root 拿到 Lead 保鲜/架构师/派活/收口工具（v0.9.0 批次3 顺序）');
   assert.ok(rootSections.some((section) => section.name === 'context-relay:team-lead' && section.text === TEAM_LEAD_PROTOCOL_TEXT));
   // teammate
   const teammateCalls = [];
@@ -967,6 +1434,13 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   assert.deepEqual(teammateCalls, ['relay_checkpoint', 'relay_freshen'], '队友拿到 checkpoint + freshen 工具');
   assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '队友只注入紧凑协议（不再叠第二条 team-worker 段）');
   assert.ok(!teammateCalls.includes('relay_team_status'), '队友不拿 Lead 工具');
+  assert.ok(!teammateCalls.includes('relay_dispatch') && !teammateCalls.includes('relay_collect'), '队友不拿派活/收口工具');
+  // 架构师：只拿 relay_checkpoint（不拿 dispatch/collect）
+  markPendingArchitect(LEAD);
+  const architectCalls = [];
+  const architect = makeAgent({ sessionId: 'session-arch', header: { origin: 'subagent', delegationDepth: 1, parentSession: LEAD }, calls: architectCalls, sections: [] });
+  await g.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: architect });
+  assert.deepEqual(architectCalls, ['relay_checkpoint'], '架构师只拿 checkpoint（不拿 dispatch/collect）');
   // 旧配置 routerMode:false 仅告警忽略（单一模式生产不可关）→ 仍按单一模式装配。
   const c = fakeCtx();
   apply(c.ctx, { routerMode: false });
@@ -974,5 +1448,17 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   const legacyCalls = [];
   const legacySections = [];
   await c.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: makeAgent({ calls: legacyCalls, sections: legacySections }) });
-  assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect'], 'routerMode:false 不再回到 classic：仍装配单一模式');
+  assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], 'routerMode:false 不再回到 classic：仍装配单一模式');
+});
+
+test('装配：delegationGate config（off/非法/strict 归一）不崩；strict 归一 warn 并打一次日志', async () => {
+  const off = fakeCtx();
+  assert.doesNotThrow(() => apply(off.ctx, { delegationGate: 'off' }));
+  assert.equal(off.warns.some((line) => /delegationGate/.test(line)), false, 'off 不产生日志');
+  const invalid = fakeCtx();
+  assert.doesNotThrow(() => apply(invalid.ctx, { delegationGate: 'banana' }));
+  assert.equal(invalid.warns.some((line) => /delegationGate/.test(line)), false, '非法值按缺省 warn 归一（不崩）');
+  const strict = fakeCtx();
+  assert.doesNotThrow(() => apply(strict.ctx, { delegationGate: 'strict' }));
+  assert.ok(strict.warns.some((line) => /delegationGate="strict" is reserved for v0.10.0/.test(line)), 'strict 归一 warn 并打一次日志');
 });

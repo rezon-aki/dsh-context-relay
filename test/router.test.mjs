@@ -5,7 +5,7 @@
  * + 非 root 的 lead-only 工具裁剪（B，fail-open）
  * + 子代理 worker 短协议影子覆盖（C：普通子代理；直接队友装紧凑队友协议）
  * + 普通子代理额外隐藏 relay_phase（D：非 root 且非队友；队友/root 保留）。
- * 2026-11-03 用户裁决：范围内不加 relay_route/relay_inbox；协议/回执契约/PTC 模板先行。
+ * 2026-11-03 用户裁决：范围内不加 relay_route/relay_inbox；协议/回执契约先行。v0.9.0 批次3 起派活/收口工具化（relay_dispatch/relay_collect 替代旧 PTC 手写模板）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { clearSharedMemory, markPendingArchitect } from '../lib/agent/shared.js';
@@ -87,7 +87,7 @@ function agentListener(f) {
   return f.listeners.find((entry) => entry.name === 'agent/created');
 }
 
-test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+collect 模板齐全', () => {
+test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执契约齐全', () => {
   const text = ROUTER_PROTOCOL_TEXT;
   assert.match(text, /接力模式（Lead 只调度）/);
   assert.match(text, /Lead，只调度、不执行/);
@@ -96,7 +96,7 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /Lead 只调度/);
   assert.match(text, /写文件、改代码、跑命令\/测试、查日志一律派 worker/);
   assert.match(text, /不设「小任务自己干」例外/);
-  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '只作异常信号，不设允许比例', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
+  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '目标 ≤20%', 'warn 档只提醒', 'strict 留 v0.10.0', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
     assert.ok(text.includes(phrase), 'ROUTER 缺短语: ' + phrase);
   }
   // 回执契约：文件 ≤4KB + 单条消息 ≤200 字 + 头 3 行机读 + verdict
@@ -106,38 +106,43 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /≤200 字/);
   assert.match(text, /verdict: done\|needs-human\|blocked/);
   assert.match(text, /context-relay\/reports\/<taskId>\.md/);
-  // PTC 两段模板：dispatch（批量建卡+spawn）与 collect（短等+digest）
-  assert.match(text, /PTC dispatch 模板/);
-  assert.match(text, /PTC collect 模板/);
-  assert.match(text, /subagent\(\{ name: who/);
-  assert.match(text, /send_message\(\{ agent: who/);
-  assert.match(text, /wait_agent/);
-  assert.match(text, /digest/);
+  // 派活与收口工具化（v0.9.0 批次3；替代旧 PTC 手写模板）
+  assert.match(text, /派活与收口（工具化：relay_dispatch \/ relay_collect）/);
+  for (const phrase of ['relay_dispatch({itemId, brief, docs, writeScope, acceptance})', 'relay_collect({itemId, waitMs?})', '≤120s', 'digest', 'reportPath', 'evidence=reportPath', '只回 digest']) {
+    assert.ok(text.includes(phrase), 'ROUTER 派活/收口缺短语: ' + phrase);
+  }
+  // 旧 PTC 手写模板不得回潮
+  for (const oldPhrase of ['PTC dispatch 模板', 'PTC collect 模板', 'subagent({ name: who', 'send_message({ agent: who']) {
+    assert.equal(text.includes(oldPhrase), false, 'ROUTER 不应再有旧 PTC 模板片段: ' + oldPhrase);
+  }
   // 边界如实：PTC 软约束 + 消息不可过滤
   assert.match(text, /node:fs/);
   assert.match(text, /软约束/);
-  // 度量引用（与 relay_status 字段联动）
-  assert.match(text, /relay_status\.execution/);
+  // 度量引用（与 relay_status.delegation 字段联动）
+  assert.match(text, /relay_status\.delegation/);
   assert.match(text, /relay_status\.compaction\.debt/);
+  // lead-exec / build/verify owner 口径由 base 与工作台账段承载（ROUTER 不重复）
+  assert.ok(PROTOCOL_TEXT.includes('lead-exec'));
+  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('build/verify 分点 owner 必须是 worker'));
 });
 
 test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () => {
   const text = readFileSync(new URL('../skills/context-relay/SKILL.md', import.meta.url), 'utf8');
-  for (const phrase of ['## Lead 职责', '用户交互、决策（裁决）、派活、验收抽样', '不亲自改码/跑测试/写实现文档/读长日志', '不设自做额度', '派活或拆票', '≤3 次/phase', '不设允许比例/额度、不作为闸门', 'worker 必须亲自写/跑', '新 root 默认压缩继续', '模式和授权不跨会话继承', '默认值跟随「模型」选择器', '已选过则沿用该选择', '默认（跟随模型选择）', 'handoff 继承']) {
+  for (const phrase of ['## Lead 职责', '用户交互、决策（裁决）、派活、验收抽样', '不亲自改码/跑测试/写实现文档/读长日志', '不设自做额度', '派活或拆票', '≤3 次/phase', '目标 ≤20%', 'relay_dispatch', 'relay_collect', 'lead-exec', '派活与收口', '委派统计', 'worker 必须亲自写/跑', '新 root 默认压缩继续', '模式和授权不跨会话继承', '默认值跟随「模型」选择器', '已选过则沿用该选择', '默认（跟随模型选择）', 'handoff 继承']) {
     assert.ok(text.includes(phrase), 'SKILL 缺短语: ' + phrase);
   }
   assert.ok(!text.includes('当前实现仍 seed'));
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '默认 4 人', 'maxActiveSubagents', '容量保全', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6500 / ROUTER ≤3250', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6800 / ROUTER ≤2689', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
   // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
   // v0.5.0：新增「等待纪律」（约 110 字符）后上调到 5550；仍是硬上限，不是取消。
-  // v0.9.0 批次2实测 PROTOCOL 6431 / ROUTER 3155 / TEAM_LEAD 796 / PROTOCOL_TEXT_LONG 6351；预算按实测+50向上取整，保留全部硬约束。
+  // v0.9.0 批次3实测 PROTOCOL 6744 / PROTOCOL_TEXT_LONG 6664 / ROUTER 2639 / TEAM_LEAD 796；预算按实测+50向上取整，保留全部硬约束（ROUTER 因旧 PTC 模板实测小于设计预估，预算取实测 2639+50 向上取整=2689，仍较批次2的 3250 净降）。
   // 这里约束常驻注入字符体积，不是文档落盘硬门；保留全部必需短语断言。
-  assert.ok(PROTOCOL_TEXT.length <= 6500, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 3250, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  assert.ok(PROTOCOL_TEXT.length <= 6800, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2689, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '四段式', '只提醒不拒绝', '容量保全', '≥85%', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '默认 4 人', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
@@ -159,6 +164,13 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6500 / ROUTER �
     '每轮召回 ≤3 条',
     '先写好文档再交接',
     '≤3 条相关历史经验（≤1KB）',
+    '派活与收口工具化',
+    'relay_dispatch',
+    'relay_collect',
+    'digest≤600字',
+    'lead-exec',
+    '目标 ≤20%',
+    'warn 档只提醒',
   ];
   for (const phrase of protocolRequired) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
@@ -169,21 +181,27 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6500 / ROUTER �
     "用户交互、决策、派活、验收抽样",
     "验收抽样（≤3 次/phase",
     "写实现文档、读长日志也派 worker",
-    "只作异常信号，不设允许比例",
+    "目标 ≤20%",
+    "warn 档只提醒",
+    "strict 留 v0.10.0",
     "面板默认档",
     "新会话默认=压缩继续",
     "不继承旧模式/授权",
     'root Lead，只调度、不执行',
     '不设「小任务自己干」例外',
-    'PTC dispatch 模板',
-    'PTC collect 模板',
+    'relay_dispatch',
+    'relay_collect',
+    '≤120s',
+    'digest',
+    'reportPath',
+    'evidence=reportPath',
     '≤4KB',
     '≤200 字',
     'verdict: done|needs-human|blocked',
     'context-relay/reports/<taskId>.md',
     'node:fs',
     '软约束',
-    'relay_status.execution',
+    'relay_status.delegation',
     'relay_status.compaction.debt',
   ];
   for (const phrase of routerRequired) {
@@ -228,7 +246,7 @@ test('v0.3.2 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/�
   for (const phrase of ['relay_freshen({reset:true', '真清空', '不占额度', '只用于换身份/角色', 'member-limit', 'relay_handoff']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/手动重建 纪律: ' + phrase);
   }
-  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字']) {
+  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字', 'dispatchId', '必读 1–3 份']) {
     assert.ok(TEAMMATE_PROTOCOL_TEXT.includes(phrase), '紧凑队友段缺短语: ' + phrase);
   }
   // v0.3.2 真机会话反馈：固定小队/复用优先 + 成员额度稀缺（spawn 与 renew 都占额）
@@ -278,7 +296,7 @@ test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁�
 
 test('v0.3.8/v0.9.0 单模式常驻协议：PROTOCOL_TEXT_LONG 去掉「压缩→新会话 / 两段式」且为唯一注入 base', () => {
   // 预算与短语：长版本由 classic 派生，仍承载全部硬约束；只去掉长模式不存在的档位。
-  assert.ok(PROTOCOL_TEXT_LONG.length <= 6450, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
+  assert.ok(PROTOCOL_TEXT_LONG.length <= 6750, 'PROTOCOL_TEXT_LONG 超预算: ' + PROTOCOL_TEXT_LONG.length);
   assert.ok(!PROTOCOL_TEXT_LONG.includes('压缩→新会话'), '长模式协议不得出现已移除档位');
   assert.ok(!PROTOCOL_TEXT_LONG.includes('两段式'), '长模式协议不得出现两段式说明');
   for (const phrase of [

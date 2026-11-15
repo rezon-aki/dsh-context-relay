@@ -721,4 +721,39 @@ test('v0.9.0 formatStatus：capacity 事实行只在 atRisk 时出现（预算�
   assert.doesNotMatch(formatStatus({ phase: 'build', capacity: capacityOf({ used: 10, window: 100 }) }), /capacity:/, '不 atRisk 不渲染');
   assert.doesNotMatch(formatStatus({ phase: 'build' }), /capacity:/, '无 capacity 字段不渲染（旧输出不变）');
 });
+test('v0.9.0 批次3 formatStatus：delegation 行/advice 行/basis 如实标注（无字段旧输出不变）', () => {
+  const baseReport = {
+    phase: 'build',
+    lead: { ratio: 0.412, used: 412000, window: 1000000, band: 'organize' },
+    execution: { calls: 3, total: 57, ratio: 0.053 },
+  };
+  const text = formatStatus({
+    ...baseReport,
+    delegation: { execRatio: 0.053, calls: { exec: 3, total: 57 }, dispatchCount: 2, collectCount: 1, idleWorkers: 5, advice: '', basis: 'projection' },
+  });
+  assert.match(text, /delegation: Lead 执行 5\.3%（3\/57，目标 ≤20% warn）· 派活 2 \/ 收口 1 · 空闲队友 5/);
+  assert.ok(text.indexOf('delegation:') > text.indexOf('exec:'), 'delegation 行在 exec 行之后');
+  assert.doesNotMatch(text, /delegation-advice/);
+  // idleWorkers null（团队不可用/非 Lead）→ 显示 ?，不猜 0
+  const idleNull = formatStatus({
+    ...baseReport,
+    delegation: { execRatio: 0, calls: { exec: 0, total: 0 }, dispatchCount: 0, collectCount: 0, idleWorkers: null, advice: '', basis: 'projection' },
+  });
+  assert.match(idleNull, /· 空闲队友 \?$/m);
+  // basis unavailable → 行尾如实标注「投影不可用，仅参考」
+  const unavailable = formatStatus({
+    ...baseReport,
+    delegation: { execRatio: 0, calls: { exec: 0, total: 0 }, dispatchCount: 0, collectCount: 0, idleWorkers: null, advice: '', basis: 'unavailable' },
+  });
+  assert.match(unavailable, /· 空闲队友 \?（投影不可用，仅参考）$/m);
+  // advice 非空 → 追加一行
+  const advised = formatStatus({
+    ...baseReport,
+    delegation: { execRatio: 0.3, calls: { exec: 30, total: 100 }, dispatchCount: 0, collectCount: 0, idleWorkers: 3, advice: '有 3 个空闲队友且本会话 0 次 relay_dispatch：先派活，不要自己写。', basis: 'projection' },
+  });
+  assert.match(advised, /delegation-advice: 有 3 个空闲队友且本会话 0 次 relay_dispatch：先派活，不要自己写。/);
+  assert.match(advised, /delegation: Lead 执行 30\.0%（30\/100，目标 ≤20% warn）/);
+  // 无 delegation 字段 → 整组行不渲染（旧调用/单测输出不变）
+  assert.doesNotMatch(formatStatus(baseReport), /delegation/);
+});
 

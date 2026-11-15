@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { apply } from '../lib/agent.js';
+import { createRelayTools } from '../lib/agent/tools.js';
+import { createDelegationTools } from '../lib/agent/delegation-tools.js';
+import { ROUTER_DENY_TOOLS } from '../lib/agent/protocol.js';
+import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
+import { thresholdsFromPercent } from '../lib/policy.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
@@ -148,6 +153,74 @@ function preStepListener(events) {
 
 function tmpCwd() {
   return mkdtempSync(join(tmpdir(), 'relay-test-'));
+}
+
+/** v0.9.0 批次3：写一份台账（scope=根会话 id；默认 build/done），用于委派闸门/集成测试。 */
+function seedRelayLedger(cwd, scopeId, items) {
+  const result = writeWorkItems(cwd, {
+    items: items.map((item) => ({
+      id: item.id,
+      title: item.title ?? item.id,
+      status: item.status ?? 'done',
+      owner: item.owner ?? null,
+      next: item.next ?? null,
+      blocked: item.blocked ?? null,
+      evidence: item.evidence ?? [],
+      phase: item.phase ?? 'build',
+    })),
+    scopeId,
+    updatedBy: scopeId,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  return result.ledger;
+}
+
+/** v0.9.0 批次3：直接 createRelayTools（不经 agent.js 装配），用于 runtime.delegation 三档/零副作用测试。 */
+function directRelayTools(services, { delegation, workItems } = {}) {
+  const { ctx } = fakeCtx({ services });
+  const definitions = createRelayTools({
+    ctx,
+    currentThresholds: () => thresholdsFromPercent(35),
+    workItems: { enabled: true, gate: 'strict', phaseGate: 'strict', max: 30, pathOverride: undefined, ...workItems },
+    ...(delegation === undefined ? {} : { delegation }),
+  });
+  return new Map(definitions.map((definition) => [definition.name, definition]));
+}
+
+/** v0.9.0 批次3 集成：root Lead 的 agent-scope 记录器（登记工具定义 + restrict 名单 + sections）。 */
+function rootLeadHarness({ sessionId, cwd }) {
+  const registered = new Map();
+  const restricted = [];
+  const sections = [];
+  const agent = {
+    session: {
+      id: sessionId,
+      header: { cwd },
+      seq: 0,
+      requestHeader: () => ({ config: { provider: 'deepseek', model: 'test' } }),
+      snapshotEvents: () => [],
+    },
+    ctx: {
+      inject(services, callback) {
+        if (services.length === 1 && services[0] === 'tools') {
+          callback({
+            tools: {
+              register(definition) { registered.set(definition.name, definition); return () => {}; },
+              restrict(payload) { for (const name of payload?.deny ?? []) restricted.push(name); return () => {}; },
+            },
+          });
+          return { dispose() {} };
+        }
+        if (services.length === 1 && services[0] === 'systemPrompt') {
+          callback({ systemPrompt: { section(definition) { sections.push(definition); return () => {}; } } });
+          return { dispose() {} };
+        }
+        throw new Error('unexpected agent scope inject: ' + JSON.stringify(services));
+      },
+    },
+    inject() {},
+  };
+  return { agent, registered, restricted, sections };
 }
 
 /**
@@ -2474,6 +2547,270 @@ test('Router P0 度量：无执行/未压缩 → ratio=0、debt=no，text 行稳
   assert.match(report.text, /exec: 0\/0 calls \(0\.0%\) · compaction debt: no\(0\)/);
 });
 
+test('v0.9.0 批次3 delegation 度量：relay_status 返回 delegation 块（exec/派活/收口/空闲队友/advice/basis）', async () => {
+  resetSharedState();
+  const members = [
+    { id: 'session-member-running', name: 'worker-1', role: 'teammate', status: 'running' },
+    { id: 'session-member-idle1', name: 'worker-2', role: 'teammate', status: 'idle' },
+    { id: 'session-member-idle2', name: 'worker-3', role: 'teammate', status: 'idle' },
+  ];
+  const baseProjection = (extra) => ({
+    phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    ...extra,
+  });
+  const metricsOf = async (id, projection) => {
+    const { session } = countingSnapshotSession({ id, cwd: tmpCwd() });
+    const bundle = attachRelayProjection(fakeServices({
+      session,
+      extra: { agentTeams: { tryMembership: () => ({ role: 'lead' }), listMembers: () => members } },
+    }), projection);
+    return applyAgent(bundle.services).tools.get('relay_status').execute({}, { agent: { session, options: {} } });
+  };
+  // 正常：3/57=5.3%，已派 2 / 收口 1 → 四规则都不命中（advice 空）
+  const normal = await metricsOf('session-delegation-normal', baseProjection({ toolCalls: 57, executionCalls: 3, dispatchCalls: 2, collectCalls: 1 }));
+  assert.deepEqual(normal.delegation, {
+    execRatio: 0.053,
+    calls: { exec: 3, total: 57 },
+    dispatchCount: 2,
+    collectCount: 1,
+    idleWorkers: 2,
+    advice: '',
+    basis: 'projection',
+  });
+  assert.match(normal.text, /delegation: Lead 执行 5\.3%（3\/57，目标 ≤20% warn）· 派活 2 \/ 收口 1 · 空闲队友 2/);
+  assert.doesNotMatch(normal.text, /delegation-advice/);
+  // 规则1：样本不足（toolCalls<10）
+  const sample = await metricsOf('session-delegation-sample', baseProjection({ toolCalls: 7, executionCalls: 4, dispatchCalls: 0, collectCalls: 0 }));
+  assert.match(sample.delegation.advice, /样本不足（<10 次工具调用）/);
+  // 规则2：样本足够且执行占比 >20%
+  const over = await metricsOf('session-delegation-over', baseProjection({ toolCalls: 100, executionCalls: 30, dispatchCalls: 0, collectCalls: 0 }));
+  assert.equal(over.delegation.execRatio, 0.3);
+  assert.match(over.delegation.advice, /Lead 执行占比 30%（30\/100，阈值 20%，warn 档）/);
+  // 规则3：占比正常、有 2 个空闲队友且本会话 0 次派活 → text 追加 advice 行
+  const idle = await metricsOf('session-delegation-idle', baseProjection({ toolCalls: 20, executionCalls: 1, dispatchCalls: 0, collectCalls: 0 }));
+  assert.match(idle.delegation.advice, /有 2 个空闲队友且本会话 0 次 relay_dispatch/);
+  assert.match(idle.text, /delegation-advice: 有 2 个空闲队友且本会话 0 次 relay_dispatch/);
+  // 投影不可用（旧宿主）：basis=unavailable、计数 0、idleWorkers null 不猜 0、text 如实标注
+  const legacySession = fakeSession({ id: 'session-delegation-unavailable', cwd: tmpCwd() });
+  const legacy = await applyAgent(fakeServices({ session: legacySession, extra: { agentTeams: undefined } }).services)
+    .tools.get('relay_status').execute({}, { agent: { session: legacySession, options: {} } });
+  assert.equal(legacy.delegation.basis, 'unavailable');
+  assert.deepEqual(legacy.delegation.calls, { exec: 0, total: 0 });
+  assert.equal(legacy.delegation.idleWorkers, null, '团队服务不可用 → null，不猜 0');
+  assert.match(legacy.text, /（投影不可用，仅参考）/);
+  assert.match(legacy.text, /空闲队友 \?/);
+});
+
+test('v0.9.0 批次3 build→verify 委派闸门：默认 warn 放行 + delegation/delegationWarning（不阻断）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const id = 'session-deleg-gate-warn';
+  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  const { session } = countingSnapshotSession({ id, cwd });
+  const bundle = attachRelayProjection(fakeServices({ session }), {
+    phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 100, executionCalls: 30,
+  });
+  const { tools } = applyAgent(bundle.services);
+  const result = await tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  assert.equal(result.phase, 'verify', 'warn 档不阻断 build→verify');
+  assert.equal(result.delegation.ok, true);
+  assert.equal(result.delegation.execRatio, 0.3);
+  assert.deepEqual(result.delegation.calls, { exec: 30, total: 100 });
+  assert.deepEqual(result.delegation.warnings.map((warning) => warning.code), ['lead-exec-ratio', 'lead-owned-points']);
+  assert.match(result.delegationWarning, /Lead 执行占比 30%/);
+  assert.match(result.delegationWarning, /bp1/);
+  // 补 lead-exec 证据 + 执行占比正常 → 闸门仍返回 delegation 事实，但 warnings 空、无 delegationWarning
+  const cleanCwd = tmpCwd();
+  const cleanId = 'session-deleg-gate-clean';
+  seedRelayLedger(cleanCwd, cleanId, [{ id: 'bp1', title: 'build point', status: 'done', evidence: ['lead-exec: 单行修复断链 URL，无 worker 可派'] }]);
+  const cleanSession = fakeSession({ id: cleanId, cwd: cleanCwd });
+  const cleanBundle = attachRelayProjection(fakeServices({ session: cleanSession }), {
+    phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 100, executionCalls: 5,
+  });
+  const clean = await applyAgent(cleanBundle.services).tools.get('relay_phase')
+    .execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session: cleanSession, options: {} } });
+  assert.equal(clean.phase, 'verify');
+  assert.deepEqual(clean.delegation.warnings, []);
+  assert.equal('delegationWarning' in clean, false);
+});
+
+test('v0.9.0 批次3 build→verify 委派闸门：config off 不检查、无字段', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const id = 'session-deleg-gate-off';
+  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  const { session } = countingSnapshotSession({ id, cwd });
+  const bundle = attachRelayProjection(fakeServices({ session }), {
+    phase: 'build', toolCalls: 100, executionCalls: 30,
+  });
+  const { tools } = applyAgent(bundle.services, { delegationGate: 'off' });
+  const result = await tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  assert.equal(result.phase, 'verify');
+  assert.equal('delegation' in result, false, 'off：不计算、结果无 delegation 字段');
+  assert.equal('delegationWarning' in result, false);
+});
+
+test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零副作用（v0.10.0 启用路径）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const id = 'session-deleg-gate-strict';
+  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  const ledgerPath = join(cwd, '.scratch', 'context-relay', 'work-items', id + '.json');
+  const ledgerBefore = readFileSync(ledgerPath, 'utf8');
+  const panelBefore = panelStateOf(id);
+  const { session } = countingSnapshotSession({ id, cwd });
+  const { services } = fakeServices({ session });
+  services.sessionProjections.stateOf = () => ({
+    phase: 'build', toolCalls: 100, executionCalls: 30,
+  });
+  const tools = directRelayTools(services, { delegation: { gate: 'strict', requestedStrict: true } });
+  await assert.rejects(
+    tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } }),
+    /relay_phase refused \(delegation gate\)/,
+  );
+  assert.equal(readFileSync(ledgerPath, 'utf8'), ledgerBefore, 'strict 拒绝路径不改台账');
+  assert.deepEqual(panelStateOf(id), panelBefore, 'strict 拒绝路径不写面板');
+  assert.equal(readWorkItems(cwd, { scopeId: id }).currentPhase, null, 'phase 未切换（台账 currentPhase 未写）');
+});
+
+test('v0.9.0 批次3 非 build→verify 不检查闸门；ship 结果带 delegation 快照（用户汇报素材）', async () => {
+  resetSharedState();
+  // 1) discover→build：非 build→verify 边，不产出 delegation 闸门字段/警告
+  const discoverCwd = tmpCwd();
+  const discoverSession = fakeSession({ id: 'session-deleg-nongate', cwd: discoverCwd });
+  const discoverBundle = attachRelayProjection(fakeServices({ session: discoverSession }), {
+    phase: 'discover', toolCalls: 120, executionCalls: 40,
+  });
+  const discover = await applyAgent(discoverBundle.services).tools.get('relay_phase')
+    .execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session: discoverSession, options: {} } });
+  assert.equal(discover.phase, 'build');
+  assert.equal('delegationWarning' in discover, false);
+  assert.equal('delegation' in discover, false);
+  // 2) verify→ship：成功结果带 delegation 快照（与 relay_status 同块；advisory，不机械校验 report）
+  const shipCwd = tmpCwd();
+  const shipId = 'session-deleg-ship';
+  const shipSession = fakeSession({ id: shipId, cwd: shipCwd });
+  const shipBundle = attachRelayProjection(fakeServices({ session: shipSession }), {
+    phase: 'verify', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 57, executionCalls: 3, dispatchCalls: 2, collectCalls: 1,
+  });
+  const ship = await applyAgent(shipBundle.services).tools.get('relay_phase')
+    .execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: { session: shipSession, options: {} } });
+  assert.equal(ship.phase, 'ship');
+  assert.deepEqual(ship.delegation, {
+    execRatio: 0.053,
+    calls: { exec: 3, total: 57 },
+    dispatchCount: 2,
+    collectCount: 1,
+    idleWorkers: 0,
+    advice: '',
+    basis: 'projection',
+  });
+  assert.equal('delegationWarning' in ship, false, 'ship 委派统计 advisory：不产 warning');
+});
+
+test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect→台账 done（Lead 无 write/edit/bash）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const leadSessionId = 'session-int-lead';
+  const worker = { id: 'session-int-worker', name: 'worker-1', role: 'teammate', status: 'idle' };
+  const sent = [];
+  const legacyTeams = {
+    tryMembership(agent) {
+      const id = agent?.session?.id;
+      if (id === leadSessionId) return { role: 'lead' };
+      if (id === worker.id) return { role: 'teammate', name: worker.name };
+      return undefined;
+    },
+    listMembers() { return [worker]; },
+    sendMessage(caller, request) { sent.push({ caller, request }); return { messageId: 'm-int-1' }; },
+  };
+  const session = fakeSession({ id: leadSessionId, cwd });
+  const projection = {
+    phase: 'discover', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 20, executionCalls: 0, dispatchCalls: 1, collectCalls: 1,
+  };
+  const bundle = attachRelayProjection(fakeServices({
+    session,
+    extra: {
+      agentTeams: legacyTeams,
+      sessionQuery: {
+        async observeSession() {
+          return { projections: { values: { contextPressure: { projectedTokens: 10000, contextWindow: 100000 } } }, [Symbol.dispose]() {} };
+        },
+      },
+    },
+  }), projection);
+  const { tools, events } = applyAgent(bundle.services);
+  const created = events.find((entry) => entry.name === 'agent/created');
+  assert.ok(created, 'agent/created 监听已注册');
+  const { agent: rootAgent, registered, restricted } = rootLeadHarness({ sessionId: leadSessionId, cwd });
+  await created.listener({ agent: rootAgent });
+  // root Lead 工具面：执行类工具被裁；派活/收口工具以 Lead-only agent-scope 注册
+  for (const name of ROUTER_DENY_TOOLS) {
+    assert.ok(restricted.includes(name), name + ' 必须被 root restrict 裁掉');
+    assert.ok(!registered.has(name), name + ' 不得出现在 Lead 的 agent-scope 工具面');
+  }
+  for (const name of ['relay_dispatch', 'relay_collect']) assert.ok(registered.has(name), name + ' 已注册');
+  const flow = [];
+  const call = async (tool, args, name) => { flow.push(name); return tool.execute(args, { agent: rootAgent }); };
+  // 1) 建 build 分点（台账）
+  const opened = await call(tools.get('relay_phase'), { phase: 'build', items: ['wire metrics'], contract_check: CONTRACT_CHECK }, 'relay_phase');
+  assert.deepEqual(opened.ledger.opened, ['wire-metrics']);
+  // 2) 派活：复用空闲 worker + 标准 5 字段 brief + 台账 doing+owner
+  const dispatched = await call(registered.get('relay_dispatch'), {
+    itemId: 'wire-metrics',
+    brief: '把 delegation 度量接进 relay_status 并补测试',
+    docs: ['.scratch/context-relay/architecture/v090-batch3.md §2.2', 'test/agent.test.mjs'],
+    writeScope: ['lib/agent/tools.js', 'test/agent.test.mjs'],
+    acceptance: 'node --test test/agent.test.mjs',
+  }, 'relay_dispatch');
+  assert.equal(dispatched.ok, true, JSON.stringify(dispatched));
+  assert.equal(dispatched.worker.name, 'worker-1');
+  assert.equal(dispatched.worker.reused, true);
+  assert.equal(sent.length, 1, 'brief 已发给 worker');
+  const brief = sent[0].request.content[0].text;
+  for (const field of ['1) 目标：', '2) 必读', '3) 写范围', '4) 验收', '5) 回执：']) assert.ok(brief.includes(field), 'brief 含 ' + field);
+  assert.ok(brief.includes(dispatched.reportPath), 'brief 含 reportPath');
+  assert.ok(brief.includes(dispatched.dispatchId), 'brief 含 dispatchId');
+  const doingItem = readWorkItems(cwd, { scopeId: leadSessionId }).items.find((item) => item.id === 'wire-metrics');
+  assert.equal(doingItem.status, 'doing');
+  assert.equal(doingItem.owner, 'worker-1');
+  assert.ok(doingItem.next.includes(dispatched.reportPath), '台账 next 指向回执路径');
+  // 3) fake worker 按回执契约写盘（头 3 行 + 结论节）
+  const reportAbs = join(cwd, dispatched.reportPath);
+  mkdirSync(dirname(reportAbs), { recursive: true });
+  writeFileSync(reportAbs, 'task: wire-metrics\nrevision: ' + dispatched.dispatchId + '\nverdict: done\n\n## 结论\n度量接线完成，测试全绿。\n\n## 证据\ntest/agent.test.mjs:1\n');
+  // 4) 收口：只回 digest；台账 done + evidence=reportPath
+  const collected = await call(registered.get('relay_collect'), { itemId: 'wire-metrics', dispatchId: dispatched.dispatchId }, 'relay_collect');
+  assert.equal(collected.ok, true, JSON.stringify(collected));
+  assert.equal(collected.status, 'collected');
+  assert.equal(collected.verdict, 'done');
+  assert.match(collected.digest, /度量接线完成/);
+  assert.ok(!collected.text.includes('## 证据'), 'collect 只回 digest，不返回报告正文');
+  const doneItem = readWorkItems(cwd, { scopeId: leadSessionId }).items.find((item) => item.id === 'wire-metrics');
+  assert.equal(doneItem.status, 'done');
+  assert.deepEqual(doneItem.evidence, [dispatched.reportPath]);
+  assert.equal(doneItem.next, null);
+  // 5) 全程 Lead 只调 relay_*（执行类工具已被裁）
+  assert.ok(flow.every((name) => name.startsWith('relay_')), 'flow 只调 relay_*：' + flow.join(','));
+  for (const name of ['bash', 'pwsh', 'write', 'edit']) assert.ok(!flow.includes(name), 'flow 无 ' + name);
+  // 6) execRatio 不升：派活/收口是 relay_*（投影 v5 成功计数），不计执行类
+  const status = await tools.get('relay_status').execute({}, { agent: { session: rootAgent.session, options: {} } });
+  assert.equal(status.execution.calls, 0);
+  assert.equal(status.delegation.calls.exec, 0);
+  assert.equal(status.delegation.execRatio, 0);
+  assert.equal(status.delegation.dispatchCount, 1);
+  assert.equal(status.delegation.collectCount, 1);
+});
+
 test('projection unavailable or throwing falls back to log scanning', async () => {
   resetSharedState();
   const cwd = tmpCwd();
@@ -3760,9 +4097,9 @@ test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语
     descriptionChars += definition.description.length;
     parameterChars += JSON.stringify(definition.parameters).length;
   }
-  // v0.9.0 批次2：relay_phase/relay_work_items 描述按新契约重写（出口/archive/user_gate warning），
-  // 实测 2216 → 预算按实测+50 上调到 2266（#68：只调预算，不删语义、不砍约束内容）。
-  assert.ok(descriptionChars <= 2266, '八条工具描述总字符 <=2266（v0.9.0 实测 2216+50），实际 ' + descriptionChars);
+  // v0.9.0 批次3：relay_status/relay_phase 描述各加 delegation 口径（设计 §3.3 要求），
+  // 实测 2323 → 预算按设计 ≤2400（实测+50 向上取整；#68：只调预算，不删语义、不砍约束内容）。
+  assert.ok(descriptionChars <= 2400, '八条工具描述总字符 <=2400（v0.9.0 批次3 实测 2323+50），实际 ' + descriptionChars);
   // v0.9.0 批次2：设计强制新增 schema 字段（relay_phase.phase 扩 2 出口 + exit_reason、user_gate.details_requested、
   // relay_work_items.officialTaskId）→ 实测 8504，预算按实测+96 上调到 8600（仍逐条受 ≤400/单行约束；#68）。
   assert.ok(parameterChars <= 8600, '参数 schema 总字符 <=8600（v0.9.0 实测 8504+96），实际 ' + parameterChars);

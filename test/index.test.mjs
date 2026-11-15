@@ -321,7 +321,7 @@ test('preset：叠加 timed 配置是合并而非覆盖（保留官方行已有 
 
 test('preset：apply 注册唯一模式（+迁移期 classic 别名）；agent 行强制 routerMode:true、选项白名单透传', async () => {
   const host = fakeHost({
-    config: { presetId: 'relay', thresholds: THRESHOLDS, injectBrief: false, handoffApproval: 'prompt', unrelated: 'drop-me' },
+    config: { presetId: 'relay', thresholds: THRESHOLDS, injectBrief: false, handoffApproval: 'prompt', delegationGate: 'off', unrelated: 'drop-me' },
   });
   await tick(); // 异步 register 落定
   assert.equal(host.registrations.length, 2, 'v0.9.0 单一模式 + 迁移期 classic 同行为别名（v0.10.0 删）');
@@ -340,6 +340,7 @@ test('preset：apply 注册唯一模式（+迁移期 classic 别名）；agent �
   // 白名单透传：只带 agent 选项，不把整份 host config 漏进 preset 行。
   assert.equal(agentRow.config.injectBrief, false);
   assert.equal(agentRow.config.handoffApproval, 'prompt');
+  assert.equal(agentRow.config.delegationGate, 'off', 'v0.9.0 批次3：delegationGate 白名单透传到 agent 行');
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'unrelated'), false);
   // ② 迁移期别名（D2=A）：classic 旧 id 同行为注册，description 标旧会话兼容。
   const legacy = host.registrations[1];
@@ -387,6 +388,18 @@ test('preset：apply 注册唯一模式（+迁移期 classic 别名）；agent �
   await tick();
   const offRow = offRouter.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
   assert.equal(offRow.config.routerMode, true);
+});
+
+test('preset：delegationGate 非法值不崩（注册照常；归一为 warn 在 agent 面，strict 原样透传留 v0.10.0）', async () => {
+  const host = fakeHost({ config: { delegationGate: 'banana' } });
+  await tick();
+  assert.equal(host.registrations.length, 2, '非法 delegationGate 不阻断 preset 注册');
+  const row = host.registrations[0].plugins.find((item) => item.id === 'compaction').config.at(-1);
+  assert.equal(row.config.delegationGate, 'banana', 'host 层只透传；非法值由 agent 面 normalizeDelegationConfig 归一为 warn');
+  const strictHost = fakeHost({ config: { delegationGate: 'strict' } });
+  await tick();
+  const strictRow = strictHost.registrations[0].plugins.find((item) => item.id === 'compaction').config.at(-1);
+  assert.equal(strictRow.config.delegationGate, 'strict', 'strict 原样透传（agent 面归一 warn + 一次日志，v0.10.0 启用）');
 });
 
 test('preset：行集合与官方 ptc.patch.yml 一致（找不到官方文件时 skip）', (t) => {

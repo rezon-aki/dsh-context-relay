@@ -5,10 +5,14 @@ import {
   relayProjectionDefinition,
   initialState,
   foldRelayEvent,
+  DISPATCH_OK_PREFIX,
+  COLLECT_OK_PREFIX,
 } from '../lib/projection.js';
 
 const PHASE_TOOL = 'relay_phase';
 const ORGANIZE_TOOL = 'relay_organize';
+const DISPATCH_TOOL = 'relay_dispatch';
+const COLLECT_TOOL = 'relay_collect';
 const OK_TEXT = 'organized: freed 1234 tokens; band organize → ok; brief /tmp/phase.md';
 
 /** 用公开的 definition（init + apply）折叠事件数组，模拟 registry 的驱动路径。 */
@@ -69,7 +73,7 @@ test('definition: 官方契约字段与 duck-typed stateSchema', () => {
   const definition = relayProjectionDefinition();
   assert.equal(RELAY_PROJECTION_KEY, 'relay');
   assert.equal(definition.key, 'relay');
-  assert.equal(definition.stateVersion, 4, 'v4 新增出口条件键 exit/phase 5+2，stateVersion 必须 bump');
+  assert.equal(definition.stateVersion, 5, 'v5 新增 dispatchCalls/collectCalls，stateVersion 必须 bump');
   assert.equal(typeof definition.apply, 'function');
   assert.equal(definition.apply, foldRelayEvent);
   const value = { any: 'thing', nested: [1, 2, 3] };
@@ -90,6 +94,8 @@ test('初始状态字段契约固定', () => {
     lastContinueActionSeq: -1,
     toolCalls: 0,
     executionCalls: 0,
+    dispatchCalls: 0,
+    collectCalls: 0,
   });
   assert.ok(Object.isFrozen(initialState), 'initialState 应冻结防误改');
 });
@@ -392,6 +398,8 @@ test('apply 无副作用：frozen initialState 不被改写，返回新对象', 
     lastContinueActionSeq: -1,
     toolCalls: 0,
     executionCalls: 0,
+    dispatchCalls: 0,
+    collectCalls: 0,
   });
 });
 
@@ -500,4 +508,78 @@ test('真实事件顺序回归：混合 PTC/notice/compaction 折叠（resume �
   assert.equal(state.lastCompactionSeq, 7);
   assert.equal(state.toolCalls, 6, '混合形态：5 条 PTC + 1 条直调 relay_phase 都计入总数');
   assert.equal(state.executionCalls, 0, '本次重放没有执行类调用');
+});
+
+test('delegation 度量 v5：成功 marker 常量与工具 render 文本契约一致（防漂移）', () => {
+  assert.equal(DISPATCH_OK_PREFIX, 'dispatched item ');
+  assert.equal(COLLECT_OK_PREFIX, 'collected item ');
+});
+
+test('delegation 度量 v5：PTC 只计成功 dispatch/collect（isError/非 marker 前缀/包含不计）', () => {
+  const state = fold([
+    ptcText(1, DISPATCH_TOOL, DISPATCH_OK_PREFIX + 'a1 to worker-1 · report .scratch/context-relay/reports/a1.md · dispatch d-a1-x'),
+    ptcText(2, COLLECT_TOOL, COLLECT_OK_PREFIX + 'a1 verdict=done · report .scratch/context-relay/reports/a1.md'),
+    ptcText(3, DISPATCH_TOOL, DISPATCH_OK_PREFIX + 'a2 to worker-1', { isError: true }),
+    ptcText(4, COLLECT_TOOL, 'pending: report-missing'),
+    ptcText(5, DISPATCH_TOOL, 'refused: item-not-found'),
+    ptcText(6, DISPATCH_TOOL, 'x ' + DISPATCH_OK_PREFIX + 'a3'), // 只认前缀，不认包含
+  ]);
+  assert.equal(state.dispatchCalls, 1, '只有第 1 条成功派活计入');
+  assert.equal(state.collectCalls, 1, '只有第 2 条成功收口计入');
+  assert.equal(state.toolCalls, 6, '6 次尝试全部计入工具调用总数');
+  assert.equal(state.executionCalls, 0, 'dispatch/collect 不是执行类工具，不计 executionCalls');
+});
+
+test('delegation 度量 v5：直调 tool/call + tool/result 配对结算成功，失败/未配对/错配不计', () => {
+  const state = fold([
+    directCall(1, DISPATCH_TOOL, 'call-d1', { itemId: 'a1' }),
+    directResult(2, 'call-d1', DISPATCH_OK_PREFIX + 'a1 to worker-1 · dispatch d-a1-x'),
+    directCall(3, COLLECT_TOOL, 'call-c1', { itemId: 'a1' }),
+    directResult(4, 'call-c1', COLLECT_OK_PREFIX + 'a1 verdict=done', true),
+    directCall(5, DISPATCH_TOOL, 'call-d2', {}),
+    directResult(6, 'call-d2', 'refused: invalid-args'),
+    directCall(7, COLLECT_TOOL, 'call-c3', {}),
+    directResult(8, 'call-unmatched', DISPATCH_OK_PREFIX + 'zz to worker-2'),
+  ]);
+  assert.equal(state.dispatchCalls, 1, '配对成功才计数；失败/非 marker/无 result 不计');
+  assert.equal(state.collectCalls, 0, '失败 result 不结算');
+  assert.equal(state.toolCalls, 4, '4 次 tool/call 尝试计入总数（result 不计）');
+  assert.equal(state.executionCalls, 0);
+});
+
+test('delegation 度量 v5：旧 v4 状态（无新计数字段）从 0 起步，不计数事件返回同一引用', () => {
+  const definition = relayProjectionDefinition();
+  const legacy = Object.freeze({
+    phase: 'build',
+    goal: 'g',
+    exitCriteria: 'e',
+    organizeCount: 0,
+    compactionEpoch: 0,
+    noticeBand: null,
+    lastNoticeSeq: -1,
+    lastCompactionSeq: -1,
+    lastContinueActionSeq: -1,
+    toolCalls: 2,
+    executionCalls: 0,
+  });
+  assert.equal(definition.apply(legacy, { type: 'turn/start', seq: 1, data: {} }), legacy, '无关事件同一引用');
+  const dispatched = definition.apply(legacy, ptcText(2, DISPATCH_TOOL, DISPATCH_OK_PREFIX + 'a1 to worker-1'));
+  assert.equal(dispatched.dispatchCalls, 1);
+  assert.equal(dispatched.collectCalls, 0);
+  assert.equal(dispatched.toolCalls, 3, '旧状态缺计数时按 0 起步并保留旧字段');
+  assert.equal(dispatched.executionCalls, 0);
+});
+
+test('delegation 度量 v5：dispatch/collect 与执行类混合时计数互不串扰', () => {
+  const state = fold([
+    ptc(1, 'bash', { command: 'npm test' }),
+    ptcText(2, DISPATCH_TOOL, DISPATCH_OK_PREFIX + 'a1 to worker-1'),
+    ptc(3, 'edit', { file_path: 'lib/x.js' }),
+    directCall(4, COLLECT_TOOL, 'call-c1', { itemId: 'a1' }),
+    directResult(5, 'call-c1', COLLECT_OK_PREFIX + 'a1 verdict=done'),
+  ]);
+  assert.equal(state.toolCalls, 4, 'PTC 3 次 + 直调 1 次');
+  assert.equal(state.executionCalls, 2, 'bash + edit');
+  assert.equal(state.dispatchCalls, 1);
+  assert.equal(state.collectCalls, 1);
 });

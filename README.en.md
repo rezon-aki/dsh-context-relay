@@ -58,7 +58,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 
 The single mode stays human-gated: no autonomous loop, no automatic approval on your behalf.
 
-Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path.
+Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path. **Dispatch execution work first**: the Lead's execution ratio targets ≤20% (warn only, never a hard refusal; strict reserved for v0.10.0).
 
 ## Design documents
 
@@ -184,6 +184,7 @@ Optional host plugin config (advanced):
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
 | `workItemsPhaseGate` | `'warn'` | **Phase-close** notice: unfinished points not closed or carried → `warn` proceeds with a notice (default) / `strict` refuses the switch / `off`. Single-thread work declares `items: []`. |
+| `delegationGate` | `'warn'` | **build→verify delegation gate**: `warn` reports only and never refuses (default) / `off` disables it; `strict` is normalized to `warn` in v0.9.0 (reserved, enabled in v0.10.0). It checks the session-wide Lead execution ratio >20% (at least 10 tool calls) and build/verify points owned by the Lead without `lead-exec:` evidence; it never blocks the switch. |
 | `workItemsPath` | `(per-session by default)` | Override for the ledger file path: an explicit value makes all sessions share one file (the old workspace-level behaviour); the default is `.scratch/context-relay/work-items/<session>.json`. |
 | `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
@@ -217,10 +218,12 @@ Cross-session documents are no longer capped by hard byte limits that reject or 
 | `relay_handoff` | Produce a handover summary plus the full handover file (including the rolling progress file and the work ledger), create a new relay session and clean up the old session tree. Oversize content is never refused: the summary is injected, the full content stays on disk and is fetched on demand. |
 | `relay_work_items` | Read or maintain the Leader work ledger: no args = read; the Lead replaces the whole list (optional `rev` optimistic lock); teammates/subagents cannot read or write it. |
 | `relay_recommend` | Lead only: write the model advice into the panel (cleared on phase switch, compaction, handoff or human choice). |
+| `relay_dispatch` | Lead only: take a ledger point → reuse or spawn a worker → send the standard 5-field brief (goal / 1–3 must-read pointers / write scope / acceptance / report) → mark the ledger item doing with owner+next. Refuses incomplete briefs; returns worker/reportPath/dispatchId. |
+| `relay_collect` | Lead only: bounded wait ≤120s → read only the receipt head (task/revision/verdict) + digest (≤600 chars) → mark the ledger item done (evidence=report path) or blocked (reason); returns only the digest, the full report stays in the report file. |
 | `doc_lint` | Documentation check (quota / banned wording / index / git / relay session docs), output at most 2KB; quota and size are advisory only. |
 | `relay_doc` | Session-document layers and index: `index` (L0 index) / `list` / `read` (by section or line range) / `search` (path:line snippets) / `lint` (advisory). Read the index first, then fetch only the minimal context you need. |
 
-**接力模式（Relay）· 超长任务** includes team tools: `relay_team_status`, `relay_renew`, `relay_architect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; defaults to the composer model selector's default selection, keeps an explicit choice, allows overrides anytime, and inherits the choice on handoff).
+**接力模式（Relay）· 超长任务** includes team tools: `relay_team_status`, `relay_renew`, `relay_architect`, `relay_dispatch`, `relay_collect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; defaults to the composer model selector's default selection, keeps an explicit choice, allows overrides anytime, and inherits the choice on handoff).
 
 HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/architect-models?sessionId=` (architect model catalog filtered by the session allowlist), `GET /context-relay/work-items?sessionId=` (work ledger for the panel poller).
 

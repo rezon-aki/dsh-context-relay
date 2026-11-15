@@ -4,7 +4,19 @@
 
 ## v0.9.0 (unreleased)
 
-尚未发布，package version 保持 0.8.1，不 bump。批次2：
+尚未发布，package version 保持 0.8.1，不 bump。
+
+批次3（delegation-first：Lead 只做用户交互/决策/派活/验收抽样）：
+
+- `relay_status` 新增 `delegation` 度量块（execRatio / calls / dispatchCount / collectCount / idleWorkers / advice / basis）：会话累计执行占比目标 ≤20%（warn 档只提醒，strict 留给 v0.10.0），样本 <10 次工具调用仅参考；指标来源为官方 relay 投影（成功 dispatch/collect 计数）。
+- 新增 Lead-only 工具 `relay_dispatch` / `relay_collect`：dispatch 取台账分点 → 复用/新建 worker → 标准 5 字段 brief（目标 / 必读 1–3 / 写范围 / 验收 / 回执路径+verdict）→ 台账写 doing+owner+next；collect 短等 ≤120s → 只读回执头 3 行 + digest（≤600 字）→ 台账 done（evidence=reportPath）/blocked，**只回 digest**；完整报告留在报告文件。
+- 台账语义收紧（不改 schema）：build/verify 分点 owner 应为 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`；不改台账字段、无需迁移旧台账。
+- build→verify 委派闸门默认 `warn`（新 config 键 `delegationGate`；`off` 可关；`strict` 在 v0.9.0 归一为 warn、v0.10.0 启用）：会话累计执行占比 >20%（样本 ≥10 次调用）或 Lead 自做分点无 lead-exec 证据时只提醒、不阻断切换。
+- 纪律文案统一：四份常驻协议 + SKILL + human-loop + README 中英统一「Lead 只做用户交互/决策/派活/验收抽样、不亲自执行、无小任务自干例外」；ship 汇报带一行委派统计（advisory，不机械校验 report 文本）。
+- 协议瘦身：ROUTER 的 PTC 手写 dispatch/collect 代码模板替换为 `relay_dispatch` / `relay_collect` 工具纪律；不做 PTC run_code 通道守卫/关键词扫描（用户裁决；node:fs 直写如实标注为已知软约束）。
+- 未验证项：PTC 内层工具结果文本作为投影成功 marker、spawn 后立即派发的时序、warn 在真实长任务中的触发频率、多 worker 并发写同一报告路径——真机抽样后再校准（不改 warn 语义）。
+
+批次2（历史快照，最终语义以上方批次3为准）：
 
 - v0.9.0 起为唯一模式「接力模式（Relay）· 超长任务」（id relay-long）；classic relay 仅迁移期同行为别名，v0.10.0 删除兼容。表盘仅问我/继续/压缩继续/接力新会话，删除下个会话模式开关。
 - 用户汇报四段式（结论/影响/需要你做什么/证据位置），默认≤600字；details_requested 明确展开建议≤4000字。只提醒不拒绝，warning随phase结果+一次性notice，绝不阻断ship/phase；review/report非空硬门保持。不贴命令输出/日志/长diff，术语首次出现人话解释。
@@ -15,7 +27,7 @@
 - ≥85%容量保全notice为中途收尾例外，预算档本身不构成例外；不自动压缩/交接，仍遵守模式与授权。
 - 旧cth→null、autoChoose/autoDecision→false/null，handoffPreset接受但忽略；v0.10.0移除兼容路径。卸载保留用户panel/settings及工作区记录，不自动删除。
 
-批次1（历史快照，下述“本批”仅指批次1，最终语义以上方批次2为准）：
+批次1（历史快照，下述“本批”仅指批次1，最终语义以上方批次3为准）：
 
 - #56 **行为变更**：架构师模型默认跟随「模型」选择器的默认选择；本会话显式选择保持不变，菜单可随时覆盖或恢复默认；未显式选择不拒绝、不阻塞，显式覆盖仍受官方子代理白名单约束；handoff 继承选择。
 - #63/#64 口径：超长任务 root Lead 只做用户交互、决策、派活、验收抽样，不亲自执行、不设自做额度；classic 协议与双模式装配本批不变。

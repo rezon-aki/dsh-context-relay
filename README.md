@@ -58,7 +58,7 @@
 
 唯一模式保持「人来把关」：不自动循环、不替你自动批准。
 
-默认 4 人小队，优先复用；按需扩到部署 `maxActiveSubagents`，满额排队/报阻塞。派活 brief 五字段缺一不可：目标 / 必读 1–3 份（指针+when/role，按序自取）/ 写范围 / 验收 / 回执路径。
+默认 4 人小队，优先复用；按需扩到部署 `maxActiveSubagents`，满额排队/报阻塞。派活 brief 五字段缺一不可：目标 / 必读 1–3 份（指针+when/role，按序自取）/ 写范围 / 验收 / 回执路径。**执行活先派活**：Lead 执行占比目标 ≤20%（warn 档只提醒，不硬拒；strict 留 v0.10.0）。
 
 ## 设计文档
 
@@ -184,6 +184,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `workItems` | `true` | 启用工作台账（工具 + 闸门 + 面板）；`false` 完全回退旧行为。 |
 | `workItemsGate` | `'strict'` | **交付（ship）阶段**的台账校验强度：`strict`（不合格拒绝）/ `warn`（只提示）/ `off`。交接与压缩始终把台账写进材料、文件损坏只警告（fail-open），不受本项影响。 |
 | `workItemsPhaseGate` | `'warn'` | **切阶段（phase 边界）**收口提示：本阶段未完成的分点未收口且未 carry → `warn` 放行+提示（默认）/ `strict` 拒绝切阶段 / `off`。单线程小任务用 `items:[]` 声明放行。 |
+| `delegationGate` | `'warn'` | **build→verify 委派闸门**：`warn` 只提醒不拒绝（默认）/ `off` 关闭；`strict` 在 v0.9.0 归一为 `warn`（预留，v0.10.0 启用）。检查会话累计 Lead 执行占比 >20%（样本 ≥10 次工具调用）与 build/verify 分点由 Lead 自做且无 `lead-exec:` 证据；不阻断切换。 |
 | `workItemsPath` | `（默认按会话）` | 台账文件位置覆盖：显式设置则所有会话共用该文件（旧 workspace 级行为）；默认按会话落在 `.scratch/context-relay/work-items/<session>.json`。 |
 | `workItemsMax` | `30` | 台账条目上限（1–100）。 |
 | `injectBrief` | `true` | 压缩成功后是否把那一页交接材料放回对话。 |
@@ -217,10 +218,12 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `relay_handoff` | 生成交接摘要 + 完整交接单文件（含滚动进度与工作台账），创建新接力会话并清理旧会话树；**超长不再拒绝**——摘要注入首条消息，完整内容落盘并按需取。 |
 | `relay_work_items` | 读写 Leader 自己的工作台账：无参数 = 读；Lead 整表替换（可带 `rev` 乐观锁）；队友/子代理不可读写。 |
 | `relay_recommend` | Lead 专用：把模型建议的做法写进面板（切阶段、压缩、交接、人类选择后清空）。 |
+| `relay_dispatch` | Lead 专用：从台账取分点 → 复用/新建 worker → 发标准 5 字段 brief（目标 / 必读 1–3 / 写范围 / 验收 / 回执）→ 台账记 doing+owner+next；缺字段直接拒绝，返回 worker/reportPath/dispatchId。 |
+| `relay_collect` | Lead 专用：短等 ≤120s → 只读回执头 3 行（task/revision/verdict）+ digest（≤600 字）→ 台账置 done（evidence=报告路径）或 blocked（原因）；只回 digest，完整报告留报告文件。 |
 | `doc_lint` | 文档体检（配额 / 违禁措辞 / 索引 / git / relay 会话文档），输出 ≤2KB；配额与体积只做 advisory。 |
 | `relay_doc` | 会话文档分层与索引：`index`（L0 索引）/ `list` / `read`（按标题/行区间精读）/ `search`（path:line 摘要）/ `lint`（advisory）。先读索引，再按需取最小上下文。 |
 
-**接力模式（Relay）· 超长任务**包含团队工具：`relay_team_status`、`relay_renew`、`relay_architect`（Lead）与 `relay_checkpoint`、`relay_freshen`（队友）。架构师模型在输入框的模型菜单里选择（「架构师模型 / 架构师推理等级」两行；默认跟随「模型」选择器的默认选择（已选则沿用），菜单可覆盖，handoff 继承）。
+**接力模式（Relay）· 超长任务**包含团队工具：`relay_team_status`、`relay_renew`、`relay_architect`、`relay_dispatch`、`relay_collect`（Lead）与 `relay_checkpoint`、`relay_freshen`（队友）。架构师模型在输入框的模型菜单里选择（「架构师模型 / 架构师推理等级」两行；默认跟随「模型」选择器的默认选择（已选则沿用），菜单可覆盖，handoff 继承）。
 
 HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`GET/PUT /context-relay/panel`、`GET /context-relay/architect-models?sessionId=`（按会话白名单过滤的架构师模型目录）、`GET /context-relay/work-items?sessionId=`（工作台账，供面板轮询）。
 
