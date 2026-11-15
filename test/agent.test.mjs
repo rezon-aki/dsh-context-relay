@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -37,6 +37,27 @@ function fakeCtx(overrides = {}) {
   const provided = overrides.services ?? {};
   const fixture = provided.agentTeams !== undefined && provided.subagents === undefined ? subagentsFromLegacy(provided.agentTeams) : undefined;
   const services = fixture === undefined ? provided : { ...provided, subagents: fixture, agents: provided.agents ?? fixture.agentsService };
+  // Official followup persists acceptance in the inbox before returning.
+  const receiptAgents = new WeakSet();
+  const withReceipt = (agent) => {
+    if (agent === undefined || typeof agent.followup !== 'function' || receiptAgents.has(agent)) return agent;
+    receiptAgents.add(agent);
+    agent.inbox ??= { nextTurn: [], nextStep: [] };
+    const followup = agent.followup;
+    agent.followup = function(message) { const out = followup.call(this, message); this.inbox.nextTurn.push(message); return out; };
+    return agent;
+  };
+  if (services.agents !== undefined) {
+    services.agents = { ...services.agents };
+    for (const method of ['get', 'list']) if (typeof services.agents[method] === 'function') {
+      const original = services.agents[method];
+      services.agents[method] = (...args) => { const out = original(...args); return Array.isArray(out) ? out.map(withReceipt) : withReceipt(out); };
+    }
+    if (typeof services.agents.create === 'function') {
+      const create = services.agents.create;
+      services.agents.create = async (...args) => { const handle = await create(...args); withReceipt(handle.agent); return handle; };
+    }
+  }
   const tools = new Map();
   const sections = [];
   const events = [];
@@ -989,7 +1010,7 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
         listDescendants: async () => [
           { kind: 'child', id: 'child-1', mode: 'one-shot', activity: 'running', parentId: 'session-caller', depth: 1, path: 'child' },
           { kind: 'child', id: 'teammate-1', mode: 'continuable', activity: 'running', parentId: 'session-caller', depth: 1, path: 'reviewer' },
-          { kind: 'diagnostic', id: 'child-broken', reason: 'corrupt' },
+          { kind: 'child', id: 'child-broken', mode: 'one-shot', activity: 'idle', parentId: 'session-caller', depth: 1, path: 'broken' },
         ],
         interrupt: (id, authority) => { cleanupCalls.subagentInterrupts.push({ id, authority }); cleanupCalls.order.push('subagent-interrupt'); },
         drainDescendants: async (parents) => { cleanupCalls.drainedDescendants.push(parents.map((parent) => parent.session.id)); cleanupCalls.order.push('drain-descendants'); },
@@ -1074,10 +1095,10 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.equal(result.handover.cleanup.schedules[0].action, 'transferred');
   assert.equal(result.handover.cleanup.teammates[0].action, 'interrupted');
   assert.equal(result.handover.cleanup.subagents[0].action, 'interrupted');
-  assert.deepEqual(result.handover.inventory.subagents.map((entry) => entry.id), ['child-1'], '队友不计入子智能体盘点（去重）');
-  // listDescendants 的 diagnostic 行不能静默丢弃：其 catalog 不可读 → 记 errors（P2）
-  assert.ok(result.handover.inventory.errors.some((line) => /child-broken/.test(line)), 'diagnostic 行进 inventory.errors');
-  assert.ok(result.handover.cleanup.errors.some((line) => /child-broken/.test(line)), 'diagnostic 行进 cleanup.errors');
+  assert.deepEqual(result.handover.inventory.subagents.map((entry) => entry.id), ['child-1', 'child-broken'], '队友不计入子智能体盘点（去重）');
+  // 正常完整盘点不包含 diagnostic；诊断失败的零副作用分支单独覆盖。
+  assert.equal(result.handover.inventory.errors.length, 0);
+  assert.equal(result.handover.cleanup.errors.length, 0);
   assert.equal(result.handover.inventory.schedules.filter((item) => item.owner === 'teammate-1').length, 1, '盘点按 owner 枚举队友定时任务');
   assert.match(text, /旧会话残留-定时任务 3 条/, '交接清单随 handoff 首条消息交给新会话');
   assert.match(text, /旧会话残留-后台任务 4 个/);
@@ -1093,7 +1114,7 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.match(result.summary, /后台任务 4→4 已取消/);
   assert.match(result.summary, /定时任务 3→3 已迁移/);
   assert.match(result.summary, /队友 1→1 已中断/);
-  assert.match(result.summary, /子智能体 1→1 已中断/);
+  assert.match(result.summary, /子智能体 2→1 已中断/);
   // handoff 文件追加交接清单 + 清理结果（首条消息有 handoffPath 指路）
   const handoffFile = readFileSync(result.handoffPath, 'utf8');
   assert.match(handoffFile, /## 交接清单（旧会话残留，自动盘点）/);
@@ -1189,7 +1210,7 @@ test('relay_handoff 交接清理：服务未启用时按 N/A 跳过（不假报 
   assert.match(h.followed[0].content[0].text, /未提供 next_actions（模型未记录未完成工作）/);
 });
 
-test('relay_handoff 交接清理：单项失败降级记录 errors、不阻断接力；create 成功 delete 失败时回滚新行', async () => {
+test('relay_handoff 交接预检：盘点失败零副作用；不 dispatch/清旧活', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-fail-caller', cwd, seq: 0 });
@@ -1233,26 +1254,17 @@ test('relay_handoff 交接清理：单项失败降级记录 errors、不阻断�
   });
   const { tools } = applyAgent(services);
   const result = await tools.get('relay_handoff').execute({ human_approved: true, status: { goal: 'partial cleanup failure' } }, { agent: { session, options: {} } });
-  assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(followed.length, 1, '接力照常交付，但清理报告不再发给新会话');
-  assert.deepEqual(result.handover.cleanup.jobs.map((row) => row.action), ['kill-failed']);
-  assert.deepEqual(result.handover.cleanup.schedules.map((row) => row.action), ['transfer-failed', 'transfer-failed', 'transfer-failed']);
-  assert.ok(result.handover.cleanup.errors.some((line) => /kill boom/.test(line)));
-  assert.ok(result.handover.cleanup.errors.some((line) => /create boom/.test(line)));
-  assert.ok(result.handover.cleanup.errors.some((line) => /delete boom/.test(line)));
-  assert.ok(result.handover.cleanup.errors.some((line) => /descendants boom/.test(line)), '盘点失败也会进 cleanup.errors');
-  // 兜底提示：inventory 非空（有残留任务）且模型漏填 next_actions 时也要提示
-  assert.match(followed[0].content[0].text, /旧会话未提供 next_actions（模型未记录未完成工作）/, '有自动清单也要提示漏填');
-  // summary 反映清理结果（不是盘点数）：1 个 job 取消失败 → 1→0；3 个迁移全失败 → 3→0
-  assert.match(result.summary, /后台任务 1→0 已取消/);
-  assert.match(result.summary, /定时任务 3→0 已迁移/);
-  // create 成功但 delete 失败：回滚刚建的新行，避免旧+新双份
-  assert.deepEqual(created, [
-    ['session-fail-new', { title: 'fail delete', prompt: 'p2', daily: { time: '09:00:00', time_zone: 'UTC' } }],
-    ['session-fail-new', { title: 'fail rollback', prompt: 'p3', weekly: { time: '09:00:00', time_zone: 'UTC', weekdays: [1] } }],
-  ]);
-  assert.deepEqual(removed, [{ sessionId: 'session-fail-new', id: 'new-sched-1' }], '回滚删除新行（第二条回滚失败记 errors）');
-  assert.ok(result.handover.cleanup.errors.some((line) => /schedule rollback new-sched-2/.test(line)), '回滚自身失败也要记 errors');
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'handoff-preflight-failed');
+  assert.equal(result.takeover, undefined);
+  assert.equal(followed.length, 0);
+  assert.equal(result.handoffPath, undefined);
+  assert.deepEqual(created, []);
+  assert.deepEqual(removed, []);
+  assert.match(JSON.stringify(result.recovery), /descendants boom/);
+  assert.equal(panelStateOf(session.id).handedOff, false);
+  assert.match(result.summary, /Preflight failed/);
+
 });
 
 test('relay_handoff inherits caller model route and permission onto the new session', async () => {
@@ -2254,7 +2266,7 @@ test('error contract: organize/handoff failure paths return structured ok:false 
   const hwTools = applyAgent(fakeServices({ session: handoffWriteSession, extra: { sessionController: { async create() { createdSessions += 1; return { sessionId: 'session-x' }; } } } }).services).tools;
   const handoffWrite = await hwTools.get('relay_handoff').execute({ status: { goal: 'x' }, human_approved: true }, { agent: { session: handoffWriteSession, options: {} } });
   assert.equal(handoffWrite.ok, false);
-  assert.equal(handoffWrite.code, 'handoff-write-failed');
+  assert.equal(handoffWrite.code, 'recovery-unreadable');
   assert.equal(createdSessions, 0, 'no session created when the handoff file cannot be written');
 
   // 4) attachWorkspace 失败但会话可用 → 降级成功（ok:true + info.code）+ summary 明示
@@ -2547,9 +2559,9 @@ test('relay_handoff best-effort disposes half-created sessions and reports halfC
   assert.equal(timedOut.ok, false);
   assert.equal(timedOut.code, 'session-not-live');
   assert.equal(timedOut.halfCreated, true);
-  assert.deepEqual(disposedLive, ['session-half-1'], 'half-created session disposed exactly once');
-  assert.match(timedOut.summary, /half-created session cleanup attempted/);
-  assert.match(timedOut.summary, /Retry relay_handoff/);
+  assert.deepEqual(disposedLive, [], 'agents.get returns bare Agent, not an owned disposer');
+  assert.ok(timedOut.recovery.length > 0);
+  assert.match(timedOut.summary, /reuse retained destination/);
 
   // 2) followup 失败：会话 live 但首条消息发不出去 → dispose 一次 + halfCreated + 重试指引
   const followupCwd = tmpCwd();
@@ -2572,7 +2584,8 @@ test('relay_handoff best-effort disposes half-created sessions and reports halfC
   assert.equal(followupFail.ok, false);
   assert.equal(followupFail.code, 'followup-failed');
   assert.equal(followupFail.halfCreated, true);
-  assert.deepEqual(disposedFollowup, ['session-half-2'], 'half-created session disposed exactly once');
+  assert.deepEqual(disposedFollowup, [], 'bare Agent.dispose is not a public API');
+  assert.ok(followupFail.recovery.length > 0);
   assert.match(followupFail.summary, /Retry relay_handoff/);
 
   // 3) 无 agents.get/dispose：跳过清理且不阻断返回（best-effort）
@@ -3541,7 +3554,6 @@ test('文案闭环：relay_phase 记录 next_operation 后，同次到线 autoCh
   resetSharedState();
 });
 
-
 // ───────────── 2026-10-29 审计修复回归（core：B-P1/P2/P3 + Lead 设计缺口）─────────────
 
 test('B-P1-1/P2-2 fallback：同 phase 记录 next_operation 保留 phaseMeta；isError 的下一 phase 声明不污染 brief', async () => {
@@ -4451,4 +4463,11 @@ test('v0.6.4 专职架构师段：只对 relay-long 注入；Lead 段按会话�
   // classic（非 relay-long）：整段不注入（队友保鲜工具只在 long 模式）
   const classic = applyAgent(fakeServices({ session: leadAgent.session, extra: { agentTeams: teams } }).services);
   assert.equal(classic.sections.find((item) => item.name === 'context-relay:architect').text({ agent: leadAgent }), '');
+});
+
+test('v081 relay_doc forwards byteOffset and validates nonnegative integers', async()=>{
+ resetSharedState();const cwd=tmpCwd();const root=join(cwd,'.scratch','context-relay');mkdirSync(root,{recursive:true});writeFileSync(join(root,'long.md'),'a'.repeat(24000));const session=fakeSession({id:'doc-bytes',cwd});const {tools}=applyAgent(fakeServices({session}).services);const doc=tools.get('relay_doc');assert.equal(doc.parameters.properties.byteOffset.minimum,0);
+ const first=await doc.execute({action:'read',path:'long.md'},{agent:{session}});assert.equal(first.ok,true,JSON.stringify(first));assert.ok(first.nextByteOffset>0);
+ const next=await doc.execute({action:'read',path:'long.md',byteOffset:first.nextByteOffset},{agent:{session}});assert.equal(next.ok,true);assert.equal(next.byteOffset,first.nextByteOffset);
+ for(const byteOffset of [-1,1.5,'1'])assert.equal((await doc.execute({action:'read',path:'long.md',byteOffset},{agent:{session}})).code,'invalid-byte-offset');
 });

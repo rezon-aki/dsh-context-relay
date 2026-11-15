@@ -106,10 +106,10 @@ test('readChain tolerates corrupt lines and missing file', () => {
   assert.equal(entries[0].sessionId, 's1');
 });
 
-test('normalizeChainEntry clips fields; bad seq/kind degrade safely', () => {
+test('normalizeChainEntry preserves pointers; bad seq/kind degrade safely', () => {
   const entry = normalizeChainEntry({ kind: 'nope', sessionId: 'x'.repeat(200), phase: 'build', shadowedStart: -5, shadowedEnd: 1.5, freedTokens: 10 });
   assert.equal(entry.kind, 'compaction');
-  assert.ok(entry.sessionId.length <= 80);
+  assert.equal(entry.sessionId, 'x'.repeat(200));
   assert.equal(entry.shadowedStart, undefined);
   assert.equal(entry.shadowedEnd, undefined);
   assert.equal(entry.freedTokens, 10);

@@ -117,7 +117,8 @@ function handoffServices({ session, cwd, followed }) {
     session,
     extra: {
       sessionController: { async create() { return { sessionId: childId }; } },
-      agents: { list: () => [{ session: liveSession, status: 'idle', followup(message) { followed.push(message); } }] },
+      // Official followup accepts the identified message into nextTurn before returning.
+      agents: { list: () => [{ session: liveSession, status: 'idle', inbox: { nextTurn: [], nextStep: [] }, followup(message) { followed.push(message); this.inbox.nextTurn.push(message); } }] },
       sessionTitle: { rename() {} },
     },
   });

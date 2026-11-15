@@ -601,7 +601,9 @@ test('relay_handoff 顺序保证：followup 调用时 handoff-*.md 与 progress.
         list: () => [{
           session: liveSession,
           status: 'idle',
-          followup() {
+          inbox: { nextTurn: [], nextStep: [] },
+          followup(message) {
+            this.inbox.nextTurn.push(message);
             const files = existsSync(dir) ? readdirSync(dir) : [];
             observed.push({
               progress: existsSync(join(dir, 'progress.md')),

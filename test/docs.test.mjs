@@ -1,12 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   buildDocIndex, checkSessionDocs, docIndexDigest, DOC_LIMITS, parseFrontmatter, readDoc, renderDocIndex, searchDocs,
 } from '../lib/docs.js';
-import { createRelayTools } from '../lib/agent/tools.js';
 
 const NL = String.fromCharCode(10);
 const BT = String.fromCharCode(96);
@@ -134,6 +133,7 @@ test('checkSessionDocs：缺 frontmatter / 坏指针 / 超 L1 advisory 都给 wa
 });
 
 test('relay_doc 工具：index/list/read/search/lint 五个动作可用且有界', async () => {
+  const { createRelayTools } = await import('../lib/agent/tools.js');
   const fx = fixture();
   try {
     const runtime = {
@@ -190,4 +190,102 @@ test('scan 白名单 + 最新 handoff 限制：部署暂存目录不污染索引
     assert.equal(all.entries.filter((entry) => entry.kind === 'handoff').length, 5);
     assert.ok(all.entries.every((entry) => !entry.relPath.startsWith('d1-upload/')), '非白名单目录不扫描');
   } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('v0.8.1 scan：顶层 decisions/archive 分类正确，排除目录在任意层都不扫描', () => {
+  const fx = fixture();
+  try {
+    w(join(fx.r, 'decisions', 'route.md'), '# 路线');
+    w(join(fx.r, 'archive', 'handoff-old.md'), '# 历史');
+    for (const name of ['tmp', 'logs', 'node_modules', '.git', 'team']) {
+      w(join(fx.r, name, 'skip.md'), '# skip');
+      w(join(fx.r, 'decisions', name, 'skip.md'), '# skip');
+    }
+    const all = buildDocIndex(fx.cwd, { include: 'all' });
+    assert.equal(all.entries.find((e) => e.relPath === 'decisions/route.md')?.layer, 'L2');
+    assert.equal(all.entries.find((e) => e.relPath === 'archive/handoff-old.md')?.layer, 'raw');
+    assert.ok(buildDocIndex(fx.cwd).entries.some((e) => e.relPath === 'decisions/route.md'));
+    assert.ok(all.entries.every((e) => !e.relPath.endsWith('skip.md')));
+  } finally { fx.cleanup(); }
+});
+
+test('v0.8.1 readDoc：>512KB 的 offset/section 可继续读，页有界且保留 UTF-8 原文', () => {
+  const fx = fixture();
+  try {
+    const prefix = '# 文档\n' + '前文内容\n'.repeat(45000);
+    const tail = '## 最后章节\n' + Array.from({ length: 12 }, (_, i) => '末尾-' + i).join('\n') + '\n## 下一章\n不要包含\n';
+    writeFileSync(join(fx.r, 'docs', 'large.md'), prefix + tail);
+    assert.ok(Buffer.byteLength(prefix + tail) > DOC_LIMITS.maxReadBytes);
+    const page = readDoc(fx.cwd, 'docs/large.md', { offset: 45001, limit: 3 });
+    assert.equal(page.ok, true);
+    assert.match(page.text, /最后章节/);
+    assert.equal(page.nextOffset, 45004);
+    const next = readDoc(fx.cwd, 'docs/large.md', { offset: page.nextOffset, byteOffset: page.nextByteOffset, limit: 3 });
+    assert.equal(next.ok, true);
+    assert.match(next.text, /末尾-2/);
+    const section = readDoc(fx.cwd, 'docs/large.md', { section: '最后章节', offset: 2, limit: 3 });
+    assert.equal(section.ok, true);
+    assert.equal(section.nextOffset, 5);
+    assert.match(section.text, /末尾-1/);
+    assert.doesNotMatch(section.text, /不要包含/);
+    assert.ok(Buffer.byteLength(section.text) <= DOC_LIMITS.readBytes);
+    assert.equal(readDoc(fx.cwd, 'docs/large.md', { byteOffset: -1 }).code, 'invalid-offset');
+  } finally { fx.cleanup(); }
+});
+
+test('v0.8.1 readDoc：超长单行完整分页，不整读、不越过字节预算、不损失多字节字符', () => {
+  const fx = fixture();
+  try {
+    const text = '汉🙂'.repeat(80000) + '\n最后一行';
+    writeFileSync(join(fx.r, 'docs', 'one-line.md'), text);
+    assert.equal(readDoc(fx.cwd, 'docs/one-line.md', { byteOffset: 1 }).code, 'invalid-offset');
+    const pages = [];
+    let offset = 0, byteOffset;
+    for (let i = 0; i < 100; i += 1) {
+      const page = readDoc(fx.cwd, 'docs/one-line.md', { offset, byteOffset });
+      assert.equal(page.ok, true);
+      assert.ok(Buffer.byteLength(page.text) <= DOC_LIMITS.readBytes);
+      assert.doesNotMatch(page.text, /�/);
+      pages.push(page.text);
+      if (!page.truncated) break;
+      assert.ok(page.nextByteOffset > (byteOffset ?? 0));
+      offset = page.nextOffset; byteOffset = page.nextByteOffset;
+    }
+    assert.equal(pages.join(''), text);
+  } finally { fx.cleanup(); }
+});
+
+test('v0.8.1 lint：覆盖全部 L1/L2、深层与大文件，坏路径/版本/seq 都给出可操作诊断', () => {
+  const fx = fixture();
+  try {
+    for (let i = 0; i < 12; i += 1) w(join(fx.r, 'handoff-' + i + '.md'), '# H', BT + 'docs/missing-' + i + '.md' + BT);
+    w(join(fx.r, 'docs', 'target.md'), '---', 'version: 2', '---', '# Target');
+    w(join(fx.r, 'decisions', 'a', 'b', 'c', 'd', 'deep.md'), '[missing](missing-deep.md)', BT + 'docs/target.md#version=1' + BT, BT + 'docs/target.md#seq=9-2' + BT, 'session_event_read({session_id:"s", seq:-1})');
+    w(join(fx.r, 'docs', 'huge.md'), 'x'.repeat(530000) + BT + 'docs/beyond-limit.md' + BT);
+    symlinkSync('/etc/passwd', join(fx.r, 'docs', 'outside.md'));
+    w(join(fx.r, 'decisions', 'unsafe.md'), BT + 'docs/outside.md' + BT);
+    w(join(fx.r, 'chain.ndjson'), JSON.stringify({v: 2, sessionId: '', shadowedStart: 9, shadowedEnd: 2, briefPath: 'docs/missing-chain.md'}), '{bad json}');
+    const check = checkSessionDocs({ workspaceRoot: fx.cwd });
+    for (let i = 0; i < 12; i += 1) assert.ok(check.pointers.some((p) => p.path === 'docs/missing-' + i + '.md'));
+    for (const path of ['missing-deep.md', 'docs/beyond-limit.md', 'docs/missing-chain.md']) assert.ok(check.pointers.some((p) => p.path === path), path);
+    for (const reason of ['路径或符号链接越出', '版本不匹配', 'seq 范围倒置', '来源 session_id 或 seq', '索引版本', '来源 sessionId', 'seq 遮蔽区间', '索引 JSON']) assert.ok(check.pointers.some((p) => p.reason.includes(reason)), reason);
+    assert.ok(check.pointers.every((p) => p.source && p.path && p.reason && p.suggestion));
+    assert.match(check.seqVerification, /unknown/);
+    assert.equal(check.level, 'soft');
+  } finally { fx.cleanup(); }
+});
+
+
+test('v0.8.1 index：缺省元数据显式 unknown，大文件仍识别 frontmatter', () => {
+  const fx = fixture();
+  try {
+    w(join(fx.r, 'docs', 'unknown.md'), '# 无元数据');
+    w(join(fx.r, 'docs', 'metadata.md'), '---', 'title: 大文件', 'role: 详细事实', 'when: 修改事实前', 'layer: L2', 'owner: author', 'updated: 2026-11-15', '---', 'x'.repeat(530000));
+    const all = buildDocIndex(fx.cwd, { include: 'all' });
+    const unknown = all.entries.find((e) => e.relPath === 'docs/unknown.md');
+    for (const key of ['title', 'role', 'when', 'owner', 'updated']) assert.equal(unknown[key], 'unknown', key);
+    const large = all.entries.find((e) => e.relPath === 'docs/metadata.md');
+    assert.equal(large.role, '详细事实');
+    assert.equal(large.source, 'frontmatter');
+  } finally { fx.cleanup(); }
 });

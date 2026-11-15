@@ -98,6 +98,8 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /不设「小任务自己干」例外/);
   // 回执契约：文件 ≤4KB + 单条消息 ≤200 字 + 头 3 行机读 + verdict
   assert.match(text, /≤4KB/);
+  assert.match(text, />4KB 只提示分层/);
+  assert.equal(text.includes('缺节/>4KB'), false);
   assert.match(text, /≤200 字/);
   assert.match(text, /verdict: done\|needs-human\|blocked/);
   assert.match(text, /context-relay\/reports\/<taskId>\.md/);
@@ -116,13 +118,14 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   assert.match(text, /relay_status\.compaction\.debt/);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5550 / ROUTER ≤2000', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤5850 / ROUTER ≤2050', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.2.16 再精简 + 审查回补后预算）与「不得为省字牺牲硬约束」双保险。
   // v0.4.1：压缩 brief 增加「关键文件索引」要求（+~96 字符），预算随之上调。
   // v0.5.0：新增「等待纪律」（约 110 字符）后上调到 5550；仍是硬上限，不是取消。
-  // v0.8.0: docs v2 分层/索引/advisory 段（约 +280 字符），预算上调到 5850（仍是硬上限）。
+  // v0.8.0 docs v2 后 PROTOCOL 实测 5822，预算 5850；v0.8.1 修正 advisory 矛盾后 ROUTER 实测 2023，预算 2050。
+  // 这里约束常驻注入字符体积，不是文档落盘硬门；保留全部必需短语断言。
   assert.ok(PROTOCOL_TEXT.length <= 5850, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2020, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2050, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '模式只决定「做什么」',
     '不产生审批豁免',
@@ -193,14 +196,14 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
   assert.ok(!WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });
 
-test('v0.3.2 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/rehydrate 纪律', () => {
+test('v0.3.2 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 800, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
   for (const phrase of ['队友是长期资产', 'relay_team_status', 'relay_checkpoint', 'relay_renew', '没有 checkpoint 不换代', 'escalation', 'ledger/roster']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
-  // v0.3.2：reset 是真清空（同成员/不占额度），renew 只换身份；v0.7.0 删除独立 rehydrate
+  // v0.3.2：reset 是真清空（同成员/不占额度），renew 只换身份；v0.8.1 新 Lead 按交接单/progress/checkpoint 手动重建
   for (const phrase of ['relay_freshen({reset:true', '真清空', '不占额度', '只用于换身份/角色', 'member-limit', 'relay_handoff']) {
-    assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/rehydrate 纪律: ' + phrase);
+    assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/手动重建 纪律: ' + phrase);
   }
   for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字']) {
     assert.ok(TEAMMATE_PROTOCOL_TEXT.includes(phrase), '紧凑队友段缺短语: ' + phrase);

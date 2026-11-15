@@ -50,7 +50,7 @@ relay 模式会话里跑 relay preset 的只读工具 `tools.doc_lint({paths?})`
 - `[WARN] index`：索引点名的文档不存在。（描述**他人惯例**的单元格会被自动跳过，不算命中。）
 - `[WARN/UNKNOWN] git`：治理文件未进 git —— 没有 diff 历史，漂移无从发现；**探测不到是 UNKNOWN，不是 ok**，要在结论里写明原因。检查目标 = 工作区 `AGENTS.md` + 本工作区约定的 `docs/machine.md`/`docs/workflow.md`（存在才纳入）+ 传给 doc_lint 的额外文档；通用部署缺这些约定文件时 git 检查恒 UNKNOWN，属预期降级。
 
-硬失败的必须处理；提示项逐条判断。relay 协议要求：`relay_organize` 后必跑 `doc_lint`，把结论压进 brief / handoff 的 evidence。
+硬失败的必须处理；提示项逐条判断。`relay_organize` 压缩前与 `relay_handoff` 生成交接单时由插件自动跑 `doc_lint`，结论并入 brief / handoff 的 evidence；需要补查时再手动跑。
 
 ## relay 会话文档（docs v2）
 

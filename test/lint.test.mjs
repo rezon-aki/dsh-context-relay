@@ -46,7 +46,7 @@ test('checkQuota is pure and enforces L0/L1 quotas', () => {
   assert.equal(missing.ok, true);
   assert.match(missing.detail, /缺失/);
   assert.equal(checkQuota({ l0Size: 2049, l1Size: 0 }).level, 'soft', 'quota 是 advisory（只警告不拦截）');
-  assert.equal(checkQuota({ l0Size: 0, l1Size: 0, level: 'hard' }).level, 'hard');
+  assert.equal(checkQuota({ l0Size: 2049, l1Size: 4097, level: 'hard' }).level, 'soft', 'quota 不能升级为硬门');
 });
 
 test('checkBanned flags decision-history wording', () => {
