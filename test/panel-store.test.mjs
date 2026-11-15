@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
-import { normalizePanelState, PANEL_OPERATIONS } from '../lib/policy.js';
+import { normalizePanelState, PANEL_OPERATIONS, PANEL_SCHEMA_VERSION } from '../lib/policy.js';
 import {
   LIVE_TTL_MS,
   MAX_SESSION_ID,
@@ -27,10 +27,11 @@ const DEFAULT = normalizePanelState({});
 /** 侧栏设置发布位（host 平面写入；panel-store 读作按会话面板的默认值）。 */
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 
+/** v0.9.0 D8=A：cth 已退役（旧值归一为 null），测试默认用合法档位。 */
 const publishSidebarDefaults = (overrides = {}) => {
   globalThis[SETTINGS_KEY] = {
     threshold: 50,
-    defaultOperation: 'compress-then-handoff',
+    defaultOperation: 'compress',
     autoChoose: false,
     autoCompress: true,
     autoHandoff: true,
@@ -58,23 +59,25 @@ test('isValidSessionId: 拒绝 __proto__/NUL/超长/空白/伪 id，接受真实
   }
 });
 
-test('resolvePanelState: 合并默认/记录/补丁，并固化不变量（autoChoose ⇒ defaultOperation=null；autoDecision 仅 autoChoose）', () => {
+test('resolvePanelState: 合并默认/记录/补丁，并固化不变量（D8=A：autoChoose/autoDecision 退役，不变量不变）', () => {
   const defaults = { defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: false };
   assert.deepEqual(resolvePanelState({ defaults }), { ...DEFAULT, defaultOperation: 'compress', autoCompress: true });
-  // 遗留/旧数据里 autoChoose 与 preset 同时存在：读时 auto 优先（默认操作忽略、autoDecision 保留）
+  // v0.9.0 D8=A：autoChoose 退役（恒 false）；旧「自动」档数据按显式默认操作读回、autoDecision 丢弃
   assert.deepEqual(
     resolvePanelState({ defaults: { autoChoose: true, defaultOperation: 'handoff' }, patch: { autoDecision: { operation: 'compress', at: 5 } } }),
-    { ...DEFAULT, autoChoose: true, autoDecision: { operation: 'compress', at: 5 } },
+    { ...DEFAULT, defaultOperation: 'handoff' },
   );
   // record / patch 覆盖默认值；未知键丢弃
   const merged = resolvePanelState({ defaults, record: { autoCompress: false, unrelated: 'drop' }, patch: { autoHandoff: true } });
   assert.equal(merged.autoCompress, false);
   assert.equal(merged.autoHandoff, true);
   assert.equal(Object.prototype.hasOwnProperty.call(merged, 'unrelated'), false);
-  // autoDecision 只在 autoChoose 开启时保留
-  assert.equal(resolvePanelState({ defaults: { autoChoose: false }, patch: { autoDecision: { operation: 'compress', at: 1 } } }).autoDecision, null);
+  // autoDecision 已退役：任何输入都不保留
+  assert.equal(resolvePanelState({ defaults: { autoChoose: true }, patch: { autoDecision: { operation: 'compress', at: 1 } } }).autoDecision, null);
+  assert.equal(resolvePanelState({ defaults: { autoChoose: true } }).autoChoose, false);
   // 字段白名单：handoffPreAuthorized 已删除（旧数据/旧调用方传入都不得出现在状态里）
   assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT, 'handoffPreAuthorized'), false);
+  // MIG4（D8=A）：v0.10.0 前 enum 仍含 cth（归一为 null），故白名单数组不变
   assert.deepEqual(PANEL_OPERATIONS, ['compress', 'handoff', 'continue', 'compress-then-handoff']);
 });
 
@@ -84,7 +87,7 @@ test('panelStateOf: 无记录返回侧栏默认值且不落盘；非法 sessionI
   assert.deepEqual(panelStateOf('sess-missing'), DEFAULT);
   publishSidebarDefaults();
   const withDefaults = panelStateOf('sess-missing');
-  assert.equal(withDefaults.defaultOperation, 'compress-then-handoff');
+  assert.equal(withDefaults.defaultOperation, 'compress');
   assert.equal(withDefaults.autoCompress, true);
   for (const bad of [undefined, null, '', 42, {}, '__proto__', 'x'.repeat(MAX_SESSION_ID + 1)]) assert.deepEqual(panelStateOf(bad), withDefaults);
   assert.equal(existsSync(panelPath), false);
@@ -107,18 +110,15 @@ test('unlimitedBudget（v0.2.7）：settings 默认值合并成面板生效值�
   assert.equal(panelStateOf('sess-budget-2').handoffUnlimitedBudget, false);
 });
 
-test('handoffPreset（v0.2.14）：默认 null；合法值面板写入/落盘/重启保留；旧 panel.json 缺字段或脏值 → null', () => {
+test('handoffPreset（v0.2.14；v0.9.0 D8=A/MIG7 退役）：写入/旧值均不生效（恒 null），兼容接受不报错', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-hp').handoffPreset, null, '缺省 null = 跟随本会话 preset');
-  // 人类面板写入 relay-long = 整份快照 + 落盘；重启（同一 panelPath 重新载入）保留
+  assert.equal(panelStateOf('sess-hp').handoffPreset, null, '字段退役：恒 null（目标 preset 由单一模式决定）');
+  // 旧调用方/旧面板写入兼容接受但不生效：归一为 null → 与当前相同 → no-op 不落盘
   updatePanelState('sess-hp', { handoffPreset: 'relay-long' });
-  assert.equal(panelStateOf('sess-hp').handoffPreset, 'relay-long');
-  assert.equal(JSON.parse(readFileSync(panelPath, 'utf8')).sessions['sess-hp'].handoffPreset, 'relay-long');
-  clearPanelMemory();
-  loadPanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-hp').handoffPreset, 'relay-long');
-  // 旧 panel.json：缺字段 → null；脏值（非法字符/非字符串）→ null（白名单归一化，不整条丢弃）
+  assert.equal(panelStateOf('sess-hp').handoffPreset, null);
+  assert.equal(existsSync(panelPath), false, '退役字段写入是 no-op，不创建会话记录');
+  // 旧 panel.json：缺字段 → null；脏值（非法字符/非字符串/旧 id）→ null；同记录授权按 schema 迁移失效
   writeFileSync(panelPath, JSON.stringify({
     sessions: {
       'sess-hp-old': { handoffPreset: 'not a preset id!' },
@@ -131,11 +131,8 @@ test('handoffPreset（v0.2.14）：默认 null；合法值面板写入/落盘/�
   assert.equal(panelStateOf('sess-hp-old').handoffPreset, null);
   assert.equal(panelStateOf('sess-hp-old').autoCompress, false, '同记录其它字段不受脏值影响');
   assert.equal(panelStateOf('sess-hp-missing').handoffPreset, null);
+  assert.equal(panelStateOf('sess-hp-missing').autoCompress, false, '无版本旧文件：授权字段一次性失效');
   assert.equal(panelStateOf('sess-hp-number').handoffPreset, null);
-  // 显式清空（null）合法：sticky 语义下由人类关掉开关
-  updatePanelState('sess-hp-old', { handoffPreset: 'relay' });
-  updatePanelState('sess-hp-old', { handoffPreset: null });
-  assert.equal(panelStateOf('sess-hp-old').handoffPreset, null);
 });
 
 test('loadPanelStore: 文件缺失空载；正常文件归一化，非法 sessionId 与非对象值跳过、旧死字段丢弃', () => {
@@ -153,10 +150,11 @@ test('loadPanelStore: 文件缺失空载；正常文件归一化，非法 sessio
   }), 'utf8');
   const sessions = loadPanelStore({ panelPath });
   assert.equal(sessions.size, 2); // '__proto__'/'bad id'/空 id 被跳过
-  // autoChoose 优先于遗留 preset；handoffPreAuthorized 已删除 → 不再出现在状态里
-  assert.deepEqual(panelStateOf('sess-1'), { ...DEFAULT, autoChoose: true });
+  // D8=A：autoChoose 退役恒 false；旧文件（无 schemaVersion）授权迁移后 autoChoose/授权失效；handoffPreAuthorized 已删除
+  assert.deepEqual(panelStateOf('sess-1'), { ...DEFAULT, defaultOperation: 'compress' });
   assert.deepEqual(panelStateOf('sess-2'), DEFAULT);
-  // 每次调用都重新载入（清空旧 Map 后按文件重建）
+  // 每次调用都重新载入（清空旧 Map 后按文件重建）；先落盘收口迁移标脏，再换到缺失文件路径
+  savePanelStore();
   assert.equal(loadPanelStore({ panelPath: tmpPanelPath() }).size, 0);
 });
 
@@ -175,13 +173,13 @@ test('loadPanelStore: 损坏文件先隔离备份 + warn + 保留内存旧值（
   const backups = readdirSync(join(panelPath, '..')).filter((name) => name.includes('.corrupt-'));
   assert.equal(backups.length, 1);
   assert.match(readFileSync(join(panelPath, '..', backups[0]), 'utf8'), /broken|sessions/, '备份保留损坏原文');
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /panel store unreadable/);
+  assert.equal(warnings.filter((line) => /panel store unreadable/.test(line)).length, 1, '损坏隔离 warn 一次（schema 迁移 warn 另计）');
+  assert.match(warnings.find((line) => /panel store unreadable/.test(line)), /panel store unreadable/);
   // 结构损坏（JSON 合法但缺 sessions 对象）同样隔离 + 保留旧值；同 key 告警限频（不重复刷）
   writeFileSync(panelPath, '{}', 'utf8');
   assert.equal(loadPanelStore({ panelPath }).size, 1);
   assert.equal(panelStateOf('sess-old').defaultOperation, 'compress');
-  assert.equal(warnings.filter((line) => /panel store/.test(line)).length, 1, '30s 内同 key 告警只报一次');
+  assert.equal(warnings.filter((line) => /panel store (unreadable|malformed)/.test(line)).length, 1, '30s 内同 key 告警只报一次');
   // sessions 为数组同样属于结构畸形 → 隔离 + 保留旧值
   writeFileSync(panelPath, JSON.stringify({ sessions: [] }), 'utf8');
   assert.equal(loadPanelStore({ panelPath }).size, 1);
@@ -225,7 +223,7 @@ test('updatePanelState(panel): 人类面板写入 = 整份生效值快照（侧�
   configurePanelStore({ panelPath });
   publishSidebarDefaults();
   const snapshot = updatePanelState('sess-snap', { autoCompress: false });
-  assert.deepEqual(snapshot, { ...DEFAULT, defaultOperation: 'compress-then-handoff', autoCompress: false, autoHandoff: true });
+  assert.deepEqual(snapshot, { ...DEFAULT, defaultOperation: 'compress', autoCompress: false, autoHandoff: true });
   // 快照落盘（全字段，含侧栏默认值）
   assert.deepEqual(readPanelFile(panelPath).sessions['sess-snap'], snapshot);
   // 侧栏默认改变：未改面板的会话跟随，改过的会话保持快照
@@ -239,7 +237,7 @@ test('updatePanelState: 归一化后与当前生效值相同的 no-op 不落盘�
   configurePanelStore({ panelPath });
   publishSidebarDefaults();
   // 与侧栏默认完全相同的面板写入 → 没有语义变化 → 不落盘（会话继续跟随侧栏默认）
-  const noop = updatePanelState('sess-noop', { autoCompress: true, autoHandoff: true, defaultOperation: 'compress-then-handoff' });
+  const noop = updatePanelState('sess-noop', { autoCompress: true, autoHandoff: true, defaultOperation: 'compress' });
   assert.equal(noop.autoCompress, true);
   assert.equal(existsSync(panelPath), false, 'no-op 不得创建会话快照');
   publishSidebarDefaults({ defaultOperation: 'continue', autoCompress: false, autoHandoff: false });
@@ -254,10 +252,10 @@ test('updatePanelState(agent): 只落 patch 显式字段、不 materialize 侧�
   // agent 写 handedOff：记录只有 { handedOff: true }，读取时其余字段仍来自侧栏默认
   const held = updatePanelState('sess-agent', { handedOff: true }, { source: 'agent' });
   assert.equal(held.handedOff, true);
-  assert.equal(held.defaultOperation, 'compress-then-handoff');
+  assert.equal(held.defaultOperation, 'compress');
   assert.deepEqual(readPanelFile(panelPath).sessions['sess-agent'], { handedOff: true });
-  // handoff 成功后同步子会话的 4 个持久授权：只落这 4 个显式字段（不写 defaultOperation/autoDecision 默认值）。
-  // 先把侧栏默认改为与父会话授权不同的值，模拟「人类在父会话面板里改过授权」后子会话的继承。
+  // agent 内部写 4 个授权字段：只落这 4 个显式键（不写 defaultOperation/autoDecision 默认值）。
+  // 先把侧栏默认改为不同的值，验证 agent 稀疏写入钉住显式授权、未写字段继续跟随默认。
   publishSidebarDefaults({ autoCompress: false, autoHandoff: false });
   updatePanelState('sess-child', { autoChoose: false, autoCompress: true, autoHandoff: true, authorizeNext: false }, { source: 'agent' });
   assert.deepEqual(readPanelFile(panelPath).sessions['sess-child'], { autoChoose: false, autoCompress: true, autoHandoff: true, authorizeNext: false });
@@ -278,18 +276,17 @@ test('updatePanelState(agent): 只落 patch 显式字段、不 materialize 侧�
   assert.equal(Object.prototype.hasOwnProperty.call(readPanelFile(panelPath).sessions['sess-agent'], 'handoffPreAuthorized'), false);
 });
 
-test('updatePanelState(agent): 被丢弃的 autoDecision 是 no-op 不落盘；autoChoose=on 时落稀疏记录', () => {
+test('updatePanelState(agent): D8=A autoChoose/autoDecision 退役 → 相关写入是 no-op 不落盘', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
   publishSidebarDefaults({ autoChoose: false, defaultOperation: 'compress' });
-  // autoChoose=off：归一化丢弃模型自决 → 与当前相同 → 不落盘（B-P2-8 根因）
+  // 自决字段退役：归一化丢弃 → 与当前相同 → 不落盘（B-P2-8 根因）
   updatePanelState('sess-dec', { autoDecision: { operation: 'compress', at: 1 } }, { source: 'agent' });
   assert.equal(existsSync(panelPath), false);
-  // autoChoose=on：自决保留 → 只落 autoDecision 一个显式字段
-  publishSidebarDefaults({ autoChoose: true, defaultOperation: null });
-  updatePanelState('sess-dec2', { autoDecision: { operation: 'handoff', at: 2 } }, { source: 'agent' });
-  assert.deepEqual(readPanelFile(panelPath).sessions['sess-dec2'], { autoDecision: { operation: 'handoff', at: 2 } });
-  assert.deepEqual(panelStateOf('sess-dec2').autoDecision, { operation: 'handoff', at: 2 });
+  // 旧「自动」档开关同样退役：写入 autoChoose=true 归一为 false → no-op
+  const retired = updatePanelState('sess-dec2', { autoChoose: true }, { source: 'agent' });
+  assert.equal(retired.autoChoose, false);
+  assert.equal(existsSync(panelPath), false, '退役字段不得创建会话记录');
 });
 
 test('v0.3.3 模型推荐：agent 稀疏写入三字段、落盘/重启回读；显式清空后不再出现（推荐只展示）', () => {
@@ -311,7 +308,7 @@ test('v0.3.3 模型推荐：agent 稀疏写入三字段、落盘/重启回读；
     recommendedAt: 1762460000123,
   });
   // 其余字段仍跟随侧栏默认（推荐不影响决策字段）
-  assert.equal(panelStateOf('sess-rec').defaultOperation, 'compress-then-handoff');
+  assert.equal(panelStateOf('sess-rec').defaultOperation, 'compress');
   assert.equal(panelStateOf('sess-rec').authorizeNext, false);
   // 重启（同一 panelPath 重新载入）回读推荐
   clearPanelMemory();
@@ -343,7 +340,8 @@ test('会话上限 500 按最近写入 LRU 淘汰（更新刷新顺序，活跃�
   loadPanelStore({ panelPath });
   // 活跃的 sess-0 更新一次 → 刷新为最近使用；随后新增第 501 个会话
   updatePanelState('sess-0', { autoCompress: true });
-  updatePanelState('sess-new', { autoChoose: true });
+  // v0.9.0 D8=A：autoChoose 退役（写入 no-op）——用授权字段制造第 501 个会话
+  updatePanelState('sess-new', { autoCompress: true });
   assert.equal(panelStateOf('sess-0').autoCompress, true, '活跃旧会话不得被淘汰');
   const file = readPanelFile(panelPath).sessions;
   assert.equal(Object.prototype.hasOwnProperty.call(file, 'sess-0'), true);
@@ -461,12 +459,12 @@ test('实时状态 LRU：更新已有会话刷新顺序，超过 500 淘汰最�
   assert.equal(liveStateOf('live-new').band, 'ok');
 });
 
-test('落盘格式：{ sessions: { <id>: 状态 } }，无残留 tmp 文件；面板快照含全部字段', () => {
+test('落盘格式：{ schemaVersion, sessions: { <id>: 状态 } }，无残留 tmp 文件；面板快照含全部字段', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
   const next = updatePanelState('sess-u', { defaultOperation: 'handoff', autoHandoff: true });
   assert.deepEqual(next, { ...DEFAULT, defaultOperation: 'handoff', autoHandoff: true });
-  assert.deepEqual(readPanelFile(panelPath), { sessions: { 'sess-u': next } });
+  assert.deepEqual(readPanelFile(panelPath), { schemaVersion: PANEL_SCHEMA_VERSION, sessions: { 'sess-u': next } });
   assert.deepEqual(readdirSync(join(panelPath, '..')).filter((name) => name.endsWith('.tmp')), []);
   // 增量合并：只改传入键，其余保持
   assert.deepEqual(updatePanelState('sess-u', { defaultOperation: null }), { ...next, defaultOperation: null });
@@ -479,4 +477,89 @@ test('architect（v0.6.4）：settings 默认值合并成面板生效值；会�
   updatePanelState('sess-arch', { architect: true });
   globalThis[SETTINGS_KEY] = { threshold: 35, architect: false, explicit: true };
   assert.equal(panelStateOf('sess-arch').architect, true, '面板写入后不再跟随默认');
+});
+
+// ── v0.9.0 #53/D3=A：panel.json schemaVersion 迁移（授权一次性失效）────────────
+test('v0.9.0 schema 迁移：无 schemaVersion 旧文件首次载入清授权字段、保留模式/架构师；写盘落 v2（幂等）', () => {
+  const panelPath = tmpPanelPath();
+  const warnings = [];
+  configurePanelStore({ panelPath }, { warn: (message) => warnings.push(String(message)) });
+  writeFileSync(panelPath, JSON.stringify({
+    sessions: {
+      'sess-mig': {
+        defaultOperation: 'compress', autoChoose: true, autoCompress: true, autoHandoff: true,
+        authorizeNext: true, autoDecision: { operation: 'compress', at: 1 },
+        architect: true, architectModel: { provider: 'geekai', model: 'gpt-6.1-sol' },
+        handedOff: false, unlimitedBudget: true, handoffUnlimitedBudget: false,
+      },
+      'sess-clean': { defaultOperation: 'continue' },
+    },
+  }), 'utf8');
+  const loaded = loadPanelStore({ panelPath });
+  assert.equal(loaded.size, 2);
+  const migrated = panelStateOf('sess-mig');
+  // 授权/自决字段全部失效（只清授权，不清模式/架构师）
+  assert.equal(migrated.autoCompress, false, '旧授权 autoCompress 失效');
+  assert.equal(migrated.autoHandoff, false, '旧授权 autoHandoff 失效');
+  assert.equal(migrated.authorizeNext, false, '旧授权 authorizeNext 失效');
+  assert.equal(migrated.autoChoose, false);
+  assert.equal(migrated.autoDecision, null);
+  assert.equal(migrated.defaultOperation, 'compress', '模式不是授权：保留');
+  assert.equal(migrated.architect, true, '架构师不是授权：保留');
+  assert.deepEqual(migrated.architectModel, { provider: 'geekai', model: 'gpt-6.1-sol' });
+  assert.equal(migrated.unlimitedBudget, true);
+  assert.equal(migrated.handoffUnlimitedBudget, false);
+  assert.deepEqual(panelStateOf('sess-clean'), { ...DEFAULT, defaultOperation: 'continue' });
+  assert.equal(warnings.filter((line) => /authorization schema/.test(line)).length, 1, '迁移 warn 一次');
+  // 标脏 + 写盘落 schemaVersion（只失效授权字段，模式/架构师写回原值）
+  assert.equal(savePanelStore(), true);
+  const saved = readPanelFile(panelPath);
+  assert.equal(saved.schemaVersion, PANEL_SCHEMA_VERSION);
+  assert.equal(saved.sessions['sess-mig'].autoCompress, false);
+  assert.equal(saved.sessions['sess-mig'].autoChoose, false);
+  assert.equal(saved.sessions['sess-mig'].authorizeNext, false);
+  assert.equal(saved.sessions['sess-mig'].defaultOperation, 'compress');
+  assert.equal(saved.sessions['sess-mig'].architect, true);
+  // 二次载入（v2）：不重复清——迁移后重新开的授权保持
+  updatePanelState('sess-mig', { autoCompress: true });
+  clearPanelMemory();
+  loadPanelStore({ panelPath });
+  assert.equal(panelStateOf('sess-mig').autoCompress, true, 'v2 文件不得再次失效授权');
+  assert.equal(warnings.filter((line) => /authorization schema/.test(line)).length, 1, 'v2 载入不再 migrate/warn');
+});
+
+test('v0.9.0 schema 迁移：版本不符同样失效；无记录旧文件写盘补 schemaVersion', () => {
+  const panelPath = tmpPanelPath();
+  configurePanelStore({ panelPath });
+  writeFileSync(panelPath, JSON.stringify({ schemaVersion: 1, sessions: { 'sess-v1': { autoCompress: true, autoHandoff: true } } }), 'utf8');
+  loadPanelStore({ panelPath });
+  assert.equal(panelStateOf('sess-v1').autoCompress, false, 'schemaVersion 1 != 2 → 授权失效');
+  assert.equal(panelStateOf('sess-v1').autoHandoff, false);
+  assert.equal(savePanelStore(), true);
+  assert.equal(readPanelFile(panelPath).schemaVersion, PANEL_SCHEMA_VERSION);
+  // 空旧文件（无版本、无记录可清）：载入后 save 仍写 v2，避免永久停留在无版本形态
+  const emptyPath = tmpPanelPath();
+  configurePanelStore({ panelPath: emptyPath });
+  writeFileSync(emptyPath, JSON.stringify({ sessions: {} }), 'utf8');
+  loadPanelStore({ panelPath: emptyPath });
+  assert.equal(savePanelStore(), true);
+  assert.equal(readPanelFile(emptyPath).schemaVersion, PANEL_SCHEMA_VERSION);
+});
+
+test('v0.9.0 schema 迁移：v2 文件载入不失效授权（新版本内授权仍按会话有效）', () => {
+  const panelPath = tmpPanelPath();
+  configurePanelStore({ panelPath });
+  writeFileSync(panelPath, JSON.stringify({
+    schemaVersion: PANEL_SCHEMA_VERSION,
+    sessions: { 'sess-v2': { autoCompress: true, autoHandoff: true, authorizeNext: true, defaultOperation: 'continue' } },
+  }), 'utf8');
+  loadPanelStore({ panelPath });
+  const state = panelStateOf('sess-v2');
+  assert.equal(state.autoCompress, true);
+  assert.equal(state.autoHandoff, true);
+  assert.equal(state.authorizeNext, true);
+  assert.equal(state.defaultOperation, 'continue');
+  // 无脏记录时 save 保持既有 no-op 语义（不为写版本而重写）
+  assert.equal(savePanelStore(), true);
+  assert.equal(readPanelFile(panelPath).schemaVersion, PANEL_SCHEMA_VERSION);
 });

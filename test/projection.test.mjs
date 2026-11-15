@@ -69,7 +69,7 @@ test('definition: 官方契约字段与 duck-typed stateSchema', () => {
   const definition = relayProjectionDefinition();
   assert.equal(RELAY_PROJECTION_KEY, 'relay');
   assert.equal(definition.key, 'relay');
-  assert.equal(definition.stateVersion, 3, 'v3 新增工具调用计数（Router P0 度量），stateVersion 必须 bump');
+  assert.equal(definition.stateVersion, 4, 'v4 新增出口条件键 exit/phase 5+2，stateVersion 必须 bump');
   assert.equal(typeof definition.apply, 'function');
   assert.equal(definition.apply, foldRelayEvent);
   const value = { any: 'thing', nested: [1, 2, 3] };
@@ -92,6 +92,41 @@ test('初始状态字段契约固定', () => {
     executionCalls: 0,
   });
   assert.ok(Object.isFrozen(initialState), 'initialState 应冻结防误改');
+});
+
+test('v0.9.0：relay_phase 出口折叠——blocked/cancel 记 exit 条件键并清 goal/exitCriteria；回主链删除 exit', () => {
+  const blocked = fold([
+    ptc(1, PHASE_TOOL, { phase: 'build', goal: 'g', exit_criteria: 'e' }),
+    ptc(2, PHASE_TOOL, { phase: 'blocked', exit_reason: '等用户裁决 X' }),
+  ]);
+  assert.equal(blocked.phase, 'blocked');
+  assert.equal(blocked.goal, null);
+  assert.equal(blocked.exitCriteria, null);
+  assert.equal(blocked.exit.kind, 'blocked');
+  assert.equal(blocked.exit.reason, '等用户裁决 X');
+  // 回主链：删除条件键 exit（正常 phase 的 state 形状与旧版逐字一致）。
+  const restored = fold([
+    ptc(1, PHASE_TOOL, { phase: 'build', goal: 'g', exit_criteria: 'e' }),
+    ptc(2, PHASE_TOOL, { phase: 'blocked', exit_reason: '等用户' }),
+    ptc(3, PHASE_TOOL, { phase: 'build', goal: 'g2', exit_criteria: 'e2' }),
+  ]);
+  assert.deepEqual(restored, { ...initialState, phase: 'build', goal: 'g2', exitCriteria: 'e2', toolCalls: 3 });
+  assert.equal('exit' in restored, false);
+  // cancel 出口；直调形态（tool/call + tool/result 配对）同样折叠。
+  const direct = fold([
+    directCall(1, PHASE_TOOL, 'c1', { phase: 'verify', goal: 'g' }),
+    directResult(2, 'c1', 'ok'),
+    directCall(3, PHASE_TOOL, 'c2', { phase: 'cancel', exit_reason: '任务取消' }),
+    directResult(4, 'c2', 'ok'),
+  ]);
+  assert.equal(direct.phase, 'cancel');
+  assert.equal(direct.exit.kind, 'cancel');
+  assert.equal(direct.exit.reason, '任务取消');
+  // 未知取值仍忽略（不覆盖已有 phase）；缺原因时 reason=null（工具层已先拒绝，投影只做安全折叠）。
+  assert.equal(fold([ptc(1, PHASE_TOOL, { phase: 'paused' })]).phase, 'discover');
+  const noReason = fold([ptc(1, PHASE_TOOL, { phase: 'cancel' })]);
+  assert.equal(noReason.phase, 'cancel');
+  assert.equal(noReason.exit.reason, null);
 });
 
 test('PTC relay_phase 派生 phase/goal/exitCriteria', () => {

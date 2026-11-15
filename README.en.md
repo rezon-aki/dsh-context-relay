@@ -4,7 +4,7 @@
 
 [中文](README.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [Changelog](CHANGELOG.md) · MIT
 
-**Context-relay plugin for DSH (DeepSeek Harness)**: adds two optional session modes — **Relay** and **Relay · very long tasks**. It does not swap the model or delete history; it changes how long sessions are organised: when to compact, when to start a fresh session, how to hand over, and what should be decided by you.
+**Context-relay plugin for DSH (DeepSeek Harness)**: offers one production mode from v0.9.0: **接力模式（Relay）· 超长任务** (id `relay-long`). The classic `relay` id is a migration alias with identical behavior; compatibility is removed in v0.10.0. It does not swap the model or delete history; it changes how long sessions are organised: when to compact, when to start a fresh session, how to hand over, and what should be decided by you.
 
 ## The problems it solves
 
@@ -44,20 +44,21 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 
 ### 4. With the official agent team: a two-layer setup, one step further
 
-- In the very-long-task mode the Lead only splits, dispatches and verifies work while teammates build, spreading context pressure across two layers;
+- In the single production mode the Lead only splits, dispatches and verifies work while teammates build, spreading context pressure across two layers;
 - A teammate whose context is dirty can be wiped in place (a true reset) or replaced under a new identity, while the work record is kept;
 - When the Lead itself crosses the line, it hands over to a new session: running teammates and background jobs of the old session tree are interrupted, and the new session rebuilds the team and its work memory from the handover and progress documents (it does not take over the old team in place);
 - Both layers stay in their efficient range for a long time, raising the ceiling of long tasks;
 - The Lead does not spin waiting for teammates after dispatching: their reports arrive as messages, so it only waits once when genuinely blocked and keeps working otherwise (saves tokens). Repeated `relay_team_status` reads with an unchanged team are refused, and a phase switch automatically returns a teammate triage (keep / checkpoint / reset-reuse / renew).
 
-## Which mode to pick
+## Single mode and migration
 
 | Mode | Good for | What it does |
 |---|---|---|
-| **Relay** | Most long tasks | The Lead does the work; at the line it compacts or starts a fresh session as you chose |
-| **Relay · very long tasks** | Especially long, complex, split-friendly work | The Lead dispatches instead of editing code; teammates can be wiped or replaced, so long tasks last longer |
+| **接力模式（Relay）· 超长任务** | Especially long, complex, split-friendly work | The Lead dispatches instead of editing code; teammates can be wiped or replaced, so long tasks last longer |
 
-Both modes stay human-gated: no autonomous loop, no automatic approval on your behalf.
+The single mode stays human-gated: no autonomous loop, no automatic approval on your behalf.
+
+Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path.
 
 ## Install
 
@@ -74,7 +75,7 @@ Everything stays in the Web UI — no command line needed:
 5. Click **Install**. The Host first resolves the package and shows its name, one-line description and version; pnpm commands and output stay folded under **View install details**.
 6. When installation completes, click **Enable now**. If you closed the dialog, open the `dsh-context-relay` bundle from **Installed plugins** on the Plugins page and switch it on.
 7. Follow the prompt to **restart/reload the profile** (profiles with HMR rebuild automatically; otherwise restart `dsh web`), then **refresh the page**.
-8. Create a new session: the mode picker should now show **Relay** and **Relay · very long tasks**; after selecting either, a status bar should appear above the composer. Both together mean the install succeeded.
+8. Create a new session: the mode picker should now show **接力模式（Relay）· 超长任务** (a migration alias may also appear); after selecting it, a status bar should appear above the composer. Both together mean the install succeeded.
 9. Optional: the `dsh-context-relay` config card on the Plugins page sets the watermark basis and panel defaults.
 
 **Troubleshooting**
@@ -100,32 +101,42 @@ After installing, restart/reload the profile, refresh the page and create a new 
 
 ## What you get
 
-- Two extra options in the mode picker: **Relay** and **Relay · very long tasks**.
+- One production mode: **接力模式（Relay）· 超长任务** (`relay-long`); classic is an identical migration alias, removed in v0.10.0.
 - A **status bar** above the composer (relay sessions only): how much context is used, whether a line was reached, which mode is active; click it to open the panel.
 - Once work items are recorded, a **ledger chip** appears next to it: `ledger 3/8` = open items / total (an amber dot for in-progress, a red dot for blocked); click it to open the full **work ledger panel**.
 - In the panel you can:
-  - choose what happens at the line — continue / compact and continue / hand off to a new session / compact then new session (classic mode) / let the model decide; the choice persists for the session and the next handoff session inherits it;
+  - choose what happens at the line — ask me / continue / compact and continue / hand off; new roots default to compact and continue, explicit choices stay local, and neither modes nor authorizations carry across handoff;
   - give auto-authorisations for compact, hand off, or just the next operation (no approval prompt while enabled);
   - turn on budget unlimited: the agent receives the line your token budget is unlimited, so it dares to spend (prompt text only, not a kernel quota);
   - see what the model suggests (advice only, never executed automatically).
 - At a line you get a status notice (not a user message): it reports state and reminds to finish the current phase first, without interrupting.
-- The very-long-task mode also ships teammate management: team status, checkpoints, in-place wipe, and renewal.
+- The single mode includes teammate management: team status, checkpoints, in-place wipe, and renewal.
 
 ### Screenshots
 
-The relay panel: default-mode dial, auto-authorisations, next-session mode, and the authorise-next-operation button (real UI).
+Historical panel screenshot: v0.9.0 removes the next-session mode switch and uses only the four-position dial (ask me / continue / compact / hand off).
 
 ![Relay panel](https://github.com/rezon-aki/dsh-context-relay/blob/main/docs/images/relay-panel.png?raw=true)
 
 ## Day to day
 
-1. Pick **Relay** (most cases) or **Relay · very long tasks** when creating a session, then make requests as usual.
+1. Pick **接力模式（Relay）· 超长任务** when creating a session, then make requests as usual.
 2. The agent advances phase by phase: compacts when due, hands off when due, asks when it should.
 3. At a line it follows the mode you chose in the panel; with no choice (ask me), it asks you first.
 4. For manual control just say so, e.g. compact now, hand off to a new session, or ask me this time.
 5. If you ignore a line notice, nothing bad happens — keep giving instructions; it will not compact or hand off on its own.
 
+## Reports, authorizations and capacity preservation
+
+- User reports (including user_gate.report) follow four suggested sections: Conclusion / Impact / What you need to do / Evidence locations (up to 3 pointers). Default ≤600 characters; when the user explicitly requests details, details_requested:true permits expansion, suggested ≤4000 characters. Format and length produce warnings only, returned with phase results and a one-time notice; they never block ship or any phase. Non-empty review/report remain required.
+- Do not paste command output, logs or long diffs; explain unfamiliar terms in plain language on first use.
+- Authorization is bound to session + operation + schema version, never inherited and invalidated by handoff/version changes. Choosing a mode never grants approval. Only non-authorization architect settings carry over; new roots default to compact and continue.
+- Any phase can exit to blocked/cancel with exit_reason, preserving history and the user gate. Resume the prior phase; verify→build allows repairs, and ship requires verify. Timed-out or unfinished reviews never count as passed; continue the review or use a new reviewer.
+- The only mid-phase exception is capacity preservation at known-window usage ≥85%: finish the current action, stop new work/dispatch, write brief/progress/ledger, and prepare authorized compaction/handoff. No automatic action; a budget band alone is not an exception.
+
 ## The work ledger: the current phase's work queue
+
+Execution state, dependencies and acceptance belong to the official task board. The ledger only references `officialTaskId` and records Lead management actions; it does not copy execution state. Overflow and removed done items are archived in `<session>-archive.ndjson`; results expose archive.path/count.
 
 Long tasks drift: the agent forgets what it set out to do and how far it got. The ledger turns "what this phase must finish" into a queue and puts it in front of the agent at the right moments — **event-driven, not time-based**:
 
@@ -148,7 +159,7 @@ In long tasks the expensive failure is "start writing before the route is clear"
 - **The Lead only does two things**: align requirements with the user (boundaries/acceptance/trade-offs) and read the project docs to understand the business and current state;
 - **The architect turns requirements into an engineering route**: it starts every task from a **low context** — reads only the necessary context (the Lead's requirement brief, doc pointers, relevant module entry points) and delivers an engineering implementation document (default `.scratch/context-relay/architecture/<task>.md`: requirement alignment / technical route / module interfaces / data & protocols / risks & trade-offs / open decisions / implementation steps & acceptance). The Lead uses `relay_architect({mode:'fresh'})` for a clean context (the old generation checkpoints first); only continuous low-context work uses `mode:'continue'`; after delivery it only runs `checkpoint` and waits;
 - **Decisions that need the user**: the architect writes them into the document's "open decisions" and reports to the Lead; the Lead brings them to you and passes the conclusion back — it never asks you directly and never decides for you;
-- **Switch and model**: a small "architect" pill next to the "unlimited budget" pill in the composer (shown only for Relay · very long tasks) controls whether the Lead hands engineering-route design to the architect (default on). **The model is chosen in the DSH model menu**: open the composer model selector and the official "Model / Effort" rows are followed by "Architect model / Architect effort"; the official menu owns the shell, anchoring, keyboard and focus behaviour, and the list stays open after a choice so you can adjust the effort next. **Explicit overrides are restricted by the official subagent model allowlist**: only models allowed for this session are listed as explicit choices; a session with no recorded allowlist may explicitly select only the Lead's current route (new sessions inherit the allowlist from the settings). **The architect model defaults to the composer model selector's default selection** (the Lead's current default model): an unselected session uses that default without refusing or blocking, and a session's explicit choice is kept. Override it anytime in the "Architect model / Architect effort" rows (explicit overrides must be inside the official subagent model allowlist), or choose "默认（跟随模型选择）" (Default: follow model selection) to restore the default; handoff inherits the choice.
+- **Switch and model**: a small "architect" pill next to the "unlimited budget" pill in the composer (shown only for 接力模式（Relay）· 超长任务) controls whether the Lead hands engineering-route design to the architect (default on). **The model is chosen in the DSH model menu**: open the composer model selector and the official "Model / Effort" rows are followed by "Architect model / Architect effort"; the official menu owns the shell, anchoring, keyboard and focus behaviour, and the list stays open after a choice so you can adjust the effort next. **Explicit overrides are restricted by the official subagent model allowlist**: only models allowed for this session are listed as explicit choices; a session with no recorded allowlist may explicitly select only the Lead's current route (new sessions inherit the allowlist from the settings). **The architect model defaults to the composer model selector's default selection** (the Lead's current default model): an unselected session uses that default without refusing or blocking, and a session's explicit choice is kept. Override it anytime in the "Architect model / Architect effort" rows (explicit overrides must be inside the official subagent model allowlist), or choose "默认（跟随模型选择）" (Default: follow model selection) to restore the default; handoff inherits the choice.
 
 ## Configuration
 
@@ -169,11 +180,11 @@ Optional host plugin config (advanced):
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
 | `handoffApproval` | `'required'` | Compaction/handoff must pass the official approval; deployments without an approval UI may set `'off'` (risk accepted by the deployment). |
 | `inheritOnHandoff` | `true` | The next session inherits the old model route and permission profile; `false` returns to deployment defaults. |
-| `presetId` / `longPresetId` | `relay` / `relay-long` | Internal ids of the two modes. |
+| `presetId` / `longPresetId` | `relay` / `relay-long` | Legacy alias ID / single mode ID; legacyPresetCompat defaults to true, compatibility removed in v0.10.0. |
 
 Sidebar settings (human-editable, hot-reloaded): watermark basis + default mode / auto decide / auto compact / auto handoff / budget unlimited.
 
-Panel state (per session): persistent mode (not consumed; inherited by the next handoff session), auto-authorisations, auto-decision record, handoff target mode, budget unlimited, model advice.
+Panel state (per session): persistent local mode (not consumed, never inherited), session-local operation authorizations, budget unlimited, model advice.
 
 Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conversation content stays stored by DSH itself.
 
@@ -200,7 +211,7 @@ Cross-session documents are no longer capped by hard byte limits that reject or 
 | `doc_lint` | Documentation check (quota / banned wording / index / git / relay session docs), output at most 2KB; quota and size are advisory only. |
 | `relay_doc` | Session-document layers and index: `index` (L0 index) / `list` / `read` (by section or line range) / `search` (path:line snippets) / `lint` (advisory). Read the index first, then fetch only the minimal context you need. |
 
-**Relay · very long tasks** adds team tools: `relay_team_status`, `relay_renew`, `relay_architect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; defaults to the composer model selector's default selection, keeps an explicit choice, allows overrides anytime, and inherits the choice on handoff).
+**接力模式（Relay）· 超长任务** includes team tools: `relay_team_status`, `relay_renew`, `relay_architect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; defaults to the composer model selector's default selection, keeps an explicit choice, allows overrides anytime, and inherits the choice on handoff).
 
 HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/architect-models?sessionId=` (architect model catalog filtered by the session allowlist), `GET /context-relay/work-items?sessionId=` (work ledger for the panel poller).
 
@@ -223,11 +234,17 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - A session compacts once by default to avoid summary drift; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode it needs an explicit human request (`force`).
 - If writing the panel state fails it lives in memory only (lost on restart); settings writes are persist-first.
 - UI text is Chinese-only; the Chinese docs are the source of truth.
-- The work ledger is **session-level and Leader-only**: each relay session has its own ledger; teammates/subagents neither read nor write the Lead ledger, and it is not shown in their UI. Handoff copies it to the new session (`rev` kept). The panel is read-only and edits go through the agent tool; the default cap is 30 items and an overflow write is refused (no automatic deletion of done items).
+- The work ledger is **session-level and Leader-only**: each relay session has its own ledger; teammates/subagents neither read nor write the Lead ledger, and it is not shown in their UI. Handoff copies it to the new session (`rev` kept). The panel is read-only and edits go through the agent tool; the default cap is 30: overflow first archives done items; only overflow without enough done items is refused. Archive failures leave the ledger unchanged; archive path/count are available, with no automatic deletion.
 - Resource reclamation is not promised: the kernel usually auto-releases at natural settlement; relay keeps an internal activation handle only for renewal capacity, and no longer promises memory savings after compaction.
 - The team-first gate is removed: from DSH 0.2.2-rc.2 teammates are subagent-tree members, so the plugin cannot distinguish "open a subagent" from "use a teammate".
 - The architect model defaults to the composer model selector's default selection, keeps a session's explicit choice, and does not refuse or block when unselected; only explicit overrides must be inside the session's official subagent allowlist.
 - Preset rows follow the official 0.2.2-rc.2 ptc patch only; earlier kernels (rc.1 / 0.2.1 series) are no longer supported.
+
+## Upgrade and uninstall
+
+v0.9.0 normalizes compress-then-handoff to null (ask me), autoChoose/autoDecision to false/null, and accepts but ignores handoffPreset. Old panel.json moves to schemaVersion 2 and invalidates authorization. Legacy thresholds still work with a migration warning; classic aliases and these compatibility paths are removed in v0.10.0. Workspace-ledger fallback sync keeps the source; legacy team records remain read-only.
+
+Uninstall unregisters presets, skills, HTTP routes, tools, projections and sentinels. User panel.json/settings.json and workspace .scratch/context-relay/** remain readable. Back up and remove selected data manually if desired; the plugin never deletes it automatically.
 
 ## Development
 

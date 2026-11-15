@@ -234,7 +234,7 @@ test('台账焦点行带上下文状态：band 过线 + 队友待处理只在变
   const session = fakeSession({ id: 'session-ctx-line', cwd, seq: 0 });
   const { services, state } = fakeServices({ session });
   const { events } = applyAgent(services);
-  const listener = events.find((entry) => entry.name === 'agent/pre-step').listener;
+  const listener = events.filter((entry) => entry.name === 'agent/pre-step').at(-1).listener;
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
   const step = () => listener({ agent }, async () => ({}));
@@ -292,7 +292,7 @@ test('派活时评估队友上下文：send_message 到 organize 队友 → 下�
   const { services } = fakeServices({ session: leadSession, extra: { agentTeams: teams, sessionQuery } });
   const bundle = applyAgent(services);
   const post = bundle.events.find((entry) => entry.name === 'tools/post-execute').listener;
-  const pre = bundle.events.find((entry) => entry.name === 'agent/pre-step').listener;
+  const pre = bundle.events.filter((entry) => entry.name === 'agent/pre-step').at(-1).listener;
   const injected = [];
   const leadAgent = { session: leadSession, options: {}, inject(message) { injected.push(message); } };
   const send = (target) => post({ name: 'send_message', arguments: { agent: target, message: '开始做 X' }, agent: leadAgent }, { isError: false }, async () => ({}));

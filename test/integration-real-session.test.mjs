@@ -109,7 +109,9 @@ function applyAgent(services, applyFn = apply) {
     get(name) { return services[name]; },
   };
   applyFn(ctx, {});
-  return { tools, preStep: events.find((event) => event.name === 'agent/pre-step'), cleanups };
+  // v0.9.0 单一模式：teamTools 恒创建（自带 reset applier 的 agent/pre-step 监听），
+  // 到线提醒由 installSentinel 后注册（末位）；取末位与其它测试文件的 .at(-1) 约定一致。
+  return { tools, preStep: events.filter((event) => event.name === 'agent/pre-step').at(-1), cleanups };
 }
 
 async function deriveReport(session) {

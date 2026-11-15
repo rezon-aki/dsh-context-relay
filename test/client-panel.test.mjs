@@ -7,7 +7,7 @@ import { runInNewContext } from 'node:vm';
 // 在 vm 里驱动真实 bundle，验证 composer 面板（RelayPanel）与侧栏设置卡（RelaySettings）的交互语义。
 // 覆盖：B-P2-13 会话切换重置 popover、B-P2-15 授权文案权威句、B-P2-10 persisted:false 提示、
 // P3 live stale/缺失时渲染中性降级 chip（不显示旧值）、多 handoff 逐条消费（配合 client-notice 的 dock 提示）。
-// v0.2.14：popover「下一个接力新会话」二态滑动开关（role=switch / aria-checked / 显式 preset 写入 / 动效 CSS 契约）。
+// v0.9.0 单一模式：4 档表盘（问/继续/压缩继续/接力新会话）；「下一个接力新会话」滑动开关已删除。
 // v0.5.0：工作台账（RelayWorkLedger 胶囊/分组折叠/隐藏条件 + RelayPanel 底部入口行 + dock slot 注册）。
 const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 
@@ -310,8 +310,8 @@ test('RelayPanel：授权 hint/title 用权威句（B-P2-15：不再写「本次
   assert.ok(auth);
   assert.match(String(auth.props.title), /下一次 relay 操作仍需官方审批/);
   assert.match(String(auth.props.title), /操作成功后消费/);
-  // popover 内可见权威句（单一真源）
-  assert.match(textOf(popover), /模式在本会话持久（不消费），只决定到线时「做什么」，不产生审批豁免；免审只来自 autoCompress \/ autoHandoff \/ authorizeNext（一次性，操作成功后消费）；接力后模式由新会话继承。/);
+  // popover 内可见权威句（单一真源；v0.9.0 #26/#53：模式与授权不随接力继承）
+  assert.match(textOf(popover), /模式在本会话持久（不消费），只决定到线时「做什么」，不产生审批豁免；免审只来自 autoCompress \/ autoHandoff \/ authorizeNext（一次性，操作成功后消费）；模式与授权不随接力继承。/);
   // 整个 bundle 不得再出现旧口径短语
   assert.equal(/本次免审批|视为已授权|pre-authorize|handoffPreAuthorized|接力\/二次压缩/.test(source), false, 'client bundle 不得再出现旧授权口径');
 });
@@ -646,102 +646,29 @@ test('RelayPanel：三个水缸行 = 纯 CSS 多元素注水（无 canvas）；�
 });
 
 
-// ── v0.2.14：下一个接力新会话的模式切换（二态滑动开关）────────────────────────
-const MODES = Object.freeze({ relay: 'relay', long: 'relay-long' });
-/** popover 里的滑动开关（优先按 role=switch 找，避免命中内部 track/label 类名）。 */
-const slideOf = (instance) => find(instance.tree, (node) => node.props?.role === 'switch')[0];
-const slideLabels = (instance) => find(instance.tree,
-  (node) => typeof node.props?.className === 'string' && node.props.className.startsWith('relay-v3-slide-label'));
-const activeSlideLabel = (instance) => slideLabels(instance)
-  .find((node) => String(node.props.className).includes('relay-v3-slide-label-on'));
+// v0.9.0 单一模式：mode 值恒为唯一 id（client 不再读取 modes/preset 渲染开关）。
+const MODES = Object.freeze({ relay: 'relay-long', long: 'relay-long' });
 const lastPanelPut = (env) => JSON.parse(String(env.calls
   .filter((call) => call.method === 'PUT' && call.url === '/context-relay/panel').at(-1).body));
 
-test('RelayPanel：下一个接力新会话是二态滑动开关（role=switch，null 跟随本会话，点击写显式 preset 且回包生效）', async () => {
+test('RelayPanel：「下一个接力新会话」滑动开关已删除（v0.9.0 单一模式，不再渲染 role=switch）', async () => {
   const env = createEnv();
-  env.server.panel.A = {
-    relay: true, modes: MODES, preset: 'relay',
-    panel: { ...PANEL_DEFAULT, handoffPreset: null }, live: LIVE(),
-  };
-  const RelayPanel = env.slots['conversation.composer.dock'];
-  const instance = env.mount(RelayPanel, { sessionId: 'A' });
-  await instance.flush();
-  const popover = await openPopover(instance);
-  assert.ok(popover);
-
-  // 位置：操作选项之后、autoCompress/autoHandoff 开关之前
-  const kids = popover.children;
-  const modeIndex = kids.findIndex((node) => typeof node?.props?.className === 'string' && node.props.className.includes('relay-v3-mode'));
-  const gridIndex = kids.findIndex((node) => typeof node?.props?.className === 'string' && node.props.className.includes('relay-v3-dial-wrap'));
-  const firstSwitchIndex = kids.findIndex((node) => typeof node?.props?.className === 'string' && node.props.className.startsWith('relay-v3-tank'));
-  assert.ok(gridIndex >= 0 && modeIndex > gridIndex, '模式开关在一次性操作选项之后');
-  assert.ok(firstSwitchIndex > modeIndex, '模式开关在自动授权开关之前');
-
-  // 小标题 + 组件契约
-  assert.match(textOf(instance.tree), /下一个接力新会话/);
-  assert.ok(slideOf(instance), '渲染 role=switch 的滑动开关');
-  assert.equal(slideOf(instance).props['aria-label'], '下一个接力新会话模式');
-  assert.equal(slideOf(instance).props['aria-checked'], false, 'null 跟随本会话（relay）→ 左端');
-  assert.match(String(slideOf(instance).props.className), /relay-v3-slide-left/);
-  assert.match(String(slideOf(instance).props.title), /默认跟随本会话（当前「Relay」）；切换后固定/);
-  assert.equal(slideLabels(instance).length, 2, '左右两端各一个 label');
-  assert.equal(activeSlideLabel(instance).children[0], 'Relay', '左端 label 高亮');
-
-  // 点击 → 写对侧显式 id（relay-long）；回包后右侧生效
-  slideOf(instance).props.onClick();
-  await instance.flush();
-  assert.deepEqual(lastPanelPut(env), { sessionId: 'A', handoffPreset: 'relay-long' });
-  assert.equal(slideOf(instance).props['aria-checked'], true, '回包后 aria-checked=true');
-  assert.match(String(slideOf(instance).props.className), /relay-v3-slide-right/);
-  assert.equal(activeSlideLabel(instance).children[0], 'Relay · 超长任务', '右端 label 高亮');
-
-  // 再点 → 切回 relay
-  slideOf(instance).props.onClick();
-  await instance.flush();
-  assert.deepEqual(lastPanelPut(env), { sessionId: 'A', handoffPreset: 'relay' });
-  assert.equal(slideOf(instance).props['aria-checked'], false);
-});
-
-test('RelayPanel：跟随本会话 relay-long 初始在右端；显式 handoffPreset 优先于本会话 preset', async () => {
-  const env = createEnv();
-  env.server.panel.A = {
-    relay: true, modes: MODES, preset: 'relay-long',
-    panel: { ...PANEL_DEFAULT, handoffPreset: null }, live: LIVE(),
-  };
+  env.server.panel.A = { relay: true, modes: MODES, preset: 'relay-long', panel: { ...PANEL_DEFAULT }, live: LIVE() };
   const RelayPanel = env.slots['conversation.composer.dock'];
   const instance = env.mount(RelayPanel, { sessionId: 'A' });
   await instance.flush();
   assert.ok(await openPopover(instance));
-  assert.equal(slideOf(instance).props['aria-checked'], true, 'null 跟随本会话（relay-long）→ 右端');
-  assert.match(String(slideOf(instance).props.className), /relay-v3-slide-right/);
-  assert.match(String(slideOf(instance).props.title), /默认跟随本会话（当前「Relay · 超长任务」）/);
-  slideOf(instance).props.onClick();
-  await instance.flush();
-  assert.deepEqual(lastPanelPut(env), { sessionId: 'A', handoffPreset: 'relay' });
-  assert.equal(slideOf(instance).props['aria-checked'], false);
-
-  // 显式值优先：本会话 relay-long，但已固定 relay → 左端
-  env.server.panel.B = {
-    relay: true, modes: MODES, preset: 'relay-long',
-    panel: { ...PANEL_DEFAULT, handoffPreset: 'relay' }, live: LIVE(),
-  };
+  assert.equal(find(instance.tree, (node) => node.props?.role === 'switch').length, 0, '不再渲染滑动开关');
+  assert.equal(textOf(instance.tree).includes('下一个接力新会话'), false, '不再出现开关标题');
+  assert.equal(source.includes('relay-v3-slide'), false, '滑动开关控件/CSS 已从 bundle 删除');
+  // 旧 host 无 modes / 旧 handoffPreset 存量值 → 照样渲染 4 档表盘，不出现开关、不写盘。
+  env.server.panel.B = { relay: true, panel: { ...PANEL_DEFAULT, handoffPreset: 'relay' }, live: LIVE() };
   instance.render({ sessionId: 'B' });
   await instance.flush();
   assert.ok(await openPopover(instance));
-  assert.equal(slideOf(instance).props['aria-checked'], false, '显式 handoffPreset 优先');
-  assert.match(String(slideOf(instance).props.title), /已固定为「Relay」/);
-});
-
-test('RelayPanel：旧 host 无 modes 时不渲染模式开关（relay 会话仍渲染 chip/表盘）', async () => {
-  const env = createEnv();
-  // 旧 host：relay=true 但不返回 modes → 保持历史行为（不出现空开关；表盘按 classic 6 档渲染）
-  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT }, live: LIVE() };
-  const RelayPanel = env.slots['conversation.composer.dock'];
-  const instance = env.mount(RelayPanel, { sessionId: 'A' });
-  await instance.flush();
-  assert.ok(await openPopover(instance));
-  assert.equal(slideOf(instance), undefined, '旧 host 无 modes 不渲染模式开关');
-  assert.equal(dialOrders(instance).length, 6, '无 modes → 按 classic 6 档渲染（长模式判定不可得）');
+  assert.equal(dialOrders(instance).length, 4, '旧 host 无 modes → 仍按单一模式 4 档渲染');
+  assert.equal(find(instance.tree, (node) => node.props?.role === 'switch').length, 0);
+  assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '打开/轮询不写盘');
 });
 
 test('RelayPanel：非 relay 会话完全不渲染接力 chip / popover（v0.2.31 用户需求：非 relay 不出现 chip）', async () => {
@@ -765,36 +692,6 @@ test('RelayPanel：非 relay 会话完全不渲染接力 chip / popover（v0.2.3
   assert.equal(env.calls.some((call) => call.url.includes('sessionId=A')), true, '非 relay 会话仍会拉取 panel GET（只隐藏 UI）');
 });
 
-test('CSS：模式开关动效契约（弹簧位移 / 双层渐变交叉 / 标签过渡 / hover 不碰 transform / reduced-motion 禁位移）', () => {
-  // 固定尺寸 + transform 位移：切换不触发 layout
-  assert.match(source, /\.relay-v3-slide-track\{[^}]*height:28px[^}]*overflow:hidden/);
-  // thumb 弹簧：300ms cubic-bezier(.34,1.56,.64,1)；位移只走 transform
-  assert.ok(source.includes('.relay-v3-slide-thumb{position:absolute'), 'thumb 绝对定位（不参与布局）');
-  assert.ok(source.includes('transition:transform 300ms cubic-bezier(.34,1.56,.64,1)'), 'thumb 300ms 弹簧位移');
-  assert.ok(source.includes('.relay-v3-slide-right .relay-v3-slide-thumb{transform:translateX(100%)}'), '右端位移');
-  // 蓝 / 紫青双层渐变 fill 交叉渐变 260ms
-  assert.ok(source.includes('.relay-v3-slide-fill{position:absolute'), '双层 fill 叠放');
-  assert.ok(source.includes('.relay-v3-slide-fill-blue{') && source.includes('rgba(47,129,247'));
-  assert.ok(source.includes('.relay-v3-slide-fill-long{') && source.includes('rgba(139,92,246'), '紫青渐变');
-  assert.ok(source.includes('.relay-v3-slide-fill{position:absolute') && source.includes('transition:opacity 260ms ease'));
-  assert.ok(source.includes('.relay-v3-slide-left .relay-v3-slide-fill-blue{opacity:1}'));
-  assert.ok(source.includes('.relay-v3-slide-right .relay-v3-slide-fill-long{opacity:1}'));
-  // label 220ms 透明度/颜色过渡；且在 28px 轨道内垂直/水平居中（flex 居中，不依赖 line-height）
-  assert.match(source, /\.relay-v3-slide-label\{[^}]*display:flex;align-items:center;justify-content:center/, 'label flex 居中');
-  assert.ok(source.includes('transition:opacity 220ms ease,color 220ms ease'), 'label 220ms 过渡');
-  assert.ok(source.includes('.relay-v3-slide-label-on{opacity:1'), 'active 端高亮类');
-  // hover/active 微反馈只改 box-shadow/filter，不得覆盖 thumb 的 transform
-  for (const rule of source.match(/\.relay-v3-slide:(?:hover|active)[^{]*\{[^}]*\}/g) ?? []) {
-    assert.equal(rule.includes('transform'), false, 'hover/active 不得覆盖 thumb transform：' + rule);
-  }
-  // prefers-reduced-motion：禁用位移动画，只留颜色/透明度
-  const reduced = source.slice(source.indexOf('@media (prefers-reduced-motion: reduce)'));
-  assert.ok(reduced.length > 0, '有 reduced-motion 段');
-  assert.ok(reduced.includes('.relay-v3-slide-thumb{transition:box-shadow 260ms ease}'), 'reduced-motion 下 thumb 只留阴影过渡');
-  assert.equal(/relay-v3-slide[^{]*\{[^}]*transform/.test(reduced), false, 'reduced-motion 下不得保留位移动画');
-  assert.ok(reduced.includes('.relay-v3-slide-fill{') === false, 'fill 的颜色渐变不受 reduced-motion 影响');
-});
-
 // ── v0.2.18/v0.4.0：默认模式 = 车钟表盘（模式持久不消费；写入字段与旧按钮网格一致）──────
 const dialOf = (instance) => find(instance.tree, (node) => typeof node?.props?.className === 'string' && node.props.className.split(' ').includes('relay-v3-dial'))[0];
 const dialOrders = (instance) => find(instance.tree, (node) => typeof node?.props?.className === 'string' && node.props.className.split(' ').includes('relay-v3-order'));
@@ -808,7 +705,7 @@ const needleDeg = (instance) => {
 };
 const wrapDeg = (deg) => ((deg % 360) + 360) % 360;
 
-test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 6 档 radio + 照准仪指针 + 读出行）', async () => {
+test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 4 档 radio + 照准仪指针 + 读出行）', async () => {
   const env = createEnv();
   env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE() };
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -820,23 +717,23 @@ test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 
   assert.equal(dial.props.role, 'radiogroup');
   assert.equal(dial.props['aria-label'], '默认模式（表盘档位）');
   const orders = dialOrders(instance);
-  assert.equal(orders.length, 6, 'classic 6 个档位');
+  assert.equal(orders.length, 4, '单一模式 4 个档位（问/继续/压缩继续/接力新会话）');
   const checked = orders.filter((node) => node.props['aria-checked'] === true);
   assert.equal(checked.length, 1, '单选：任一时刻只有一个档位');
   assert.match(JSON.stringify(checked[0].children), /压缩继续/, 'compress = 压缩继续（第 3 档）');
-  assert.equal(needleTransform(instance), 'rotate(120deg)', '指针 120° 指向第 3 档');
+  assert.equal(needleTransform(instance), 'rotate(180deg)', '指针 180° 指向第 3 档');
   assert.match(textOf(instance.tree), /先 relay_organize 再重试 phase/, '读出行显示当前档 hint');
   // 元件齐全（v3「石肋星盘」）：多边形石墙/同心券环/放射肋/穹顶网格/尖拱山花冠/尖顶饰/飞扶壁/束柱 + 照准仪指针。
   // byClass 用子串匹配（'...-pip' 也会匹配 '...-pips' 容器）→ 计数断言一律按 class token 精确匹配。
   const exactClass = (className) => byClass(instance.tree, className).filter((node) => String(node.props.className).split(' ').includes(className));
-  assert.equal(exactClass('relay-v3-dial-rib').length, 12, '12 根放射肋（2n）');
-  assert.equal(exactClass('relay-v3-dial-lierne').length, 24, '穹顶网格斜肋 24 根');
+  assert.equal(exactClass('relay-v3-dial-rib').length, 8, '8 根放射肋（4 档 × 2）');
+  assert.equal(exactClass('relay-v3-dial-lierne').length, 16, '穹顶网格斜肋 16 根');
   assert.equal(exactClass('relay-v3-dial-arc').length, 4, '四道结构环线（两道券环 + 内外墙线）');
-  assert.equal(exactClass('relay-v3-dial-gable').length, 12, '12 座尖拱山花（多边形每条边一座）');
-  assert.equal(exactClass('relay-v3-dial-finial').length, 12, '12 个山花尖顶饰');
+  assert.equal(exactClass('relay-v3-dial-gable').length, 8, '8 座尖拱山花（多边形每条边一座）');
+  assert.equal(exactClass('relay-v3-dial-finial').length, 8, '8 个山花尖顶饰');
   assert.equal(exactClass('relay-v3-dial-buttress').length, 4, '四角飞扶壁');
-  assert.equal(exactClass('relay-v3-dial-sector').length, 6, '6 跨档位提亮层');
-  assert.equal(exactClass('relay-v3-dial-pip').length, 6, '6 个墙墩菱形节点');
+  assert.equal(exactClass('relay-v3-dial-sector').length, 4, '4 跨档位提亮层');
+  assert.equal(exactClass('relay-v3-dial-pip').length, 4, '4 个墙墩菱形节点');
   assert.equal(exactClass('relay-v3-dial-hub').length, 1, '中心束柱平面（八角柱 + 拱心石）');
   assert.equal(exactClass('relay-v3-dial-hub-ring').length, 1, '束柱八角轮廓');
   assert.equal(exactClass('relay-v3-dial-backlight').length, 1, '穹顶冷背光（唯一光源）');
@@ -854,16 +751,16 @@ test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 
   ]) {
     assert.equal(byClass(instance.tree, gone).length, 0, '旧视觉结构已删除：' + gone);
   }
-  // 几何：盘面 300×264、中心 (150,132)、6 档等距 116px / 60° 均布、标签两两不重叠（防手改坐标叠字）
+  // 几何：盘面 300×264、中心 (150,132)、4 档等距 110px / 90° 均布、标签两两不重叠（防手改坐标叠字）
   const center = { x: 150, y: 132 };
   const points = orders.map((node) => ({ x: parseFloat(node.props.style.left), y: parseFloat(node.props.style.top) }));
   for (const point of points) {
-    assert.ok(Math.abs(Math.hypot(point.x - center.x, point.y - center.y) - 116) < 0.5, '档位标签半径 116：' + point.x + ',' + point.y);
-    assert.ok(point.x >= 40 && point.x <= 260, '标签中心横向在画布内：' + point.x);
+    assert.ok(Math.abs(Math.hypot(point.x - center.x, point.y - center.y) - 110) < 0.5, '档位标签半径 110：' + point.x + ',' + point.y);
+    assert.ok(point.x >= 30 && point.x <= 270, '标签中心横向在画布内：' + point.x);
     assert.ok(point.y >= 10 && point.y <= 258, '标签中心纵向在画布内：' + point.y);
   }
   const angles = points.map((point) => (Math.atan2(point.y - center.y, point.x - center.x) * 180 / Math.PI + 90 + 360) % 360).sort((a, b) => a - b);
-  angles.forEach((angle, index) => assert.ok(Math.abs(angle - index * 60) < 0.5, '角度 60° 均布：' + angles.join(',')));
+  angles.forEach((angle, index) => assert.ok(Math.abs(angle - index * 90) < 0.5, '角度 90° 均布：' + angles.join(',')));
   for (let i = 0; i < points.length; i += 1) {
     for (let j = i + 1; j < points.length; j += 1) {
       assert.ok(Math.hypot(points[i].x - points[j].x, points[i].y - points[j].y) > 80, '档位标签不重叠');
@@ -883,13 +780,13 @@ test('RelayPanel：点档位写旧字段（defaultOperation 与 autoChoose 互�
   orderWithText(instance, '接力新会话').props.onClick();
   await instance.flush();
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false });
-  assert.equal(wrapDeg(needleDeg(instance)), 240, 'handoff = 第 5 档 240°');
-  assert.equal(needleDeg(instance), -120, '初始角取 (-180,180] 的等价角（入场摆动也只走短弧）');
-  // 点「继续」→ continue（60°）
+  assert.equal(wrapDeg(needleDeg(instance)), 270, 'handoff = 第 4 档 270°');
+  assert.equal(needleDeg(instance), -90, '初始角取 (-180,180] 的等价角（入场摆动也只走短弧）');
+  // 点「继续」→ continue（90°）
   orderWithText(instance, '继续').props.onClick();
   await instance.flush();
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false });
-  assert.equal(needleTransform(instance), 'rotate(60deg)');
+  assert.equal(needleTransform(instance), 'rotate(90deg)');
   // 同档再点不重复写
   const before = env.calls.filter((call) => call.method === 'PUT').length;
   orderWithText(instance, '继续').props.onClick();
@@ -902,35 +799,7 @@ test('RelayPanel：点档位写旧字段（defaultOperation 与 autoChoose 互�
   assert.equal(needleTransform(instance), 'rotate(0deg)');
 });
 
-test('RelayPanel：自动档独占第 6 档（指针 300°）；键盘 Home/End 到端点', async () => {
-  const env = createEnv();
-  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, autoChoose: true }, live: LIVE() };
-  const RelayPanel = env.slots['conversation.composer.dock'];
-  const instance = env.mount(RelayPanel, { sessionId: 'A' });
-  await instance.flush();
-  assert.ok(await openPopover(instance));
-  assert.equal(needleDeg(instance), -60, '自动档 = 300° 的等价角 −60°（入场摆动走短弧）');
-  assert.equal(wrapDeg(needleDeg(instance)), 300, '视觉上仍是 300°（自动档）');
-  const checked = dialOrders(instance).filter((node) => node.props['aria-checked'] === true);
-  assert.match(JSON.stringify(checked[0].children), /自动/);
-  assert.match(textOf(instance.tree), /自动（模型决定）/, '读出行保留完整档名');
-  // 点「压缩继续」→ 关自动、落具体操作
-  orderWithText(instance, '压缩继续').props.onClick();
-  await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress', autoChoose: false });
-  assert.equal(needleTransform(instance), 'rotate(120deg)');
-  // End → 自动档（互斥字段一起写）
-  dialOf(instance).props.onKeyDown({ key: 'End', preventDefault() {} });
-  await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', autoChoose: true, defaultOperation: null });
-  assert.equal(needleTransform(instance), 'rotate(300deg)');
-  // Home → 问我：从 300° 走 +60° 到 360°（等价 0°），不绕 −300° 的整圈
-  dialOf(instance).props.onKeyDown({ key: 'Home', preventDefault() {} });
-  await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: null, autoChoose: false });
-  assert.equal(needleDeg(instance), 360, '最短弧：300° → 360°（+60°）');
-  assert.ok(Math.abs(needleDeg(instance) - 300) <= 180, '换挡增量 ≤ 180°');
-});
+
 
 test('RelayPanel：拖动指针 >5px 才拖动/松手吸附并提交；点击扇区（<5px）选指针所在档；铭牌按下不触发拖动', async () => {
   const env = createEnv();
@@ -947,32 +816,32 @@ test('RelayPanel：拖动指针 >5px 才拖动/松手吸附并提交；点击扇
     return dial.props;
   };
   const pointer = (x, y) => ({ clientX: x, clientY: y, pointerId: 7, target: { closest: () => null }, currentTarget: dialProps().ref.current });
-  // 单击扇区（<5px 不移动）= 选该扇区档位：右上 45° 落在「继续」扇区（60°）
-  dialProps().onPointerDown(pointer(150 + 50, 132 - 50));
-  dialProps().onPointerUp(pointer(150 + 50, 132 - 50));
+  // 单击扇区（<5px 不移动）= 选该扇区档位：正右 90° 落在「继续」扇区
+  dialProps().onPointerDown(pointer(150 + 60, 132));
+  dialProps().onPointerUp(pointer(150 + 60, 132));
   await instance.flush();
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false });
-  assert.equal(needleDeg(instance), 60, '指针按最短弧转到 60°');
+  assert.equal(needleDeg(instance), 90, '指针按最短弧转到 90°');
   // 同一扇区再点：不重复写
   const putsAfterClick = env.calls.filter((call) => call.method === 'PUT').length;
-  dialProps().onPointerDown(pointer(150 + 40, 132 - 60));
-  dialProps().onPointerUp(pointer(150 + 40, 132 - 60));
+  dialProps().onPointerDown(pointer(150 + 50, 132 + 20));
+  dialProps().onPointerUp(pointer(150 + 50, 132 + 20));
   await instance.flush();
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, putsAfterClick, '同扇区点击不重复写');
   // >5px 拖动：指针跟手（不吸附）；拖动序列内不 flush，用同一份 props
   const dragProps = dialProps();
   dragProps.onPointerDown(pointer(150, 132));
-  dragProps.onPointerMove(pointer(150 + 50, 132 - 50));
+  dragProps.onPointerMove(pointer(150 + 60, 132));
   await instance.flush();
   const draggedAngle = parseFloat(String(byClass(instance.tree, 'relay-v3-dial-needle')[0].props.style.transform).replace(/[^0-9.]/g, ''));
-  assert.ok(Math.abs(draggedAngle - 45) < 1, '拖动时指针跟手（不吸附）：' + draggedAngle);
-  // 拖到右下（150°）→ 松手吸附 index 3（压缩→新会话）
-  dragProps.onPointerMove(pointer(150 + 43, 132 + 75));
+  assert.ok(Math.abs(draggedAngle - 90) < 1, '拖动时指针跟手（不吸附）：' + draggedAngle);
+  // 拖到正下（180°）→ 松手吸附 index 2（压缩继续）
+  dragProps.onPointerMove(pointer(150, 132 + 60));
   await instance.flush();
-  dialProps().onPointerUp(pointer(150 + 43, 132 + 75));
+  dialProps().onPointerUp(pointer(150, 132 + 60));
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress-then-handoff', autoChoose: false });
-  assert.equal(needleDeg(instance), 180, '松手后指针吸附 180°（第 4 档，从拖动角 105° 走最短弧）');
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress', autoChoose: false });
+  assert.equal(needleDeg(instance), 180, '松手后指针吸附 180°（第 3 档，从拖动角 90° 走最短弧）');
   // 从档位铭牌按下不启动拖动（避免点选变拖拽）
   const before = env.calls.filter((call) => call.method === 'PUT').length;
   const guardProps = dialProps();
@@ -983,7 +852,7 @@ test('RelayPanel：拖动指针 >5px 才拖动/松手吸附并提交；点击扇
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, before, '铭牌上按下不进入拖动，不写 PUT');
 });
 
-test('RelayPanel：6 个扇区整盘平分——点任意 60° 扇区选中该档，指针全程走最短弧（自动↔问我 ±60°）', async () => {
+test('RelayPanel：4 个扇区整盘平分——点任意 90° 扇区选中该档，指针全程走最短弧', async () => {
   const env = createEnv();
   env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: null }, live: LIVE() };
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -998,14 +867,12 @@ test('RelayPanel：6 个扇区整盘平分——点任意 60° 扇区选中该�
     return dial.props;
   };
   const pointer = (x, y) => ({ clientX: x, clientY: y, pointerId: 9, target: { closest: () => null }, currentTarget: dialProps().ref.current });
-  // 依次点各扇区中心（半径 80）：写入档位与指针角都对，且每次增量 |Δ| ≤ 60°。
+  // 依次点各扇区中心（半径 80）：写入档位与指针角都对，且每次增量 |Δ| ≤ 90°。
   const cases = [
-    { angle: 60, put: { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, deg: 60 },
-    { angle: 120, put: { sessionId: 'A', defaultOperation: 'compress', autoChoose: false }, deg: 120 },
-    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress-then-handoff', autoChoose: false }, deg: 180 },
-    { angle: 240, put: { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, deg: 240 },
-    { angle: 300, put: { sessionId: 'A', autoChoose: true, defaultOperation: null }, deg: 300 },
-    // 自动(300°) → 问我(0°)：走 +60° 到 360°，而不是 −300° 绕整圈
+    { angle: 90, put: { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, deg: 90 },
+    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress', autoChoose: false }, deg: 180 },
+    { angle: 270, put: { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, deg: 270 },
+    // 接力新会话(270°) → 问我(0°)：走 +90° 到 360°，而不是 −270° 绕整圈
     { angle: 0, put: { sessionId: 'A', defaultOperation: null, autoChoose: false }, deg: 360 },
   ];
   let previous = 0;
@@ -1019,7 +886,7 @@ test('RelayPanel：6 个扇区整盘平分——点任意 60° 扇区选中该�
     assert.deepEqual(lastDialPut(env), item.put, '点扇区 ' + item.angle + '° 写入对应档位');
     assert.equal(needleDeg(instance), item.deg, '指针角 ' + item.deg + '°（等价于 ' + item.angle + '°）');
     assert.ok(Math.abs(needleDeg(instance) - previous) <= 180, '换挡增量 ≤180°：' + previous + '→' + needleDeg(instance));
-    assert.ok(Math.abs(needleDeg(instance) - previous) <= 60, '相邻档位只走 60°：' + previous + '→' + needleDeg(instance));
+    assert.ok(Math.abs(needleDeg(instance) - previous) <= 90, '相邻档位只走 90°：' + previous + '→' + needleDeg(instance));
     previous = needleDeg(instance);
   }
 });
@@ -1034,15 +901,15 @@ test('RelayPanel：悬停扇区高亮扇形 + 对应铭牌（不写 PUT）', asy
   const dial = dialOf(instance);
   const rect = { left: 0, top: 0, width: 300, height: 264 };
   dial.props.ref.current = { getBoundingClientRect: () => rect, setPointerCapture: () => {} };
-  // 悬停到 150° 方向（第 4 档「压缩→新会话」扇区），未按下
-  const rad = ((150 - 90) * Math.PI) / 180;
+  // 悬停到 180° 方向（第 3 档「压缩继续」扇区），未按下
+  const rad = ((180 - 90) * Math.PI) / 180;
   dial.props.onPointerMove({ clientX: 150 + 70 * Math.cos(rad), clientY: 132 + 70 * Math.sin(rad), pointerId: 11, target: { closest: () => null }, currentTarget: dial.props.ref.current });
   await instance.flush();
   const hoveredSectors = byClass(instance.tree, 'relay-v3-dial-sector').filter((node) => node.props.className.includes('relay-v3-dial-sector-hover'));
   assert.equal(hoveredSectors.length, 1, '悬停高亮一个扇区');
   const hoveredOrders = dialOrders(instance).filter((node) => node.props.className.includes('relay-v3-order-hover'));
   assert.equal(hoveredOrders.length, 1, '对应铭牌同时高亮');
-  assert.match(JSON.stringify(hoveredOrders[0].children), /压缩→新会话/, '高亮的是 150° 所在扇区');
+  assert.match(JSON.stringify(hoveredOrders[0].children), /压缩继续/, '高亮的是 180° 所在扇区');
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '悬停不写 PUT');
   // 指针离开表盘：清掉悬停高亮
   dial.props.onPointerLeave();
@@ -1060,13 +927,13 @@ test('RelayPanel：键盘连按不重复提交（同步意图档位，不等宿�
   await instance.flush();
   assert.ok(await openPopover(instance));
   const dial = dialOf(instance);
-  // compress(第 3 档) 连按两下右方向键：→ 压缩→新会话(第 4 档) → 接力新会话(第 5 档)，不得两次都提交第 4 档
+  // compress(第 3 档) 连按两下右方向键：→ 接力新会话(第 4 档) → 问我(回绕第 1 档)，不得两次都提交第 4 档
   dial.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} });
   dial.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} });
   await instance.flush();
   const targets = env.calls.filter((call) => call.method === 'PUT').map((call) => JSON.parse(String(call.body)).defaultOperation);
-  assert.deepEqual(targets, ['compress-then-handoff', 'handoff'], '连按两下提交两个不同档位');
-  assert.equal(needleTransform(instance), 'rotate(240deg)', '最终落在接力新会话（第 5 档 240°）');
+  assert.deepEqual(targets, ['handoff', null], '连按两下提交两个不同档位');
+  assert.equal(needleTransform(instance), 'rotate(360deg)', '最终回绕到问我（等价 0°，指针按最短弧 +90° 到 360°）');
 });
 
 test('RelayPanel：扇区按 30° 边界平分 / 中心轮毂死区 / 非主键单击不选档', async () => {
@@ -1093,18 +960,18 @@ test('RelayPanel：扇区按 30° 边界平分 / 中心轮毂死区 / 非主键�
     await instance.flush();
   };
   const putCount = () => env.calls.filter((call) => call.method === 'PUT').length;
-  // 30° 是「问我 / 继续」扇区边界：29.9° 仍属问我（当前档，不写），30.1° 进继续（写）——证明扇区按 60° 平分而不是只认中心。
-  await click(29.9, 80);
-  assert.equal(putCount(), 0, '29.9° 仍在「问我」扇区（当前档不重复写）');
-  await click(30.1, 80);
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, '30.1° 越过边界落「继续」扇区');
+  // 45° 是「问我 / 继续」扇区边界：44.9° 仍属问我（当前档，不写），45.1° 进继续（写）——证明扇区按 90° 平分而不是只认中心。
+  await click(44.9, 80);
+  assert.equal(putCount(), 0, '44.9° 仍在「问我」扇区（当前档不重复写）');
+  await click(45.1, 80);
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, '45.1° 越过边界落「继续」扇区');
   // 中心轮毂死区（半径 18px 内）：点正中心不选档、不写 PUT（否则 atan2(0,0) 会固定写「压缩继续」）
   const beforeHub = putCount();
   await click(0, 0);
   assert.equal(putCount(), beforeHub, '点中心轮毂不写 PUT');
-  assert.equal(wrapDeg(needleDeg(instance)), 60, '点中心后指针仍停在「继续」档');
+  assert.equal(wrapDeg(needleDeg(instance)), 90, '点中心后指针仍停在「继续」档');
   // 非主键（右键 button=2）单击扇区不选档
-  await click(240, 80, { button: 2 });
+  await click(270, 80, { button: 2 });
   assert.equal(putCount(), beforeHub, '右键单击不写 PUT');
 });
 
@@ -1168,26 +1035,26 @@ test('RelayPanel：relay-long 表盘只 4 档（问我/继续/压缩继续/接�
   assert.match(textOf(instance.tree), /团队重启/, '读出行 hint 标注团队重启');
 });
 
-test('v0.4.0 chip 显示当前模式（不再是一次性下一次操作）：两段式显示模式名、自动模式显示「自动」', async () => {
-  // ① classic 两段式模式：chip 显示模式名「压缩→新会话」（与已压缩次数无关，模式持久不消费）
+test('v0.4.0 chip 显示当前模式（单一模式 4 档；退役 cth/auto 存量值视觉归一「继续」）', async () => {
+  // ① 当前模式 = 压缩继续：chip 显示模式名（持久不消费）
   const env = createEnv();
-  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress-then-handoff' }, live: LIVE({ band: 'organize', organizeCount: 1 }) };
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE({ band: 'organize', organizeCount: 1 }) };
   const RelayPanel = env.slots['conversation.composer.dock'];
   const instance = env.mount(RelayPanel, { sessionId: 'A' });
   await instance.flush();
   const chipText = textOf(byClass(instance.tree, 'relay-v3-chip')[0]);
-  assert.match(chipText, /压缩→新会话/, 'chip 显示当前模式');
-  // ② autoChoose 模式：模型已记录 compress，chip 仍显示模式「自动」（title 显示模型记录的具体操作）
+  assert.match(chipText, /压缩/, 'chip 显示当前模式');
+  // ② 退役档 cth（存量值）：视觉按「继续」显示，不显示已退役档名（host 同样归一）
   const env2 = createEnv();
-  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, autoChoose: true, autoDecision: { operation: 'compress', at: 1 } }, live: LIVE() };
+  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress-then-handoff' }, live: LIVE() };
   const instance2 = env2.mount(env2.slots['conversation.composer.dock'], { sessionId: 'A' });
   await instance2.flush();
   const chip2 = byClass(instance2.tree, 'relay-v3-chip')[0];
-  assert.match(textOf(chip2), /自动/, 'chip 显示模式「自动」');
-  assert.match(String(chip2.props.title), /模型决定 压缩/, 'title 仍给出模型记录的具体操作');
+  assert.match(textOf(chip2), /继续/, 'cth 存量值视觉按「继续」');
+  assert.equal(textOf(chip2).includes('压缩→新会话'), false, 'chip 不显示已退役档名');
 });
 
-test('RelayPanel：relay-long 隐藏档存量值视觉按「继续」显示、不写盘（host 做语义归一）', async () => {
+test('RelayPanel：退役隐藏档存量值视觉按「继续」显示、不写盘（单模式，host 做语义归一）', async () => {
   const env = createEnv();
   env.server.panel.A = longEnv({ defaultOperation: 'compress-then-handoff' });
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -1220,7 +1087,7 @@ test('RelayPanel：relay-long 隐藏档存量值视觉按「继续」显示、�
   assert.equal(needleTransform(instance), 'rotate(90deg)');
 });
 
-test('RelayPanel：relay-long 键盘/点击/拖动都按 4 档换挡，指针全程走最短弧（≤90°）', async () => {
+test('RelayPanel：单一模式键盘/点击/拖动都按 4 档换挡，指针全程走最短弧（≤90°）', async () => {
   const env = createEnv();
   env.server.panel.A = longEnv({ defaultOperation: null });
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -1297,27 +1164,14 @@ test('RelayPanel：relay-long 键盘/点击/拖动都按 4 档换挡，指针全
   assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, '拖动松手提交档位');
 });
 
-test('RelayPanel：classic relay 会话保持 6 档（preset!==modes.long 不触发长模式精简）', async () => {
-  const env = createEnv();
-  env.server.panel.A = { relay: true, modes: MODES, preset: 'relay', panel: { ...PANEL_DEFAULT, autoChoose: true }, live: LIVE() };
-  const RelayPanel = env.slots['conversation.composer.dock'];
-  const instance = env.mount(RelayPanel, { sessionId: 'A' });
-  await instance.flush();
-  assert.ok(await openPopover(instance));
-  assert.equal(dialOrders(instance).length, 6, 'classic 仍是 6 档');
-  assert.ok(dialOrders(instance).some((node) => JSON.stringify(node.children).includes('压缩→新会话')), 'classic 保留「压缩→新会话」');
-  assert.ok(dialOrders(instance).some((node) => JSON.stringify(node.children).includes('自动')), 'classic 保留「自动」');
-  assert.equal(byClass(instance.tree, 'relay-v3-dial-head-title')[0].children[0], '默认模式', 'classic 表盘抬头不含「超长任务」');
-});
-
 test('CSS：冷峻哥特「石肋星盘」表盘契约（多边形肋拱/山花冠/飞扶壁/照准仪/冷色线稿/无彩窗暖金/reduced-motion）', () => {
   assert.ok(source.includes('.relay-v3-dial{position:relative;width:300px;height:264px'), '固定尺寸表盘 300×264');
   assert.equal(source.includes('relay-v3-dial-head-tip'), false, '表盘上方操作说明（tip）已删除（用户要求）');
   // ① 几何：多边形（2n 边）章节堂平面 + 同心券环 + 放射肋 + 穹顶网格（结构本身就是装饰）
   assert.ok(source.includes('const dialPolygon = (count, radius) =>'), '多边形墙线/券环生成器（2n 边）');
-  assert.ok(source.includes('const step = span / 2;'), '多边形每边张角 = 半档（classic 12 边 / long 8 边）');
-  assert.ok(source.includes('const DIAL_ORDER = [null, "continue", "compress", "compress-then-handoff", "handoff", "auto"];'), 'classic 6 档不变');
-  assert.ok(source.includes('const DIAL_ORDER_LONG = [null, "continue", "compress", "handoff"];'), 'relay-long 4 档不变');
+  assert.ok(source.includes('const step = span / 2;'), '多边形每边张角 = 半档（4 档 = 45°）');
+  assert.ok(source.includes('const DIAL_ORDER = [null, "continue", "compress", "handoff"];'), '单一模式 4 档不变（cth/auto 已退役）');
+  assert.equal(source.includes('DIAL_ORDER_LONG'), false, 'classic 6 档布局已删除');
   assert.ok(source.includes('ring1: 36, ring2: 62, wallIn: 90, wallOut: 96'), '结构半径常量（券环/墙/节点）');
   assert.ok(source.includes('const dialPinnaclePath = (angle, halfWidth, base, shoulder, tip) =>'), '尖塔/尖顶饰路径生成器');
   assert.ok(source.includes('const dialLancetPath') === false && source.includes('dialGable') === false, '不再用尖拱窗/彩窗格');
@@ -1439,7 +1293,7 @@ test('CSS：水缸行 = 液态填充（水位 450ms 惯性上升 + 水面波层 
   assert.equal((tankCss.match(/\.45s /g) ?? []).length, 3, '水位 450ms + 波层浪幅/透明度 450ms（其余 300ms）');
   // DOM 侧：水缸行不再有 canvas；canvas 引擎唯一挂载点 = 「授权下一次操作」按钮
   const rowBegin = source.indexOf('function tankRow(');
-  const rowEnd = source.indexOf('// v0.2.14：下一个接力新会话的模式', rowBegin);
+  const rowEnd = source.indexOf('function RelaySettings(', rowBegin);
   assert.ok(rowBegin >= 0 && rowEnd > rowBegin, 'tankRow 源码块可定位');
   const rowSrc = source.slice(rowBegin, rowEnd);
   assert.equal(rowSrc.includes('canvas'), false, '水缸行 DOM 不含 canvas');
@@ -1578,9 +1432,9 @@ test('RelayPanel：无模型推荐（旧 host 缺字段 / op=null）不渲染推
   assert.equal(chipTitleOf(instance).includes('模型推荐'), false);
 });
 
-test('v0.3.4 RelayPanel：长模式 compress-then-handoff 推荐整条忽略（无行/无档位/无 chip title）；classic 同值正常展示', async () => {
+test('v0.9.0 RelayPanel：退役档 compress-then-handoff 推荐整条忽略（无行/无档位/无 chip title）', async () => {
   const env = createEnv();
-  // 长模式：推荐三字段齐全，但该档已从长模式移除 → 当无推荐（UI 不展示，也不写盘）
+  // 推荐三字段齐全，但该档已退役 → 当无推荐（UI 不展示，也不写盘）
   env.server.panel.A = longEnv({
     defaultOperation: null,
     recommendedOperation: 'compress-then-handoff',
@@ -1591,31 +1445,15 @@ test('v0.3.4 RelayPanel：长模式 compress-then-handoff 推荐整条忽略（�
   const instance = env.mount(RelayPanel, { sessionId: 'A' });
   await instance.flush();
   assert.ok(await openPopover(instance));
-  assert.equal(dialOrders(instance).length, 4, '长模式 4 档（问我+三个操作档）');
-  assert.equal(recommendRow(instance), undefined, '长模式不渲染 compress-then-handoff 推荐行');
+  assert.equal(dialOrders(instance).length, 4, '单一模式 4 档（问我+三个操作档）');
+  assert.equal(recommendRow(instance), undefined, '不渲染 compress-then-handoff 推荐行');
   assert.equal(recommendOrders(instance).length, 0, '4 档里没有该 operation → 不点档位');
   assert.equal(recommendTagsOf(instance.tree).length, 0, '不点档位也就没有「荐」标记');
   assert.equal(chipTitleOf(instance).includes('模型推荐'), false, 'chip title 不追加推荐');
   assert.equal(env.calls.filter((call) => call.method === 'PUT').length, 0, '忽略推荐不写盘');
-  // classic：同一推荐值命中「压缩→新会话」档位（四档仍合法）
-  env.server.panel.B = recommendEnv({
-    recommendedOperation: 'compress-then-handoff',
-    recommendedReason: '两段式：先压缩，第二次新会话',
-    recommendedAt: RECOMMENDED_AT,
-  });
-  instance.render({ sessionId: 'B' });
-  await instance.flush();
-  assert.ok(await openPopover(instance));
-  assert.equal(dialOrders(instance).length, 6, 'classic 6 档');
-  assert.ok(recommendRow(instance), 'classic 显示推荐行');
-  const marked = recommendOrders(instance);
-  assert.equal(marked.length, 1);
-  assert.match(JSON.stringify(marked[0].children), /压缩→新会话/);
-  assert.equal(recommendTagsOf(marked[0]).length, 1);
-  assert.match(chipTitleOf(instance), / · 模型推荐 压缩→新会话/);
 });
 
-test('RelayPanel：长模式「接力新会话」（团队重启档）推荐也标「荐」，不覆盖团队重启副标', async () => {
+test('RelayPanel：单一模式「接力新会话」（团队重启档）推荐也标「荐」，不覆盖团队重启副标', async () => {
   const env = createEnv();
   env.server.panel.A = longEnv({ recommendedOperation: 'handoff', recommendedReason: '本会话已压缩过，推荐接力', recommendedAt: RECOMMENDED_AT });
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -1669,7 +1507,8 @@ test('CSS：模型推荐契约（推荐行 + 冷青虚线「荐」高亮 + 微�
 
 // ── v0.5.0：工作台账（composer dock 胶囊 + portal 面板 + RelayPanel 底部入口行）────────
 const ledgerItems = () => [
-  { id: 'api-export', title: '导出 API', status: 'doing', owner: 'worker-1', next: '写完 handler', evidence: ['lib/index.js:120'], acceptance: '单测全绿', depends: ['schema'] },
+  // v0.9.0 #35：officialTaskId = 官方任务板 id 引用（台账只展示、不校验存在性）。
+  { id: 'api-export', title: '导出 API', status: 'doing', owner: 'worker-1', next: '写完 handler', evidence: ['lib/index.js:120'], acceptance: '单测全绿', depends: ['schema'], officialTaskId: 'task-abc-1' },
   { id: 'gate', title: '闸门接入', status: 'blocked', owner: 'worker-2', blocked: '等 T1 落盘', next: '等依赖' },
   { id: 'docs', title: '补文档', status: 'open', next: '补 README' },
   { id: 'schema', title: '定义 schema', status: 'done', next: '', evidence: ['lib/schema.js:1'] },
@@ -1759,6 +1598,9 @@ test('RelayWorkLedger：点击胶囊打开 portal 面板（头部/分组顺序/�
   assert.match(text, /完成标准：单测全绿/);
   assert.match(text, /依赖：schema/);
   assert.match(text, /#api-export/);
+  // v0.9.0 #35/M14：台账行显示 officialTaskId 徽标（只展示引用，不复制执行状态）。
+  assert.match(text, /official=task-abc-1/, 'officialTaskId 渲染为档案引用徽标');
+  assert.doesNotMatch(text, /official=undefined/, '无 officialTaskId 的条目不渲染空徽标');
   assert.match(text, /阻塞：等 T1 落盘/);
   assert.equal(text.includes('定义 schema'), false, 'done 分组默认折叠');
   byClass(instance.tree, 'relay-ledger-group-toggle')[0].props.onClick();
@@ -1823,12 +1665,12 @@ test('工作台账：dock 注册（id relay-ledger / order 2，位于 relay-pane
   assert.equal(env.slots['relay-ledger'], dock[1].component);
   assert.ok(source.includes('const WORK_ITEMS_API = "/context-relay/work-items";'), '工作台账只读路由常量');
   assert.ok(source.includes('id: "relay-ledger"'));
-  for (const rule of ['.relay-ledger-panel{', '.relay-ledger-dot{', '.relay-ledger-group-title{', '.relay-ledger-item{', '.relay-ledger-owner{', '.relay-ledger-entry{']) {
+  for (const rule of ['.relay-ledger-panel{', '.relay-ledger-dot{', '.relay-ledger-group-title{', '.relay-ledger-item{', '.relay-ledger-owner{', '.relay-ledger-official{', '.relay-ledger-entry{']) {
     assert.ok(source.includes(rule), '缺样式规则：' + rule);
   }
   assert.ok(source.includes('maxHeight: "60vh"'), '面板 60vh 高度上限');
 });
-test('RelayArchitectToggle：relay-long 会话渲染「架构师」胶囊，点击 PUT architect；普通 Relay 不渲染', async () => {
+test('RelayArchitectToggle：relay 会话（单一模式，含 classic 别名）渲染「架构师」胶囊，点击 PUT architect；非 relay 不渲染', async () => {
   const env = createEnv();
   env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, architectDefault: { provider: 'deepseek-account', model: 'deepseek-flash' }, live: LIVE() };
   const Component = env.slots['relay-architect-toggle'];
@@ -1846,15 +1688,20 @@ test('RelayArchitectToggle：relay-long 会话渲染「架构师」胶囊，点�
   assert.ok(put);
   assert.deepEqual(JSON.parse(String(put.body)), { sessionId: 'A', architect: false });
   assert.equal(byClass(instance.tree, 'relay-v3-chip')[0].props['aria-pressed'], false, '按 host 回读面板渲染关闭态');
-  // 普通 Relay（非 relay-long）：不渲染（专职架构师依赖队友保鲜工具）
-  env.server.panel.B = { relay: true, preset: 'relay', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  // v0.9.0 单一模式：迁移期 classic 别名会话（preset=relay）也是同行为 → 照常渲染。
+  env.server.panel.B = { relay: true, preset: 'relay', modes: { relay: 'relay-long', long: 'relay-long' }, panel: { ...PANEL_DEFAULT }, live: LIVE() };
   instance.render({ sessionId: 'B' });
+  await instance.flush();
+  assert.equal(byClass(instance.tree, 'relay-v3-chip').length, 1, 'classic 别名会话照常渲染（行为等同单一模式）');
+  // 非 relay preset 会话：不渲染（注入功能只存在于 relay preset 的 agent 平面）。
+  env.server.panel.C = { relay: false, preset: 'ptc', modes: { relay: 'relay-long', long: 'relay-long' }, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  instance.render({ sessionId: 'C' });
   await instance.flush();
   assert.equal(instance.tree, null);
 });
 
 // ── v0.7.0：架构师模型复用 DSH 模型选择菜单（conversation.input.model.options）──
-test('RelayArchitectModelMenu：rc.2 官方模型菜单槽注册；relay-long + 架构师开时渲染两行/不轮询', async () => {
+test('RelayArchitectModelMenu：rc.2 官方模型菜单槽注册；relay + 架构师开时渲染两行/不轮询', async () => {
   const env = createEnv();
   const opts = env.registrations.filter((entry) => entry.definition.name === 'conversation.input.model.options');
   assert.equal(opts.length, 1, '注册进官方模型菜单的会话选项槽');
@@ -1878,11 +1725,11 @@ test('RelayArchitectModelMenu：rc.2 官方模型菜单槽注册；relay-long + 
   assert.equal(env.slots['relay-architect-model-select'], undefined);
   assert.equal(failures.length, 0);
 
-  // 非 relay-long / 架构师关：官方菜单里不出现 relay 的任何行。
-  env.server.panel.B = { relay: true, preset: 'relay', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, architectDefault: { provider: 'deepseek-account', model: 'deepseek-flash' }, live: LIVE() };
-  const classic = env.mount(Component, { sessionId: 'B', locked: false, dismiss: () => {}, reportFailure: () => {} });
-  await classic.flush();
-  assert.equal(classic.tree, null, '普通 Relay 不渲染架构师模型行');
+  // 非 relay / 架构师关：官方菜单里不出现 relay 的任何行。
+  env.server.panel.B = { relay: false, preset: 'ptc', modes: { relay: 'relay-long', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, architectDefault: { provider: 'deepseek-account', model: 'deepseek-flash' }, live: LIVE() };
+  const nonRelay = env.mount(Component, { sessionId: 'B', locked: false, dismiss: () => {}, reportFailure: () => {} });
+  await nonRelay.flush();
+  assert.equal(nonRelay.tree, null, '非 relay 会话不渲染架构师模型行');
 
   env.server.panel.C = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: false }, live: LIVE() };
   const off = env.mount(Component, { sessionId: 'C', locked: false, dismiss: () => {}, reportFailure: () => {} });

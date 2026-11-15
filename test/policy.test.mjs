@@ -1,10 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ALL_PHASES,
+  CAPACITY_PRESERVE_RATIO,
   DEFAULT_PANEL_STATE,
   DEFAULT_SETTINGS,
   DEFAULT_THRESHOLDS,
   HANDOFF_LIMITS,
+  PHASE_EXITS,
+  USER_REPORT_LIMITS,
+  capacityOf,
+  isExitPhase,
+  normalizePhaseState,
+  userReportWarnings,
   HANDOFF_SUMMARY_BYTES,
   PANEL_OPERATIONS,
   PHASES,
@@ -449,11 +457,14 @@ test('DEFAULT_PANEL_STATE / normalizePanelState: 15 字段白名单（v0.3.3 模
   const keys = ['architect', 'architectModel', 'authorizeNext', 'autoChoose', 'autoCompress', 'autoDecision', 'autoHandoff', 'defaultOperation', 'handedOff', 'handoffPreset', 'handoffUnlimitedBudget', 'recommendedAt', 'recommendedOperation', 'recommendedReason', 'unlimitedBudget'];
   assert.deepEqual(Object.keys(DEFAULT_PANEL_STATE).sort(), keys);
   assert.equal('handoffPreAuthorized' in DEFAULT_PANEL_STATE, false);
-  const state = normalizePanelState({ handoffPreAuthorized: true, autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
+  // D8=A：cth→null、autoChoose/autoDecision 退役（恒 false/null）；handoffPreset 兼容读取但不生效（恒 null）。
+  const state = normalizePanelState({ handoffPreAuthorized: true, autoChoose: true, autoDecision: { operation: 'compress', at: 1 }, defaultOperation: 'compress-then-handoff' });
   assert.equal('handoffPreAuthorized' in state, false, '旧 panel.json 的 handoffPreAuthorized 由白名单丢弃');
   assert.deepEqual(Object.keys(state).sort(), keys);
-  assert.equal(state.autoChoose, true);
-  assert.deepEqual(state.autoDecision, { operation: 'compress', at: 1 });
+  assert.equal(state.autoChoose, false, 'autoChoose 退役（MIG5）');
+  assert.equal(state.autoDecision, null, 'autoDecision 只在 autoChoose 时生效 → 退役后恒 null');
+  assert.equal(state.defaultOperation, null, 'compress-then-handoff 归一 null（MIG4）');
+  assert.equal(state.handoffPreset, null, 'handoffPreset 兼容读取但不生效（MIG7）');
   // v0.2.7 unlimitedBudget / handoffUnlimitedBudget：true/false 保留，其余（"true"/1/undefined）归 null（跟随/继承）
   assert.equal(normalizePanelState({ unlimitedBudget: true }).unlimitedBudget, true);
   assert.equal(normalizePanelState({ unlimitedBudget: false }).unlimitedBudget, false);
@@ -474,13 +485,10 @@ test('DEFAULT_PANEL_STATE / normalizePanelState: 15 字段白名单（v0.3.3 模
   assert.equal(normalizePanelState({ architectModel: { provider: 'geekai' } }).architectModel, null);
   assert.equal(normalizePanelState({ architectModel: { provider: 'bad provider', model: 'x' } }).architectModel, null);
   assert.equal(normalizePanelState({}).architectModel, null, '缺省 null = 首次由 Lead 问用户');
-  // v0.2.14 handoffPreset（下一个接力会话模式）：preset id 字符集 1-64 位、字母/数字开头；其余（含旧 panel.json 脏值）归 null
+  // MIG7（D8=A）：handoffPreset 旧值可读（不崩）但不再生效——归一 null；v0.10.0 删字段。
   assert.equal(DEFAULT_PANEL_STATE.handoffPreset, null);
-  for (const ok of ['relay', 'relay-long', 'my.mode_1', 'a', 'A'.repeat(64), '9x']) {
-    assert.equal(normalizePanelState({ handoffPreset: ok }).handoffPreset, ok, '合法 preset id 保留：' + ok);
-  }
-  for (const bad of [undefined, null, '', '-leading', '.dot', '_x', 'bad id', 'a'.repeat(65), 42, true, {}, []]) {
-    assert.equal(normalizePanelState({ handoffPreset: bad }).handoffPreset, null, '非法值归 null：' + String(bad));
+  for (const value of ['relay', 'relay-long', 'my.mode_1', 'a', 'bad id', 42, true, {}, []]) {
+    assert.equal(normalizePanelState({ handoffPreset: value }).handoffPreset, null, 'handoffPreset 不再生效：' + String(value));
   }
 });
 
@@ -504,9 +512,14 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   assert.deepEqual(DEFAULT_SETTINGS, { threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true });
   // 2026-11-01 用户裁决：默认基准 40% → 35%（提醒 30 / 二次提醒 35 / 硬线 45）。
   assert.deepEqual(thresholdsFromPercent(DEFAULT_SETTINGS.threshold), { ...DEFAULT_THRESHOLDS, warnRatio: 0.3, organizeRatio: 0.35, relayRatio: 0.45 });
-  // 六字段往返（'compress-then-handoff' 是 v2 新挡位）
-  const roundTrip = { threshold: 55, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
+  // 六字段往返（D8=A：cth→null、autoChoose 退役 false；其余合法值往返）
+  const roundTrip = { threshold: 55, defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   assert.deepEqual(normalizeSettings(roundTrip), roundTrip);
+  assert.deepEqual(
+    normalizeSettings({ ...roundTrip, defaultOperation: 'compress-then-handoff', autoChoose: true }),
+    { ...roundTrip, defaultOperation: null },
+    '旧 cth/autoChoose 归一（MIG4/MIG5）',
+  );
   // 阈值裁剪只对合法数值生效；非法默认操作归 null；布尔严格化（非 true 一律 false）
   assert.equal(normalizeSettings({ threshold: 99 }).threshold, 85);
   assert.equal(normalizeSettings({ threshold: 1 }).threshold, 20);
@@ -539,30 +552,28 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   }
 });
 
-test('PANEL_OPERATIONS: 三种旧挡位 + v2「压缩→新会话」，normalizePanelState 全部接受', () => {
+test('PANEL_OPERATIONS: 常量仍含 cth（v0.10.0 删），但 D8=A 归一只保留 compress/handoff/continue', () => {
   assert.deepEqual(PANEL_OPERATIONS, ['compress', 'handoff', 'continue', 'compress-then-handoff']);
-  for (const operation of PANEL_OPERATIONS) {
+  for (const operation of ['compress', 'handoff', 'continue']) {
     assert.equal(normalizePanelState({ defaultOperation: operation }).defaultOperation, operation);
   }
+  assert.equal(normalizePanelState({ defaultOperation: 'compress-then-handoff' }).defaultOperation, null, 'cth 归一 null（问我）');
   assert.equal(normalizePanelState({ defaultOperation: 'compress-then-handoff!' }).defaultOperation, null);
+  assert.equal(normalizeSettings({ defaultOperation: 'compress-then-handoff' }).defaultOperation, null, 'settings 侧同样归一');
 });
 
-test('normalizePanelState v3: authorizeNext 严格布尔；autoDecision 只依赖 autoChoose（R2）', () => {
+test('normalizePanelState v3/MIG5: authorizeNext 严格布尔；autoChoose/autoDecision 退役（恒 false/null）', () => {
   assert.equal(normalizePanelState().authorizeNext, false);
   assert.equal(normalizePanelState().autoDecision, null);
   assert.equal(normalizePanelState({ authorizeNext: 1 }).authorizeNext, false);
   assert.equal(normalizePanelState({ authorizeNext: true }).authorizeNext, true);
   const decision = { operation: 'compress', at: 123 };
-  assert.deepEqual(normalizePanelState({ autoChoose: true, autoDecision: decision }).autoDecision, decision);
-  // R2：defaultOperation 非 null（侧栏默认值常见）不影响模型自决
-  assert.deepEqual(normalizePanelState({ autoChoose: true, defaultOperation: 'handoff', autoDecision: decision }).autoDecision, decision);
-  // autoChoose=false / 非法 operation / 非有限 at → null
+  // D8=A：autoChoose 退役——旧值/脏值一律 false，autoDecision 因此恒 null（面板不再展示该档）。
+  const retired = normalizePanelState({ autoChoose: true, autoDecision: decision });
+  assert.equal(retired.autoChoose, false);
+  assert.equal(retired.autoDecision, null);
+  assert.equal(normalizePanelState({ autoChoose: true, defaultOperation: 'handoff', autoDecision: decision }).autoDecision, null);
   assert.equal(normalizePanelState({ autoChoose: false, autoDecision: decision }).autoDecision, null);
-  assert.equal(normalizePanelState({ autoChoose: true, autoDecision: { operation: 'auto', at: 1 } }).autoDecision, null);
-  assert.equal(normalizePanelState({ autoChoose: true, autoDecision: { operation: 'compress', at: 'now' } }).autoDecision, null);
-  assert.equal(normalizePanelState({ autoChoose: true, autoDecision: { operation: 'compress', at: Infinity } }).autoDecision, null);
-  // 归一化只保留 operation/at，未知键丢弃
-  assert.deepEqual(normalizePanelState({ autoChoose: true, autoDecision: { operation: 'handoff', at: 2, reason: 'drop' } }).autoDecision, { operation: 'handoff', at: 2 });
 });
 
 test('v0.3.3 模型推荐：normalizePanelState 三字段归一（非法 op/空理由/非数 at；op=null 清空）', () => {
@@ -610,5 +621,104 @@ test('buildHandoff：next_actions 8 条上限时优先保留用户未完成工�
   for (const item of user) assert.ok(built.markdown.includes('下一步（DoD）：' + item), '用户 next_actions 全部保留：' + item);
   assert.ok(!built.markdown.includes('旧会话残留-后台任务'), '自动清单排在被截断的一端，不挤掉用户工作');
   assert.equal(built.caps.truncated, true);
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// v0.9.0 批次2：状态机出口 / 容量保全 / 用户汇报 warning（D1=B/D6=A/D7=A）
+// ────────────────────────────────────────────────────────────────────────────
+
+test('v0.9.0 状态机出口常量：PHASE_EXITS/ALL_PHASES/normalizePhaseState/isExitPhase', () => {
+  assert.deepEqual(PHASE_EXITS, ['blocked', 'cancel']);
+  assert.deepEqual(ALL_PHASES, ['discover', 'decide', 'build', 'verify', 'ship', 'blocked', 'cancel']);
+  assert.equal(ALL_PHASES.length, 7);
+  assert.equal(PHASES.length, 5, '主链保持 5 值（工作项/预算/闸门只认主链）');
+  for (const exit of PHASE_EXITS) assert.equal(PHASES.includes(exit), false, '出口不是 PHASES 成员');
+  assert.equal(isExitPhase('blocked'), true);
+  assert.equal(isExitPhase('cancel'), true);
+  assert.equal(isExitPhase('build'), false);
+  assert.equal(isExitPhase(undefined), false);
+  assert.equal(normalizePhaseState('blocked'), 'blocked');
+  assert.equal(normalizePhaseState(' CANCEL '), 'cancel');
+  assert.equal(normalizePhaseState(undefined), 'discover');
+  assert.equal(normalizePhaseState('', 'build'), 'build');
+  assert.throws(() => normalizePhaseState('bogus'), /unknown phase/);
+  // 主链 normalizePhase 保持只认 5 值（工作项/phase 闸门用；出口写入会被拒）。
+  assert.throws(() => normalizePhase('blocked'), /unknown phase/);
+});
+
+test('v0.9.0 capacityOf：85% 阈值判定 / 窗口未知不猜 / used 缺失不误报', () => {
+  assert.equal(CAPACITY_PRESERVE_RATIO, 0.85);
+  assert.deepEqual(capacityOf({ used: 84, window: 100 }), { atRisk: false, ratio: 0.84, threshold: 0.85, basis: 'ratio' });
+  assert.deepEqual(capacityOf({ used: 85, window: 100 }), { atRisk: true, ratio: 0.85, threshold: 0.85, basis: 'ratio' });
+  assert.equal(capacityOf({ used: 860_000, window: 1_000_000 }).atRisk, true);
+  // 窗口未知 / 为 0 / used 缺失 → unavailable，不把预算/绝对 token 当容量线。
+  for (const pressure of [undefined, {}, { used: 100_000 }, { window: 100_000 }, { used: 90, window: 0 }, { used: -1, window: 100 }]) {
+    const capacity = capacityOf(pressure);
+    assert.equal(capacity.atRisk, false, '窗口未知不保全：' + JSON.stringify(pressure));
+    assert.equal(capacity.basis, 'unavailable');
+    assert.equal(capacity.ratio, undefined);
+  }
+  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 0.9 }).atRisk, true, 'ratio 可调（测试用）');
+  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 2 }).threshold, 0.85, '非法 ratio 回落常量');
+});
+
+test('v0.9.0 userReportWarnings：合规零 warning；缺段/乱序/空段/超长/代码块/输出 → 只 warning 不抛不拒', () => {
+  const compliant = '结论：完成用户汇报校验接线。\n影响：无（用户可见行为不变）。\n需要你做什么：无需。\n证据位置：lib/policy.js:488、test/policy.test.mjs';
+  const ok = userReportWarnings(compliant);
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.warnings, []);
+  assert.equal(ok.formatOk, true);
+  assert.equal(ok.chars, [...compliant.trim()].length);
+  // markdown 加粗/#/列表 变体与「需要你」变体都识别（顺序固定）。
+  assert.deepEqual(userReportWarnings('## 结论：完成\n**影响**：无\n- 需要你做什么：无需\n**证据位置**：a:1').warnings, []);
+  assert.equal(userReportWarnings('结论：a\n影响：b\n需要你：c\n证据位置：d').formatOk, true);
+  // 缺段 / 乱序 / 空段 → report-format（同一 code）。
+  for (const bad of [
+    '结论：a\n影响：b\n证据位置：d',
+    '影响：b\n结论：a\n需要你做什么：c\n证据位置：d',
+    '结论：\n影响：b\n需要你做什么：c\n证据位置：d',
+  ]) {
+    const result = userReportWarnings(bad);
+    assert.equal(result.ok, false);
+    assert.equal(result.formatOk, false);
+    assert.ok(result.warnings.some((warning) => warning.code === 'report-format'));
+  }
+  // 600/601 与 4000/4001 边界（码点口径）。
+  const filler = (total) => {
+    const head = '结论：';
+    const tail = '\n影响：无\n需要你做什么：无需\n证据位置：p:1';
+    return head + 'x'.repeat(Math.max(0, total - [...head].length - [...tail].length)) + tail;
+  };
+  assert.equal(userReportWarnings(filler(600)).warnings.some((warning) => warning.code === 'report-too-long'), false, '600 字不提示');
+  assert.equal(userReportWarnings(filler(601)).warnings.some((warning) => warning.code === 'report-too-long'), true, '601 字提示');
+  assert.equal(userReportWarnings(filler(4000), { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-too-long'), false, '展开档 4000 字不提示');
+  assert.equal(userReportWarnings(filler(4001), { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-too-long'), true, '展开档 4001 字提示');
+  // 空/非字符串：只统计（不抛）——非空硬门由 checkUserGate 保持。
+  for (const empty of ['', '   ', undefined, null, 42]) {
+    const result = userReportWarnings(empty);
+    assert.equal(result.chars, 0);
+    assert.ok(result.warnings.some((warning) => warning.code === 'report-empty'));
+  }
+  // 代码块/超长行/命令输出 → report-internal-details；details_requested 时不产出。
+  assert.ok(userReportWarnings(compliant + '\n```\nnpm test\n```').warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.ok(userReportWarnings(compliant + '\n证据位置：' + 'p'.repeat(401)).warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.ok(userReportWarnings(compliant + '\n$ npm test\n全部通过').warnings.some((warning) => warning.code === 'report-internal-details'));
+  const authorized = userReportWarnings(compliant + '\n```\nnpm test\n```', { detailsRequested: true });
+  assert.ok(!authorized.warnings.some((warning) => warning.code === 'report-internal-details'), '用户已授权展开细节');
+  assert.equal(authorized.info, '用户已授权展开细节');
+});
+
+test('v0.9.0 formatStatus：capacity 事实行只在 atRisk 时出现（预算行之后）', () => {
+  const atRisk = formatStatus({
+    phase: 'build',
+    lead: { band: 'organize', ratio: 0.87, used: 870_000, window: 1_000_000 },
+    thresholds: normalizeThresholds(),
+    budget: { headroomToWarn: 0, headroomToOrganize: 0, headroomToRelay: 60_000 },
+    capacity: capacityOf({ used: 870_000, window: 1_000_000 }),
+  });
+  assert.match(atRisk, /capacity: 87\.0% ≥ 85\.0% → 容量保全（收尾\/交接准备；预算档本身不构成中途打断例外）/);
+  assert.ok(atRisk.indexOf('capacity:') > atRisk.indexOf('budget:'), 'capacity 行在 budget 行之后');
+  assert.doesNotMatch(formatStatus({ phase: 'build', capacity: capacityOf({ used: 10, window: 100 }) }), /capacity:/, '不 atRisk 不渲染');
+  assert.doesNotMatch(formatStatus({ phase: 'build' }), /capacity:/, '无 capacity 字段不渲染（旧输出不变）');
 });
 

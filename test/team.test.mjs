@@ -404,6 +404,7 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     assert.equal(review.health, 'spent');
     assert.deepEqual(report.stale.sort(), ['impl-g1', 'review-g1']);
     assert.match(report.text, /records=\.scratch\/context-relay\/team\/session-lead\//);
+    assert.match(report.text, /小队目标=4（按需扩到 maxActiveSubagents/, 'v0.9.0 #28：小队目标 4 口径');
     assert.match(report.text, /stale → 边界 reset 复用（真清空，0 额度）；仅换身份才 renew/);
     assert.match(report.text, /spent → 先 checkpoint 再 reset 复用（0 额度）；仅换身份才 renew/);
     assert.match(impl.action, /relay_freshen\(\{reset:true/, '结构化 action 也 reset-first');
@@ -945,10 +946,10 @@ test('pre-step：无 pending 时直接 next()，不做任何 IO', async () => {
 
 // ── agent 装配 ────────────────────────────────────────────────────────
 
-test('装配：routerMode 下 root 注册 status/renew/architect + 注入 team-lead 段；队友注册 checkpoint/freshen + 注入 team-worker 段；classic 不注册', async () => {
-  // root
+test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode 参数）', async () => {
+  // root：不传 routerMode 也按单一模式装配 Lead 保鲜/架构师工具 + team-lead 段。
   const f = fakeCtx();
-  apply(f.ctx, { routerMode: true });
+  apply(f.ctx, {});
   const listener = f.listeners.find((entry) => entry.name === 'agent/created');
   assert.ok(listener !== undefined);
   const rootCalls = [];
@@ -961,17 +962,17 @@ test('装配：routerMode 下 root 注册 status/renew/architect + 注入 team-l
   const teammateSections = [];
   const teammate = makeAgent({ sessionId: 'session-w1', header: { origin: 'subagent', delegationDepth: 1 }, calls: teammateCalls, sections: teammateSections });
   const g = fakeCtx({ agentTeams: { tryMembership: (agent) => (agent === teammate ? { role: 'teammate', name: 'impl-g1' } : undefined) } });
-  apply(g.ctx, { routerMode: true });
+  apply(g.ctx, {});
   await g.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: teammate });
   assert.deepEqual(teammateCalls, ['relay_checkpoint', 'relay_freshen'], '队友拿到 checkpoint + freshen 工具');
   assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '队友只注入紧凑协议（不再叠第二条 team-worker 段）');
   assert.ok(!teammateCalls.includes('relay_team_status'), '队友不拿 Lead 工具');
-  // classic：不注册、不注入
+  // 旧配置 routerMode:false 仅告警忽略（单一模式生产不可关）→ 仍按单一模式装配。
   const c = fakeCtx();
-  apply(c.ctx, {});
-  const classicCalls = [];
-  const classicSections = [];
-  await c.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: makeAgent({ calls: classicCalls, sections: classicSections }) });
-  assert.deepEqual(classicCalls, []);
-  assert.ok(!classicSections.some((section) => String(section.name).startsWith('context-relay:team')));
+  apply(c.ctx, { routerMode: false });
+  assert.ok(c.warns.some((line) => /routerMode=false ignored/.test(line)), '旧 routerMode 配置应 warn 一次');
+  const legacyCalls = [];
+  const legacySections = [];
+  await c.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: makeAgent({ calls: legacyCalls, sections: legacySections }) });
+  assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect'], 'routerMode:false 不再回到 classic：仍装配单一模式');
 });

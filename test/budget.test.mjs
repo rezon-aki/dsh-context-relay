@@ -309,13 +309,28 @@ test('relay_phase warn 档缺 budget_plan：拒绝且零副作用（phase/面板
   assert.equal(panelStateOf(h.session.id).defaultOperation, 'continue', '拒绝路径不消费/改写面板一次性预设');
   assert.equal(existsSync(join(h.cwd, '.scratch', 'context-relay', 'lessons.md')), false, '拒绝路径不写 lessons');
 
-  // 拒绝路径在 next_operation 写盘之前：autoDecision 也不能被这次调用写入。
+  // 拒绝路径在 next_operation 写盘之前：不得写入任何自决（v0.9.0 D8=A：autoChoose/autoDecision 已退役，恒 false/null）。
   const h2 = harness({ id: 'session-budget-missing-auto', pressure: { contextWindow: 1_000_000, projectedTokens: 370_000 } });
-  updatePanelState(h2.session.id, { autoChoose: true, autoDecision: { operation: 'compress', at: 1_234 } });
+  updatePanelState(h2.session.id, { autoDecision: { operation: 'compress', at: 1_234 } });
   await rejectionOf(h2.phase({ phase: 'build', contract_check: CONTRACT_CHECK, next_operation: 'handoff' }));
   const panel = panelStateOf(h2.session.id);
-  assert.deepEqual(panel.autoDecision, { operation: 'compress', at: 1_234 }, '拒绝路径不写 autoDecision');
-  assert.equal(panel.autoChoose, true, '持久开关保持');
+  assert.equal(panel.autoChoose, false, 'autoChoose 退役（归一 false）');
+  assert.equal(panel.autoDecision, null, '拒绝路径不写 autoDecision');
+});
+
+test('relay_phase 出口不参与预算闸门：warn 档 build→blocked 无需 budget_plan，恢复也不要求 budget_plan', async () => {
+  const h = harness({ id: 'session-budget-exit', pressure: { contextWindow: 1_000_000, projectedTokens: 370_000 } });
+  // warn 档主链切 phase 必填 budget_plan；出口旁路（D6=A）——只要求 exit_reason。
+  const blocked = await h.phase({ phase: 'blocked', exit_reason: '等用户裁决', contract_check: CONTRACT_CHECK });
+  assert.equal(blocked.phase, 'blocked');
+  assert.equal(blocked.exit_reason, '等用户裁决');
+  assert.equal(blocked.resumed, false);
+  assert.equal(blocked.budget, undefined, '出口不返回预算事实');
+  assert.equal((await h.status()).phase, 'blocked');
+  // 恢复：不要求 budget_plan（仍 warn 档）。
+  const resumed = await h.phase({ phase: 'build', contract_check: CONTRACT_CHECK });
+  assert.equal(resumed.phase, 'build');
+  assert.equal(resumed.resumed, true);
 });
 
 test('relay_phase warn 档 can_finish=false + proceed：拒绝并给 split/relay 指引', async () => {
@@ -539,7 +554,8 @@ test('sentinel: warn 升线只注入 1 条；随后 8 步不再注入（旧 nag 
   const session = fakeSession({ id: 'session-budget-sentinel', cwd: tmpCwd(), seq: 0 });
   const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 370_000 } });
   const { events } = applyAgent(bundle.services);
-  const listener = events.find((event) => event.name === 'agent/pre-step').listener;
+  // 单一模式（v0.9.0）下 team-tools 也注册 pre-step，sentinel 最后注册：取最后一个才是到线哨兵。
+  const listener = events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
   const injected = [];
   const agent = { session, inject(message) { injected.push(message); } };
   const step = () => listener({ agent }, async () => undefined);

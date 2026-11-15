@@ -8,6 +8,9 @@ import {
   WORK_ITEMS_DEFAULT_MAX,
   WORK_ITEM_LIMITS,
   WORK_ITEM_STATUSES,
+  archivePathOf,
+  appendArchive,
+  readArchive,
   normalizeWorkItemsConfig,
   workItemsPathOf,
   readWorkItems,
@@ -264,17 +267,42 @@ test('validateWorkItems：重复 id → duplicate-id；非法 id → invalid-ite
   assert.equal(validateWorkItems([{ id: 'a1', title: 'T', status: 'done' }]).ok, true);
 });
 
-test('validateWorkItems：超过 max → ledger-full；写入同样受限', () => {
-  const items = [0, 1, 2].map((index) => ({ id: 'item-' + index, title: 'T' + index, status: 'done' }));
+test('validateWorkItems/writeWorkItems：超过 max 时先归档最旧 done 到 -archive.ndjson；done 不足才 ledger-full', () => {
+  const items = [0, 1, 2].map((index) => ({ id: 'item-' + index, title: 'T' + index, status: 'done', evidence: ['e:1'], updatedAt: '2026-01-0' + (index + 1) + 'T00:00:00.000Z' }));
+  // 纯校验仍报 ledger-full（超限归档在 writeWorkItems；validate 只给口径）。
   const tooMany = validateWorkItems(items, { max: 2 });
   assert.equal(tooMany.ok, false);
   assert.equal(tooMany.code, 'ledger-full');
   assert.match(tooMany.message, /at most 2/);
   assert.equal(validateWorkItems(items, { max: 3 }).ok, true);
-  const write = writeWorkItems(tempCwd(), { items, max: 2 });
-  assert.equal(write.ok, false);
-  assert.equal(write.code, 'ledger-full');
-  assert.equal(writeWorkItems(tempCwd(), { items }).ok, true);
+  // 写入：3 条 done → 自动归档最旧 1 条（item-0），接受写入。
+  const cwd = tempCwd();
+  const write = writeWorkItems(cwd, { items, max: 2, updatedBy: 'session-1' });
+  assert.equal(write.ok, true, JSON.stringify(write));
+  assert.deepEqual(write.archived, { count: 1, path: '.scratch/context-relay/work-items-archive.ndjson' });
+  assert.deepEqual(write.ledger.items.map((item) => item.id), ['item-1', 'item-2']);
+  const archiveLines = readFileSync(join(cwd, '.scratch/context-relay/work-items-archive.ndjson'), 'utf8').trim().split('\n');
+  assert.equal(archiveLines.length, 1);
+  const record = JSON.parse(archiveLines[0]);
+  assert.equal(record.reason, 'over-cap');
+  assert.equal(record.sessionId, 'session-1');
+  assert.equal(record.rev, 0);
+  assert.equal(record.item.id, 'item-0');
+  assert.match(record.archivedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.equal(readWorkItems(cwd).items.length, 2);
+  // done 不足（4 条 > max 2，仅 1 条 done）：拒绝整次写入，台账不变。
+  const mixed = [
+    { id: 'done-x', title: 'D', status: 'done', evidence: ['e:1'] },
+    { id: 'open-a', title: 'O', status: 'open' },
+    { id: 'open-b', title: 'O', status: 'open' },
+    { id: 'open-c', title: 'O', status: 'open' },
+  ];
+  const refusedCwd = tempCwd();
+  const refused = writeWorkItems(refusedCwd, { items: mixed, max: 2 });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'ledger-full');
+  assert.match(refused.message, /done/);
+  assert.equal(readWorkItems(refusedCwd).exists, false, '拒绝路径不写台账');
 });
 
 test('validateWorkItems：depends 不存在 / 自引用 / 环 → invalid-item + 对应 per-error code', () => {
@@ -314,6 +342,7 @@ test('validateWorkItems：合法条目归一（trim、未知字段丢弃、非 b
     acceptance: '  单测全绿  ',
     depends: [],
     phase: 'build',
+    officialTaskId: '  task-abc  ',
     hidden: 'dropped',
   }]);
   assert.equal(result.ok, true);
@@ -325,6 +354,7 @@ test('validateWorkItems：合法条目归一（trim、未知字段丢弃、非 b
   assert.deepEqual(item.evidence, ['lib/a.js:1']);
   assert.equal(item.acceptance, '单测全绿');
   assert.equal(item.phase, 'build');
+  assert.equal(item.officialTaskId, 'task-abc', 'officialTaskId trim 后保留');
   assert.equal(item.hidden, undefined);
   assert.equal(item.updatedAt, null);
 
@@ -336,10 +366,86 @@ test('validateWorkItems：合法条目归一（trim、未知字段丢弃、非 b
   assert.deepEqual(minimal.depends, []);
   assert.equal(minimal.acceptance, null);
   assert.equal(minimal.phase, null);
+  assert.equal(minimal.officialTaskId, null);
 
   assert.equal(validateWorkItems('nope').ok, false);
   assert.equal(validateWorkItems([]).ok, true);
   assert.deepEqual(WORK_ITEM_STATUSES, ['open', 'doing', 'blocked', 'done']);
+});
+
+test('officialTaskId（v0.9.0 #35）：可选引用、trim/长度/宽松字符集校验、contentKey 影响 updatedAt', () => {
+  for (const ok of ['task-123', 'Task_9.x:y', 'a', 'A'.repeat(64), '0f8fad5b-d9cb-469f-a165-70867728950e']) {
+    const result = validateWorkItems([{ id: 'aa', title: 'A', status: 'open', officialTaskId: ok }]);
+    assert.equal(result.ok, true, '合法 officialTaskId 接受: ' + ok);
+    assert.equal(result.items[0].officialTaskId, ok);
+  }
+  // 非字符串 / 超长 / 非法字符 / 前导符号 → invalid-official-task-id（只校验形态，不校验官方存在性）。
+  for (const bad of [42, true, {}, [], 'has space', '-leading', 'a'.repeat(65), 'task/abc']) {
+    const result = validateWorkItems([{ id: 'aa', title: 'A', status: 'open', officialTaskId: bad }]);
+    assert.equal(result.ok, false, '非法 officialTaskId 拒绝: ' + String(bad));
+    assert.equal(result.errors[0].code, 'invalid-official-task-id');
+  }
+  assert.equal(validateWorkItems([{ id: 'aa', title: 'A', status: 'open', officialTaskId: '' }]).items[0].officialTaskId, null, '空串=不提供');
+  assert.equal(validateWorkItems([{ id: 'aa', title: 'A', status: 'open', officialTaskId: '  task-1  ' }]).items[0].officialTaskId, 'task-1');
+  // 写入/读回保留；contentKey 纳入 officialTaskId（变更才刷新 updatedAt）。
+  const cwd = tempCwd();
+  const first = seed(cwd, [{ id: 'aa', title: 'A', status: 'open', officialTaskId: 'task-1' }]);
+  assert.equal(first.ledger.items[0].officialTaskId, 'task-1');
+  const stored = JSON.parse(readFileSync(ledgerPath(cwd), 'utf8'));
+  stored.items[0].updatedAt = '2020-01-01T00:00:00.000Z';
+  writeFileSync(ledgerPath(cwd), JSON.stringify(stored), 'utf8');
+  const unchanged = writeWorkItems(cwd, { items: readSeed(cwd).items, rev: first.ledger.rev });
+  assert.equal(unchanged.ok, true);
+  assert.equal(unchanged.ledger.items[0].updatedAt, '2020-01-01T00:00:00.000Z', '内容未变保留 updatedAt');
+  assert.equal(unchanged.ledger.items[0].officialTaskId, 'task-1');
+  const changed = writeWorkItems(cwd, { items: [{ ...unchanged.ledger.items[0], officialTaskId: 'task-2' }], rev: unchanged.ledger.rev });
+  assert.equal(changed.ledger.items[0].officialTaskId, 'task-2');
+  assert.notEqual(changed.ledger.items[0].updatedAt, '2020-01-01T00:00:00.000Z', 'officialTaskId 变化刷新 updatedAt');
+  // 行渲染：行尾 · official=<id>；无值不渲染。
+  const lines = formatWorkItemLines([{ id: 'aa', title: 'A', status: 'done', evidence: ['e:1'], officialTaskId: 'task-1' }], { includeDone: true });
+  assert.match(lines[0], / done · official=task-1$/);
+  assert.doesNotMatch(formatWorkItemLines([{ id: 'bb', title: 'B', status: 'open' }])[0], /official=/);
+});
+
+test('archive（v0.9.0 #39）：最旧 done 优先、readArchive 计数/坏行跳过、appendArchive 失败不抛且台账不变', () => {
+  const cwd = tempCwd();
+  const items = [
+    { id: 'done-new', title: 'D2', status: 'done', evidence: ['e:1'], updatedAt: '2026-03-01T00:00:00.000Z' },
+    { id: 'open-a', title: 'O', status: 'open', updatedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'done-old', title: 'D1', status: 'done', evidence: ['e:1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+  ];
+  const written = writeWorkItems(cwd, { items, max: 2 });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  assert.deepEqual(written.ledger.items.map((item) => item.id), ['done-new', 'open-a']);
+  assert.equal(written.archived.count, 1);
+  assert.equal(archivePathOf(cwd), join(cwd, '.scratch/context-relay/work-items-archive.ndjson'));
+  const info = readArchive(cwd);
+  assert.equal(info.ok, true);
+  assert.equal(info.count, 1);
+  assert.equal(info.relativePath, '.scratch/context-relay/work-items-archive.ndjson');
+  // 坏行跳过（fail-open）不阻断。
+  writeFileSync(archivePathOf(cwd), readFileSync(archivePathOf(cwd), 'utf8') + 'not-json\n', 'utf8');
+  assert.equal(readArchive(cwd).count, 1);
+  assert.equal(readArchive(tempCwd()).count, 0, '不存在 → count 0');
+  // 归档目标被目录占用 → appendArchive ok:false（不抛）。
+  const blockedCwd = tempCwd();
+  mkdirSync(archivePathOf(blockedCwd), { recursive: true });
+  const failed = appendArchive(blockedCwd, { entries: [{ item: { id: 'aa', title: 'A', status: 'done' }, reason: 'removed-done' }], rev: 1, sessionId: 's' });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, 'archive-failed');
+  // writeWorkItems 归档失败 → archive-failed 且台账不变。
+  const safe = tempCwd();
+  const seeded = writeWorkItems(safe, { items: [{ id: 'keep', title: 'K', status: 'open' }] });
+  assert.equal(seeded.ok, true);
+  mkdirSync(archivePathOf(safe), { recursive: true });
+  const refused = writeWorkItems(safe, {
+    items: [...seeded.ledger.items, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'] }, { id: 'done-b', title: 'D2', status: 'done', evidence: ['e:2'] }],
+    max: 2,
+    rev: seeded.ledger.rev,
+  });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'archive-failed');
+  assert.deepEqual(readWorkItems(safe).items.map((item) => item.id), ['keep'], '归档失败台账不变');
 });
 
 // ---- counts / ordering ----
@@ -438,7 +544,7 @@ test('ledgerAgeMinutes/ledgerAgeSuffix：新鲜度后缀（刚更新 / N 分钟�
 test('formatWorkItemLines：有界行、owner/next/evidence 段、includeDone 与 limit', () => {
   const items = [
     { id: 'doing-a', title: '进行中', status: 'doing', owner: 'worker-1', next: '写 handler', evidence: ['a.js:1', 'b.js:2'], updatedAt: '2026-02-01T00:00:00.000Z' },
-    { id: 'done-b', title: '已完成', status: 'done', updatedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'done-b', title: '已完成', status: 'done', officialTaskId: 'task-9', updatedAt: '2026-01-01T00:00:00.000Z' },
     { id: 'open-c', title: '待办', status: 'open', next: '开工', updatedAt: '2026-03-01T00:00:00.000Z' },
   ];
   const pendingLines = formatWorkItemLines(items);
@@ -450,7 +556,7 @@ test('formatWorkItemLines：有界行、owner/next/evidence 段、includeDone �
   assert.equal(formatWorkItemLines(items, { limit: 0 }).length, 0);
   const withDone = formatWorkItemLines(items, { includeDone: true });
   assert.equal(withDone.length, 3);
-  assert.match(withDone[2], /\[done-b\] 已完成 · done$/);
+  assert.match(withDone[2], /\[done-b\] 已完成 · done · official=task-9$/);
   assert.deepEqual(formatWorkItemLines([], {}), []);
 });
 

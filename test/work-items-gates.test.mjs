@@ -175,7 +175,7 @@ test('relay_work_items：注册且无参=读（空台账 exists=false）；Lead 
   assert.equal(readLedgerFile(cwd).rev, 1, '校验失败不得落盘');
 });
 
-test('relay_work_items：整表替换不得静默删除未完成条目；drop 显式声明放行', async () => {
+test('relay_work_items：整表替换不得静默删除未完成条目；done 移除自动归档（显式 drop 的 done 也归档）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   writeLedger(cwd, [
@@ -190,15 +190,83 @@ test('relay_work_items：整表替换不得静默删除未完成条目；drop �
   const silent = await tool.execute({ items, rev: 3 }, { agent });
   assert.equal(silent.ok, false);
   assert.equal(silent.code, 'phase-not-closed');
-  assert.deepEqual(silent.ids, ['drop-1'], 'done 条目允许静默清理；未完成的必须显式 drop');
+  assert.deepEqual(silent.ids, ['drop-1'], '未完成条目必须显式 drop；done 项允许移除（自动归档）');
   assert.equal(readLedgerFile(cwd).rev, 3, '拒绝不落盘');
   const badDrop = await tool.execute({ items, drop: ['nope'], rev: 3 }, { agent });
   assert.equal(badDrop.code, 'invalid-drop');
   const dropped = await tool.execute({ items, drop: ['drop-1'], rev: 3 }, { agent });
   assert.equal(dropped.ok, true, JSON.stringify(dropped));
   assert.equal(dropped.counts.total, 1);
+  // v0.9.0 #39（D4=A）：被移除的 done-1 自动归档（reason=removed-done），返回体给 archived + archive 概要。
+  assert.deepEqual(dropped.archived, { count: 1, path: '.scratch/context-relay/work-items-archive.ndjson' });
+  assert.equal(dropped.archive.count, 1);
+  const records = readFileSync(join(cwd, '.scratch/context-relay/work-items-archive.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(records.length, 1);
+  assert.equal(records[0].reason, 'removed-done');
+  assert.equal(records[0].item.id, 'done-1');
+  assert.equal(records[0].rev, 3);
   const both = await tool.execute({ items, drop: ['keep-1'], rev: dropped.rev }, { agent });
   assert.equal(both.code, 'invalid-drop');
+  // 显式 drop done → 归档 reason=dropped。
+  writeLedger(cwd, [
+    { id: 'keep-1', title: '保留', status: 'doing', next: '继续' },
+    { id: 'done-2', title: '完成2', status: 'done', evidence: ['e:2'] },
+  ], { rev: 5 });
+  const droppedDone = await tool.execute({ items, drop: ['done-2'], rev: 5 }, { agent });
+  assert.equal(droppedDone.ok, true, JSON.stringify(droppedDone));
+  assert.equal(droppedDone.archived.count, 1);
+  const more = readFileSync(join(cwd, '.scratch/context-relay/work-items-archive.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.equal(more.length, 2);
+  assert.equal(more[1].reason, 'dropped');
+  assert.equal(more[1].item.id, 'done-2');
+});
+
+test('relay_work_items：officialTaskId 透传/继承；archive 返回与 over-cap/archive-failed 路径', async () => {
+  resetSharedState();
+  // officialTaskId：整表替换透传 + 已知条目未提供时保留旧值。
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-wi-official', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_work_items');
+  const agent = { session, options: {} };
+  const first = await tool.execute({ items: [{ id: 'task-a', title: 'A', status: 'open', officialTaskId: 'task-42' }] }, { agent });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  assert.equal(first.items[0].officialTaskId, 'task-42');
+  assert.equal(first.archive.count, 0, '无归档时 archive.count=0');
+  assert.equal(first.archive.path, '.scratch/context-relay/work-items-archive.ndjson');
+  const second = await tool.execute({ items: [{ id: 'task-a', title: 'A2', status: 'open' }], rev: first.rev }, { agent });
+  assert.equal(second.ok, true, JSON.stringify(second));
+  assert.equal(second.items[0].officialTaskId, 'task-42', '未提供 officialTaskId 时 known 继承旧值');
+  const invalid = await tool.execute({ items: [{ id: 'task-a', title: 'A2', status: 'open' }, { id: 'task-b', title: 'B', status: 'open', officialTaskId: 'bad id' }], rev: second.rev }, { agent });
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.code, 'invalid-item');
+  assert.equal(invalid.errors[0].code, 'invalid-official-task-id');
+  // over-cap：replace 31 条（含 done）→ 自动归档最旧 done，write 成功并返回 archived。
+  const overCwd = tmpCwd();
+  const overSession = fakeSession({ id: 'session-wi-overcap', cwd: overCwd, seq: 0 });
+  const overTool = applyAgent(fakeServices({ session: overSession }).services).tools.get('relay_work_items');
+  const overAgent = { session: overSession, options: {} };
+  const done = { id: 'done-old', title: '完成', status: 'done', evidence: ['e:1'] };
+  const opens = Array.from({ length: 29 }, (_, index) => ({ id: 'open-' + index, title: 'O' + index, status: 'open' }));
+  const base = await overTool.execute({ items: [done, ...opens] }, { agent: overAgent });
+  assert.equal(base.ok, true, JSON.stringify(base));
+  const overflow = await overTool.execute({ items: [...base.items, { id: 'open-new', title: 'N', status: 'open' }], rev: base.rev }, { agent: overAgent });
+  assert.equal(overflow.ok, true, JSON.stringify(overflow));
+  assert.equal(overflow.counts.total, 30);
+  assert.deepEqual(overflow.archived, { count: 1, path: '.scratch/context-relay/work-items-archive.ndjson' });
+  assert.equal(overflow.archive.count, 1);
+  assert.equal(readFileSync(join(overCwd, '.scratch/context-relay/work-items-archive.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line))[0].reason, 'over-cap');
+  // archive-failed：归档目标被目录占用 → 拒绝整次写入，台账不变。
+  const failCwd = tmpCwd();
+  const failSession = fakeSession({ id: 'session-wi-archive-fail', cwd: failCwd, seq: 0 });
+  const failTool = applyAgent(fakeServices({ session: failSession }).services).tools.get('relay_work_items');
+  const failAgent = { session: failSession, options: {} };
+  const seeded = await failTool.execute({ items: [{ id: 'keep', title: 'K', status: 'open' }, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'] }] }, { agent: failAgent });
+  assert.equal(seeded.ok, true);
+  mkdirSync(join(failCwd, '.scratch/context-relay/work-items-archive.ndjson'), { recursive: true });
+  const refused = await failTool.execute({ items: [{ id: 'keep', title: 'K', status: 'open' }], rev: seeded.rev }, { agent: failAgent });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'archive-failed');
+  assert.equal(readLedgerFile(failCwd).items.length, 2, '归档失败台账不变');
 });
 
 test('relay_phase：carry 无效 id 显式报告；items 非字符串拒绝', async () => {
@@ -508,6 +576,80 @@ test('relay_phase → ship：workItemsGate=warn 只附 workItemsWarning 不拒�
   }
 });
 
+test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻断（D1=B）；空 review/report 仍拒', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-wi-user-gate', cwd, seq: 0 });
+  const injected = [];
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  const badReport = '这次改动很多，具体命令输出如下：\n$ npm test\n全部通过，应该没问题。';
+  const shipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: 'fresh subagent 独立审查：无偏移', report: badReport } });
+  assert.equal(shipped.phase, 'ship', '格式不合规不阻断 ship');
+  assert.equal(shipped.previous, 'verify');
+  assert.equal(shipped.user_gate.review, 'done');
+  assert.ok(shipped.user_gate.reportChars > 0);
+  assert.ok(Array.isArray(shipped.user_gate.warnings) && shipped.user_gate.warnings.length > 0, '缺段/内部细节 → warning');
+  assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-format'));
+  assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.equal('report' in shipped.user_gate, false, '不落 report 原文');
+  assert.equal(injected.length, 1, '一次性 notice 提示 warning（不阻断）');
+  assert.match(injected[0].source.summary, /用户汇报 warning/);
+  assert.match(injected[0].content[0].text, /不阻断/);
+  assert.equal((await tools.get('relay_status').execute({}, { agent })).phase, 'ship', 'phase 已正常切换');
+
+  // 空 review / 空 report 仍是用户门硬门（不得放宽）。
+  const gateCwd = tmpCwd();
+  const gateSession = fakeSession({ id: 'session-wi-user-gate-hard', cwd: gateCwd, seq: 0 });
+  const gateTools = applyAgent(fakeServices({ session: gateSession }).services).tools;
+  const gateAgent = { session: gateSession, options: {} };
+  const gateCall = (args) => gateTools.get('relay_phase').execute(args, { agent: gateAgent });
+  await gateCall({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await gateCall({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '  ', report: 'x' } }), /user gate/);
+  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: 'fresh review', report: '' } }), /user gate/);
+  assert.equal((await gateTools.get('relay_status').execute({}, { agent: gateAgent })).phase, 'verify', '硬门拒绝不切 phase');
+});
+
+test('relay_phase → ship：details_requested 仅放宽细节展开提示（不是硬拒豁免）', async () => {
+  resetSharedState();
+  const report = '结论：完成\n影响：无\n需要你做什么：无需\n证据位置：test/work-items-gates.test.mjs\n';
+  const detailed = report + '细节：' + 'x'.repeat(700) + '\n```\n$ npm test\n```';
+  const run = async (userGate) => {
+    const cwd = tmpCwd();
+    const session = fakeSession({ id: 'session-wi-details-' + Math.random().toString(36).slice(2), cwd, seq: 0 });
+    const tools = applyAgent(fakeServices({ session }).services).tools;
+    const injected = [];
+    const agent = { session, options: {}, inject(message) { injected.push(message); } };
+    const call = (args) => tools.get('relay_phase').execute(args, { agent });
+    await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+    await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+    const result = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: 'fresh review', report: detailed, ...userGate } });
+    return { result, injected };
+  };
+  const normalRun = await run({});
+  const normal = normalRun.result;
+  assert.equal(normal.phase, 'ship');
+  assert.ok(normal.user_gate.warnings.some((warning) => warning.code === 'report-internal-details'), '默认档：代码块/长细节提示');
+  assert.equal(normal.user_gate.detailsRequested, undefined, '默认档不回 detailsRequested');
+  assert.equal(normal.user_gate.info, undefined, '默认档不回 info');
+  const authorizedRun = await run({ details_requested: true });
+  const authorized = authorizedRun.result;
+  assert.equal(authorized.phase, 'ship', 'details_requested 不改变结果');
+  assert.ok(!(authorized.user_gate.warnings ?? []).some((warning) => warning.code === 'report-internal-details'), '用户已授权展开：不再提示内部细节');
+  assert.ok(!(authorized.user_gate.warnings ?? []).some((warning) => warning.code === 'report-too-long'), '700 字在展开档（≤4000）内不提示超长');
+  // P2-1 修复：details_requested 与 info 提示透传到结果 + 同一（去重）notice（不阻断、不落原文）。
+  assert.equal(authorized.user_gate.detailsRequested, true, 'details_requested 透传结果');
+  assert.match(String(authorized.user_gate.info ?? ''), /用户已授权展开/, 'info 提示透传结果');
+  assert.equal('report' in authorized.user_gate, false, '不落 report 原文');
+  assert.equal(authorizedRun.injected.length, 1, 'details_requested 附一次提示 notice');
+  assert.match(authorizedRun.injected[0].content[0].text, /用户已授权展开细节/);
+  assert.doesNotMatch(authorizedRun.injected[0].content[0].text, /x{50}/, 'notice 不落报告原文');
+});
+
 test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；items 开分点并落 currentPhase', async () => {
   resetSharedState();
   const cwd = tmpCwd();
@@ -564,7 +706,8 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   ], { rev: 2, currentPhase: phaseMeta });
   const session = fakeSession({ id: 'session-ledger-guard', cwd, seq: 0 });
   const bundle = applyAgent(fakeServices({ session }).services);
-  const listener = bundle.events.find((event) => event.name === 'agent/pre-step').listener;
+  // 单一模式（v0.9.0）下 team-tools 也注册 pre-step，sentinel 在最后注册：取最后一个 pre-step 才是到线哨兵。
+  const listener = bundle.events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
   const post = bundle.events.find((event) => event.name === 'tools/post-execute').listener;
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
@@ -651,7 +794,7 @@ test('台账闭环：空台账/队友会话不注入（旧行为不变）', asyn
   const cwd = tmpCwd();
   const lead = fakeSession({ id: 'session-ledger-guard-empty', cwd, seq: 0 });
   const leadBundle = applyAgent(fakeServices({ session: lead }).services);
-  const leadListener = leadBundle.events.find((event) => event.name === 'agent/pre-step').listener;
+  const leadListener = leadBundle.events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
   const leadInjected = [];
   await leadListener({ agent: { session: lead, inject(message) { leadInjected.push(message); } } }, async () => undefined);
   assert.equal(leadInjected.length, 0, 'no ledger → no focus/closure noise');
@@ -818,7 +961,7 @@ test('到线提醒接入：台账非空时注入的 notice 带台账行；空台
   const session = fakeSession({ id: 'session-wi-reminder', cwd, seq: 0 });
   const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const { events } = applyAgent(bundle.services);
-  const listener = events.find((entry) => entry.name === 'agent/pre-step')?.listener;
+  const listener = events.filter((entry) => entry.name === 'agent/pre-step').at(-1)?.listener;
   assert.ok(listener !== undefined, 'pre-step 监听已注册');
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
@@ -830,7 +973,7 @@ test('到线提醒接入：台账非空时注入的 notice 带台账行；空台
   const emptySession = fakeSession({ id: 'session-wi-reminder-empty', cwd: emptyCwd, seq: 0 });
   const emptyBundle = fakeServices({ session: emptySession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const emptyEvents = applyAgent(emptyBundle.services).events;
-  const emptyListener = emptyEvents.find((entry) => entry.name === 'agent/pre-step')?.listener;
+  const emptyListener = emptyEvents.filter((entry) => entry.name === 'agent/pre-step').at(-1)?.listener;
   const emptyInjected = [];
   await emptyListener({ agent: { session: emptySession, options: {}, inject(message) { emptyInjected.push(message); } } }, async () => ({}));
   assert.equal(emptyInjected.length, 1);
@@ -843,7 +986,7 @@ test('到线提醒接入：台账非空时注入的 notice 带台账行；空台
   const offBundle = fakeServices({ session: offSession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const offEvents = applyAgent(offBundle.services, { workItems: false }).events;
   const offInjected = [];
-  await offEvents.find((entry) => entry.name === 'agent/pre-step')?.listener({ agent: { session: offSession, options: {}, inject(message) { offInjected.push(message); } } }, async () => ({}));
+  await offEvents.filter((entry) => entry.name === 'agent/pre-step').at(-1)?.listener({ agent: { session: offSession, options: {}, inject(message) { offInjected.push(message); } } }, async () => ({}));
   assert.equal(offInjected.length, 1);
   assert.ok(!offInjected[0].content[0].text.includes('工作台账'), 'workItems=false 到线提醒不读台账');
 });
