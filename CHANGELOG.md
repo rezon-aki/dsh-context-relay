@@ -2,6 +2,31 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+## v0.7.0 (2026-11-15)
+
+按 2026-11-15 设计目标收敛 relay 边界。**只支持 DSH 0.2.2-rc.2+**（用户裁决：只保 rc.2）：
+
+- 兼容：rc.2 队友 = Lead 的 depth=1 continuable 子智能体；成员列表/状态按官方 list_agents 口径（只列直接 continuable，status 读 agent.status），孙代理/one-shot/退休代不再算「队友」；退休代只审计，不派活/不发消息。
+- 兼容：直接队友使用紧凑队友协议（约 2KB，替代 10.9KB 全量协议）；classic 队友保留全量协议，避免引用未注册工具；架构师使用独立 ARCHITECT_WORKER 影子协议，不再与 TEAMMATE 叠加。
+- 变更：只支持 DSH 0.2.2-rc.2+——删除 rc.1 preset 行表/版本探测、`agentTeams` 旧适配分支、composer 原生下拉回退；`engines.dsh` 下限改为 `>=0.2.2-rc.2`。
+- 变更：TEAM_WORKER 段并入紧凑队友协议（唯一内容补齐后删除独立段，少约 0.9KB/请求）；固定小队/复用优先写死，team_note 统一为 warning（不拒绝切 phase）。
+- 新增：relay_architect（Lead-only）——按会话面板选择的模型创建/继续架构师；fresh 默认干净上下文、旧代先 checkpoint 再退役；未选择模型时拒绝并提示先问用户一次，不静默继承 Lead 模型。
+- 新增：**架构师模型 / 推理等级复用 DSH 模型菜单**——挂在 composer 模型菜单「模型 / 推理等级」之后（官方 `conversation.input.model.options` 槽；与 agent-team 团队开关同一扩展点），菜单外壳、定位、键盘与失焦行为全部归官方（选完保持展开以继续调推理等级），不再自造下拉、不再兼容没有该槽的旧内核。数据源 `GET /context-relay/architect-models?sessionId=`（客户端按会话缓存 60s，失败下次菜单打开重试）；模型选择随 handoff 继承。
+- 变更：**架构师模型严格按官方子代理白名单过滤**——读取会话 `subagentModelSelectionPolicy` 投影，只列允许路由；没有投影记录的旧会话按官方语义只允许 Lead 当前路由；`relay_architect` 在 spawn 前双重校验，白名单外的模型直接拒绝（不绕过官方 `assertAllowedModelSelection`）。
+- 变更：工作台账回归 Leader-only（队友/子代理不读写、不在其 UI 展示）；删除队友写台账/owner 换代迁移；完整台账面板保留（用户裁决 C）。
+- 删除：relay_rehydrate（handoff 已重建团队）、releaseOnCompress/releaseRetiredGeneration 与 release.js 的「托管释放」承诺；内部仅保留 activation 句柄用于换代容量。
+- 删除：handoff 发布箱与 dock 提示（GET /context-relay/api / handoff-store）；新会话由官方会话列表呈现。
+- 变更：关 phase 默认 warn（可配 strict/off）；team_note 队友上下文提醒降为 warning，不再拒绝切 phase；contract_check 每次切 phase 记录 warning，**ship 前必填**。
+- 修复：rc.2 创建瞬间身份识别——`agent/created` 早于 subagents 的 resident 登记（manager 在 create 返回后才 resident.set），此时 `rootOf/namesOf` 必抛 UNAUTHORIZED，旧实现把每个直接队友都判成「身份未知」→ 紧凑队友协议、架构师独立协议、checkpoint/freshen 工具实际全部装不上。现在创建瞬间只读 header 事实（depth 1 = 直接队友、depth ≥2 = 普通子代理），架构师用 `relay_architect` spawn 前登记的 pending 标记认领（roster 的 sessionId 兜底 resume/重启）。
+- 修复：`relay_organize` 压缩 brief 漏传 session → 默认配置下读旧 workspace 级台账，会话级「未闭合工作项」段永远为空（还可能串入别的会话）；现在按根会话 scope 读，旧 workspace 文件不参与。
+- 变更：`relay_work_items` 加入非 root 裁面（v0.7.0 已把它改成 Leader-only；此前每个子代理仍白背约 1.6KB 工具 schema）。
+- 改进：架构师模型目录去掉 provider 8 / model 20 的静默截断，且只对白名单命中的模型解析推理档（并行）；客户端只缓存成功且服务可用的结果，llm 瞬时不可用不会锁死 60s。
+- 改进：composer 面板状态轮询合并——RelayPanel / 预算胶囊 / 架构师胶囊原本各自每 4s 打一次 `/context-relay/panel`，现在每会话只有一条共享轮询，订阅者共用同一份快照（写入优先仍由各组件自己的时间戳守卫）。
+- 删除：rehydrate 死数据层（`read*FromRoot` / `listPartitions` / `planRehydrate` / `buildRehydratePrompt` 及对应测试）——v0.7.0 已删 `relay_rehydrate` 工具。
+- 修复：rc.2 名字校验对齐官方规则（1–32 字符、字母开头）；`relay_renew` 在中断旧代之前先校验派生名，长 lineage 不会拆完旧代才失败。
+- 测试：补齐 handoff 的 `architectModel` 继承断言、rc.2 创建瞬间架构师识别（pending/roster）、白名单路由过滤与 `relay_architect` 拒绝路径。
+- 修复：send_message({agent}) 派活闸门参数、退役代发送拒绝、旧 activation dispose 后 renew 重试、普通 fork 不再被误判为子代理。
+- 版本 0.7.0；全量 535 项测试通过，npm run check 通过。
 ## v0.6.5 (2026-11-15)
 
 兼容 DSH 0.2.2-rc.1（当前内核）与 0.2.2-rc.2（升级目标）：

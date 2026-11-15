@@ -103,23 +103,51 @@ const PANEL_DEFAULT = Object.freeze({
   handoffUnlimitedBudget: null,
   // v0.6.4：composer「专职架构师」胶囊
   architect: true,
+  architectModel: null,
 });
 const LIVE = (overrides = {}) => ({ band: 'organize', used: 410000, window: 1000000, ratio: 0.41, phase: 'build', organizeCount: 1, overBudget: true, updatedAt: Date.now(), ...overrides });
 const SETTINGS_DEFAULT = Object.freeze({ threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true });
 
-function createEnv() {
+function createEnv(options = {}) {
+  const skippedSlots = Array.isArray(options.skipSlots) ? options.skipSlots : [];
   const timers = new Map();
   let nextTimer = 1;
   const listeners = { document: new Map(), window: new Map() };
   const add = (store) => (name, fn) => { const set = store.get(name) ?? new Set(); set.add(fn); store.set(name, set); };
   const remove = (store) => (name, fn) => { store.get(name)?.delete(fn); };
   const calls = [];
-  const server = { panel: {}, settings: { ...SETTINGS_DEFAULT }, handoffs: [], panelPutResponse: null, settingsPutResponse: null, deferPanelGet: false, pendingPanelGets: [], workItems: null, workItemsPayload: null };
+  const server = {
+    panel: {}, settings: { ...SETTINGS_DEFAULT }, panelPutResponse: null, settingsPutResponse: null,
+    deferPanelGet: false, pendingPanelGets: [], workItems: null, workItemsPayload: null,
+    // v0.7.0 架构师模型目录（GET /context-relay/architect-models）；测试可整体覆盖。
+    architectModels: null,
+  };
+  // 宿主按官方子代理白名单过滤后的目录：本机配置允许 geekai/gpt-6.1-sol + deepseek-account/deepseek-flash。
+  const ARCHITECT_MODELS_DEFAULT = {
+    ok: true,
+    restricted: true,
+    parentOnly: false,
+    allowedModels: [
+      { provider: 'geekai', model: 'gpt-6.1-sol' },
+      { provider: 'deepseek-account', model: 'deepseek-flash' },
+    ],
+    providers: [
+      {
+        id: 'deepseek-account', name: 'DeepSeek 账号', models: [
+          { id: 'deepseek-flash', name: 'DeepSeek-V41-Flash', efforts: [{ id: 'off', name: 'Off' }, { id: 'max', name: 'Max', default: true }] },
+        ],
+      },
+      {
+        id: 'geekai', name: 'GeekAI', models: [
+          { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol', efforts: [] },
+        ],
+      },
+    ],
+  };
   const respond = (data) => Promise.resolve({ status: 200, json: () => Promise.resolve(data) });
   const fakeFetch = (url, options = {}) => {
     const method = options?.method ?? 'GET';
     calls.push({ url, method, body: options?.body });
-    if (url === '/context-relay/api') return respond({ ok: true, handoffs: server.handoffs });
     if (url === '/context-relay/settings') {
       if (method === 'PUT') return respond(server.settingsPutResponse ?? { ok: true, persisted: true, settings: server.settings });
       return respond({ ok: true, settings: server.settings, thresholds: {} });
@@ -144,6 +172,10 @@ function createEnv() {
       // 可挂起 GET：验证「慢 GET 不回滚刚点状态」需要控制回包时机。
       if (server.deferPanelGet === true) return new Promise((resolve) => { server.pendingPanelGets.push({ resolve, payload }); });
       return respond(payload);
+    }
+    // v0.7.1 架构师模型目录（只在 relay-long + 架构师开时被官方模型菜单里的组件请求；按会话查白名单）。
+    if (url.startsWith('/context-relay/architect-models')) {
+      return respond(server.architectModels ?? ARCHITECT_MODELS_DEFAULT);
     }
     // v0.5.0 工作台账只读路由：默认 relay+enabled+workItems；测试可整体覆盖 payload（非 relay/禁用/空）。
     if (url.startsWith('/context-relay/work-items?')) {
@@ -189,7 +221,8 @@ function createEnv() {
   const registrations = [];
   client.apply({
     slots: {
-      inject: (_name, fn) => fn(),
+      // 默认立即就绪；skipSlots 模拟老内核：该槽位不存在（注入回调永不触发）。
+      inject: (name, fn) => (skippedSlots.includes(name) ? undefined : fn()),
       // v0.5.0：conversation.composer.dock 现在有 relay-panel + relay-ledger 两个组件 →
       // 按注册顺序保留首个到 name 键（既有测试继续拿到 RelayPanel），并额外按 id 暴露。
       register: (definition, component) => {
@@ -221,6 +254,8 @@ function find(tree, predicate, out = []) {
   return out;
 }
 const byClass = (tree, className) => find(tree, (node) => typeof node.props?.className === 'string' && node.props.className.includes(className));
+// 精确类名（relay-menu-option 不可用 includes：option-copy / option-name 也含该前缀）。
+const byExactClass = (tree, className) => find(tree, (node) => typeof node.props?.className === 'string' && node.props.className.split(/\s+/).includes(className));
 const textOf = (tree) => JSON.stringify(tree ?? null);
 
 /** 打开 popover（点 chip）并等渲染稳定。 */
@@ -1815,4 +1850,134 @@ test('RelayArchitectToggle：relay-long 会话渲染「架构师」胶囊，点�
   instance.render({ sessionId: 'B' });
   await instance.flush();
   assert.equal(instance.tree, null);
+});
+
+// ── v0.7.0：架构师模型复用 DSH 模型选择菜单（conversation.input.model.options）──
+test('RelayArchitectModelMenu：rc.2 官方模型菜单槽注册；relay-long + 架构师开时渲染两行/不轮询', async () => {
+  const env = createEnv();
+  const opts = env.registrations.filter((entry) => entry.definition.name === 'conversation.input.model.options');
+  assert.equal(opts.length, 1, '注册进官方模型菜单的会话选项槽');
+  assert.equal(opts[0].definition.id, 'relay-architect-model');
+  assert.equal(env.slots['relay-architect-model'], opts[0].component);
+  assert.equal(env.registrations.some((entry) => entry.definition.id === 'relay-architect-model-select'), false, '槽位存在时不注册老内核回退下拉');
+
+  env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  const Component = env.slots['relay-architect-model'];
+  const failures = [];
+  const instance = env.mount(Component, { sessionId: 'A', locked: false, dismiss: () => {}, reportFailure: (message) => failures.push(message) });
+  await instance.flush();
+  await instance.flush();
+  const cells = byClass(instance.tree, 'relay-menu-cell');
+  assert.equal(cells.length, 1, '未选模型时只有「架构师模型」一行');
+  assert.match(textOf(cells[0]), /架构师模型/);
+  assert.match(textOf(cells[0]), /未选择/);
+  // 菜单是瞬态浮层：只按打开时取一次面板状态，不建 4s 轮询（轮询会把官方菜单变成后台请求源）。
+  assert.equal(env.calls.filter((call) => call.url.startsWith('/context-relay/panel?')).length, 1);
+  assert.equal(env.calls.filter((call) => call.url.startsWith('/context-relay/architect-models')).length, 1);
+  assert.equal(env.slots['relay-architect-model-select'], undefined);
+  assert.equal(failures.length, 0);
+
+  // 非 relay-long / 架构师关：官方菜单里不出现 relay 的任何行。
+  env.server.panel.B = { relay: true, preset: 'relay', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  const classic = env.mount(Component, { sessionId: 'B', locked: false, dismiss: () => {}, reportFailure: () => {} });
+  await classic.flush();
+  assert.equal(classic.tree, null, '普通 Relay 不渲染架构师模型行');
+
+  env.server.panel.C = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: false }, live: LIVE() };
+  const off = env.mount(Component, { sessionId: 'C', locked: false, dismiss: () => {}, reportFailure: () => {} });
+  await off.flush();
+  assert.equal(off.tree, null, '架构师胶囊关时不渲染模型行');
+});
+
+test('RelayArchitectModelMenu：白名单目录（官方名/分组）与推理等级两行写回面板；推理档行按模型出现', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  const failures = [];
+  const instance = env.mount(env.slots['relay-architect-model'], { sessionId: 'A', locked: false, dismiss: () => {}, reportFailure: (message) => failures.push(message) });
+  await instance.flush();
+  await instance.flush();
+
+  // 展开模型列表：只显示宿主按白名单过滤后的两个模型 + 分组/显示名。
+  byClass(instance.tree, 'relay-menu-cell')[0].props.onClick();
+  await instance.flush();
+  const options = byExactClass(instance.tree, 'relay-menu-option');
+  assert.equal(options.length, 2, '白名单只暴露两个模型');
+  assert.match(textOf(instance.tree), /DeepSeek 账号/);
+  assert.match(textOf(instance.tree), /GeekAI/);
+  assert.match(textOf(instance.tree), /DeepSeek-V41-Flash/);
+  assert.match(textOf(instance.tree), /仅显示官方子代理白名单内的模型/);
+  const target = options.find((node) => textOf(node).includes('DeepSeek-V41-Flash'));
+  assert.ok(target, '找到 deepseek-flash 行');
+  target.props.onClick();
+  await instance.flush();
+  const modelPut = env.calls.filter((call) => call.url === '/context-relay/panel' && call.method === 'PUT').at(-1);
+  assert.ok(modelPut, '选择模型后 PUT 面板');
+  assert.deepEqual(JSON.parse(String(modelPut.body)), { sessionId: 'A', architectModel: { provider: 'deepseek-account', model: 'deepseek-flash' } });
+  assert.deepEqual(env.server.panel.A.panel.architectModel, { provider: 'deepseek-account', model: 'deepseek-flash' });
+  const cells = byClass(instance.tree, 'relay-menu-cell');
+  assert.equal(cells.length, 2, '选中模型后出现「推理等级」行');
+  assert.match(textOf(cells[0]), /DeepSeek-V41-Flash/);
+  assert.match(textOf(cells[1]), /默认/);
+
+  // 推理等级：默认 + Off + Max；选 Max 写入 reasoningEffort。
+  cells[1].props.onClick();
+  await instance.flush();
+  const efforts = byExactClass(instance.tree, 'relay-menu-option');
+  assert.equal(efforts.length, 3);
+  assert.match(textOf(instance.tree), /默认/);
+  const max = efforts.find((node) => textOf(node).includes('Max'));
+  assert.ok(max, '找到 Max 行');
+  max.props.onClick();
+  await instance.flush();
+  const effortPut = env.calls.filter((call) => call.url === '/context-relay/panel' && call.method === 'PUT').at(-1);
+  assert.deepEqual(JSON.parse(String(effortPut.body)), { sessionId: 'A', architectModel: { provider: 'deepseek-account', model: 'deepseek-flash', reasoningEffort: 'max' } });
+  assert.match(textOf(byClass(instance.tree, 'relay-menu-cell')[1]), /Max/);
+  assert.equal(failures.length, 0);
+
+  // 换到没有推理档的模型：推理等级行消失（不留下无效档位）。
+  byClass(instance.tree, 'relay-menu-cell')[0].props.onClick();
+  await instance.flush();
+  const sol = byExactClass(instance.tree, 'relay-menu-option').find((node) => textOf(node).includes('GPT-6.1 Sol'));
+  assert.ok(sol, '找到 geekai 模型行');
+  sol.props.onClick();
+  await instance.flush();
+  assert.equal(byClass(instance.tree, 'relay-menu-cell').length, 1, '无推理档模型只留模型行');
+  assert.deepEqual(env.server.panel.A.panel.architectModel, { provider: 'geekai', model: 'gpt-6.1-sol' });
+});
+
+test('RelayArchitectModelMenu：没有会话白名单记录时只允许 Lead 当前模型并显示提示', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  env.server.architectModels = {
+    ok: true, restricted: true, parentOnly: true,
+    allowedModels: [{ provider: 'deepseek-account', model: 'deepseek-flash' }],
+    providers: [{ id: 'deepseek-account', name: 'DeepSeek 账号', models: [{ id: 'deepseek-flash', name: 'DeepSeek-V41-Flash', efforts: [] }] }],
+  };
+  const instance = env.mount(env.slots['relay-architect-model'], { sessionId: 'A', locked: false, dismiss: () => {}, reportFailure: () => {} });
+  await instance.flush();
+  await instance.flush();
+  byClass(instance.tree, 'relay-menu-cell')[0].props.onClick();
+  await instance.flush();
+  assert.match(textOf(instance.tree), /没有子代理模型白名单记录/);
+  assert.equal(byExactClass(instance.tree, 'relay-menu-option').length, 1, '只列 Lead 当前模型');
+});
+
+
+test('RelayArchitectModelMenu：保存失败回滚选择并走官方 toast 报错', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, preset: 'relay-long', modes: { relay: 'relay', long: 'relay-long' }, panel: { ...PANEL_DEFAULT, architect: true }, live: LIVE() };
+  env.server.panelPutResponse = { ok: false, message: 'panel write failed' };
+  const failures = [];
+  const instance = env.mount(env.slots['relay-architect-model'], { sessionId: 'A', locked: false, dismiss: () => {}, reportFailure: (message) => failures.push(message) });
+  await instance.flush();
+  await instance.flush();
+  byClass(instance.tree, 'relay-menu-cell')[0].props.onClick();
+  await instance.flush();
+  const option = byExactClass(instance.tree, 'relay-menu-option')[0];
+  option.props.onClick();
+  await instance.flush();
+  assert.equal(failures.length, 1, '保存失败上报官方 toast');
+  assert.match(failures[0], /架构师模型保存失败/);
+  assert.match(failures[0], /panel write failed/);
+  assert.match(textOf(instance.tree), /未选择/, '失败后回滚到未选择');
 });

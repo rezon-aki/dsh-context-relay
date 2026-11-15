@@ -34,7 +34,6 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - Questions lead with the conclusion and impact, then options (recommended + default + consequence), then wait for one word from you;
 - Irreversible, external, paid, credential or delete actions stop first with a plain-language note of what, why and how to roll back, and wait for an explicit yes;
 - The same question is not asked twice; answers you give are remembered and carried into the handover;
-- When a team already exists, the Lead asks you before opening a separate subagent, instead of going around the team.
 
 ### 3. Long and complex tasks stay on track
 
@@ -62,7 +61,7 @@ Both modes stay human-gated: no autonomous loop, no automatic approval on your b
 
 ## Install
 
-Requires DSH `>=0.2.1-rc.2` and Node.js `>=20`. Verified on DSH 0.2.2-rc.1 (current kernel) and 0.2.2-rc.2 (upgrade target): official preset rows are selected per kernel version, and team features (status/renew/rehydrate) adapt to the subagent tree on rc.2.
+Requires DSH `>=0.2.2-rc.2` (this kernel generation only) and Node.js `>=20`. Verified on DSH 0.2.2-rc.2: preset rows follow the official ptc patch; team features (status/renew/architect) adapt to the subagent tree; the work ledger is Leader-only and teammates do not read or write it.
 
 ### Option A (recommended): DSH Web UI sidebar Plugins
 
@@ -133,11 +132,11 @@ Long tasks drift: the agent forgets what it set out to do and how far it got. Th
 
 - **Register points when a phase opens**: `relay_phase({phase, items:["…","…"]})` records 1–8 points (single-thread work: `items: []`); new items belong to the current phase by default, and a cross-phase item must be carried explicitly;
 - **Closed-loop recording**: the current point and its next action are injected as one line ("[ledger·build 2/4] doing「…」next「…」") when the focus changes; after a file/command change with no ledger update the agent is prompted "[closed loop] the last change is not recorded"; completing a point suggests the next one;
-- **Phase-close gate**: unfinished points of this phase must be closed (done with evidence / blocked with a reason) or explicitly carried, otherwise the phase switch is refused (`workItemsPhaseGate` can be `warn`/`off`; single-thread work declares empty items);
+- **Phase-close notice**: unfinished points of this phase should be closed (done with evidence / blocked with a reason) or explicitly carried; the default is a `warn` notice (`workItemsPhaseGate` can be `strict`/`off`; single-thread work declares empty items);
 - **Context without memory**: the same injection also carries "[context] band=…" (with the boundary action once a line is reached) and "[teammates] pending N: …" — the Lead's own band and which teammate needs a checkpoint/wipe/renew ride on the focus line (event-driven; the snapshot survives compaction and restarts);
 - **Read the state before every dispatch and let the Lead decide**: before the Lead sends a task to an idle teammate (`send_message`), the plugin reads that teammate's band/status and **returns a decision point first** (the message is not sent) — over the line or unreadable: (1) manage first (have it `relay_checkpoint`, then `relay_freshen({reset:true, brief})` to reuse the same member with a clean context, 0 quota; renew only for an identity change) and dispatch again; (2) dispatch directly — resending the same call passes, that is the Lead's call. Inside the line it also returns the state (dispatch directly or checkpoint first). A busy teammate is only blocked when over the line or unreadable — ordinary coordination messages pass; if ignored, the phase-boundary `team_note` gate still refuses the switch — teammate context is never silently forgotten;
 - **Fields**: id (short slug), title, status (open/doing/blocked/done), owner, next action, blocked reason, evidence, acceptance criterion, dependencies, phase;
-- **Storage**: `.scratch/context-relay/work-items/<session>.json` (session-level: one per root session; teammates share the Lead's ledger; a handoff copies it to the new session), maintained with `relay_work_items`;
+- **Storage**: `.scratch/context-relay/work-items/<session>.json` (session-level and Leader-only: one per root session; a handoff copies it to the new session), maintained with `relay_work_items`;
 - **Reconciliation**: at handoff, open items automatically become the new session's next actions (up to 8); compaction briefs include an open-items section; entering the delivery phase requires every item to be done or blocked;
 - **Panel**: the `ledger 3/8` chip above the composer opens a read-only panel grouped by status; editing always goes through the agent tool.
 
@@ -148,9 +147,9 @@ Without a ledger file nothing changes — it is optional.
 In long tasks the expensive failure is "start writing before the route is clear". This mode gives the team a **fixed architect teammate** (always named `architect`; created once and reused):
 
 - **The Lead only does two things**: align requirements with the user (boundaries/acceptance/trade-offs) and read the project docs to understand the business and current state;
-- **The architect turns requirements into an engineering route**: it starts every task from a **low context** — reads only the necessary context (the Lead's requirement brief, doc pointers, relevant module entry points) and delivers an engineering implementation document (default `.scratch/context-relay/architecture/<task>.md`: requirement alignment / technical route / module interfaces / data & protocols / risks & trade-offs / open decisions / implementation steps & acceptance). After delivery it only runs `checkpoint` and waits — **the wipe happens when the next task arrives**, when the Lead decides whether a `freshen(reset)` (brief = the new task) is needed before dispatching; if the context is still low and the work is continuous, it just carries on;
+- **The architect turns requirements into an engineering route**: it starts every task from a **low context** — reads only the necessary context (the Lead's requirement brief, doc pointers, relevant module entry points) and delivers an engineering implementation document (default `.scratch/context-relay/architecture/<task>.md`: requirement alignment / technical route / module interfaces / data & protocols / risks & trade-offs / open decisions / implementation steps & acceptance). The Lead uses `relay_architect({mode:'fresh'})` for a clean context (the old generation checkpoints first); only continuous low-context work uses `mode:'continue'`; after delivery it only runs `checkpoint` and waits;
 - **Decisions that need the user**: the architect writes them into the document's "open decisions" and reports to the Lead; the Lead brings them to you and passes the conclusion back — it never asks you directly and never decides for you;
-- **Switch**: a small "architect" pill next to the "unlimited budget" pill in the composer (shown only for Relay · very long tasks) controls per session whether the Lead hands engineering-route design to the architect (default on); a handoff inherits it.
+- **Switch and model**: a small "architect" pill next to the "unlimited budget" pill in the composer (shown only for Relay · very long tasks) controls whether the Lead hands engineering-route design to the architect (default on). **The model is chosen in the DSH model menu**: open the composer model selector and the official "Model / Effort" rows are followed by "Architect model / Architect effort"; the official menu owns the shell, anchoring, keyboard and focus behaviour, and the list stays open after a choice so you can adjust the effort next. **The architect model is restricted by the official subagent model allowlist**: only models allowed for this session are listed; a session with no recorded allowlist may use only the Lead's current route (new sessions inherit the allowlist from the settings). **There is no default model**: if unselected, `relay_architect` refuses and the Lead asks you once; the choice is inherited by handoff and never silently falls back to the Lead model.
 
 ## Configuration
 
@@ -165,15 +164,12 @@ Optional host plugin config (advanced):
 | `architect` | `true` | Default for the dedicated-architect switch (the composer "architect" pill overrides it per session; relay-long only). |
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour. |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
-| `workItemsPhaseGate` | `'strict'` | **Phase-close** gate: unfinished points not closed or carried → `strict` refuses the switch / `warn` proceeds with a notice / `off`. Single-thread work declares `items: []`. |
+| `workItemsPhaseGate` | `'warn'` | **Phase-close** notice: unfinished points not closed or carried → `warn` proceeds with a notice (default) / `strict` refuses the switch / `off`. Single-thread work declares `items: []`. |
 | `workItemsPath` | `(per-session by default)` | Override for the ledger file path: an explicit value makes all sessions share one file (the old workspace-level behaviour); the default is `.scratch/context-relay/work-items/<session>.json`. |
 | `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
 | `handoffApproval` | `'required'` | Compaction/handoff must pass the official approval; deployments without an approval UI may set `'off'` (risk accepted by the deployment). |
 | `inheritOnHandoff` | `true` | The next session inherits the old model route and permission profile; `false` returns to deployment defaults. |
-| `releaseOnCompress` | `true` | After compaction, best-effort release of the Lead own still-resident finished child sessions and retired teammate identities (the kernel usually auto-releases at natural settlement, so usually nothing is left). |
-| `releaseRetiredGeneration` | `true` | After a teammate renewal, best-effort release of the old identity still-resident session. |
-| `teamFirstSubagents` | `'ask'` | With a team, the Lead needs your approval to open a separate subagent; `'off'` keeps only the protocol text. Fails open when the deployment has no approval service; inactive when `handoffApproval='off'` because the whole approval gate is not installed. |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | Internal ids of the two modes. |
 
 Sidebar settings (human-editable, hot-reloaded): watermark basis + default mode / auto decide / auto compact / auto handoff / budget unlimited.
@@ -190,21 +186,21 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 | `relay_phase` | Declare or switch phase; validates entry conditions and the self-check; delivery requires an independent review and a report. |
 | `relay_organize` | Write the handover page (with automatic documentation check and key-file index) → official compaction → inject the page back (with a re-read-when-needed reminder). At most once per session by default; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode the second one needs an explicit human request (`force`). |
 | `relay_handoff` | Produce a handover of at most 8KB (including the rolling progress file and the work ledger), create a new relay session and clean up the old session tree. |
-| `relay_work_items` | Read or maintain the work ledger: no args = read; Lead replaces the whole list (optional `rev` optimistic lock); teammates use `updates` to patch status/next/evidence/blocked on items they own. |
+| `relay_work_items` | Read or maintain the Leader work ledger: no args = read; the Lead replaces the whole list (optional `rev` optimistic lock); teammates/subagents cannot read or write it. |
 | `relay_recommend` | Lead only: write the model advice into the panel (cleared on phase switch, compaction, handoff or human choice). |
 | `doc_lint` | Four-part documentation check (quota / banned wording / index / git), output at most 2KB. |
 
-**Relay · very long tasks** adds team tools: `relay_team_status`, `relay_renew`, `relay_rehydrate` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates).
+**Relay · very long tasks** adds team tools: `relay_team_status`, `relay_renew`, `relay_architect` (Lead) and `relay_checkpoint`, `relay_freshen` (teammates). The architect model is chosen in the composer model menu ("Architect model / Architect effort" rows; the Lead asks you once if unset; handoff inherits it).
 
-HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/api` (handoff publication box), `GET /context-relay/work-items?sessionId=` (work ledger for the panel poller).
+HTTP (available only behind the local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/architect-models?sessionId=` (architect model catalog filtered by the session allowlist), `GET /context-relay/work-items?sessionId=` (work ledger for the panel poller).
 
 ## Safety boundaries and costs
 
 - **Approval**: compaction and handoff need your go by default; exemptions come only from the panel auto-authorisations (compact / handoff / just the next operation). The panel mode itself only decides what to do and never grants an exemption.
-- **Team first**: with a team, the Lead asks you before opening a separate subagent; turn it off, or with no approval service, it degrades to protocol text.
+- **Teams and subagents**: from DSH 0.2.2-rc.2 a teammate is itself a subagent-tree member, so relay no longer distinguishes "open a subagent" from "use a teammate"; subagent creation belongs to the official tools.
 - **A handoff creates a new session and consumes quota**: it interrupts running teammates and background jobs of the old session tree and migrates scheduled jobs; the old session is marked as handed off for audit.
 - **Compaction is lossy**: old conversation detail survives only in that handover page; put important conclusions into documents.
-- **No autonomous loop**: relay stays human-gated; use the official Ralph / workflow / subagent for repetitive bulk work (with a team, opening a subagent needs approval first).
+- **No autonomous loop**: relay stays human-gated; use the official Ralph / workflow / subagent for repetitive bulk work.
 - **Irreversible actions**: external, paid, credential or delete actions are reported first and need an explicit go; the plugin never auto-approves them.
 
 ## Known limitations
@@ -217,11 +213,11 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - A session compacts once by default to avoid summary drift; when the human sets the panel mode to compact and continue, a second compaction runs as the human chose (approval still applies); without a panel mode it needs an explicit human request (`force`).
 - If writing the panel state fails it lives in memory only (lost on restart); settings writes are persist-first.
 - UI text is Chinese-only; the Chinese docs are the source of truth.
-- The work ledger is **shared per workspace**: several relay sessions in the same workspace see the same ledger (the `rev` optimistic lock prevents silent overwrites); the panel is read-only and edits go through the agent tool; the default cap is 30 items and an overflow write is refused (no automatic deletion of done items).
-- Resource reclamation is a fallback: the kernel usually auto-releases at natural settlement, so a compaction usually has nothing left (no memory-saving promise); only rare cases such as a still-resident old identity at renewal actually free anything.
-- The team-first hard gate matches the exact tool names `subagent` / `subagent_fork`; other custom delegation tools are out of scope. From DSH 0.2.2-rc.2 teammates are subagent-tree members, so the gate cannot distinguish "open a subagent" from "use a teammate" and lets the call through.
-- From DSH 0.2.2-rc.2 Agent Teams is only a shared task board; the plugin adapts teammates through the subagent tree. Per-id resource release has no equivalent API (handoff still drains the whole tree), so reclamation is a no-op on rc.2.
-- Preset rows follow the official ptc patches of 0.2.2-rc.1 / 0.2.2-rc.2; earlier 0.2.1-series kernels no longer have separately maintained rows.
+- The work ledger is **session-level and Leader-only**: each relay session has its own ledger; teammates/subagents neither read nor write the Lead ledger, and it is not shown in their UI. Handoff copies it to the new session (`rev` kept). The panel is read-only and edits go through the agent tool; the default cap is 30 items and an overflow write is refused (no automatic deletion of done items).
+- Resource reclamation is not promised: the kernel usually auto-releases at natural settlement; relay keeps an internal activation handle only for renewal capacity, and no longer promises memory savings after compaction.
+- The team-first gate is removed: from DSH 0.2.2-rc.2 teammates are subagent-tree members, so the plugin cannot distinguish "open a subagent" from "use a teammate".
+- The architect has no default model: the Lead asks you once (or you choose "Architect model" in the composer model menu); if unselected, `relay_architect` refuses instead of silently inheriting the Lead model; the chosen model must also be inside the session's official subagent allowlist.
+- Preset rows follow the official 0.2.2-rc.2 ptc patch only; earlier kernels (rc.1 / 0.2.1 series) are no longer supported.
 
 ## Development
 

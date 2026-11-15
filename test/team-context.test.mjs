@@ -16,6 +16,7 @@ import { thresholdsFromPercent } from '../lib/policy.js';
 import {
   TEAM_CONTEXT_DIR, clearTeamContextRow, mergeTeamContext, readTeamContext, replaceTeamContext, teamContextRelativePath, teamPendingText,
 } from '../lib/agent/team-context.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const CONTRACT_CHECK = { requirement: '需求已定：上下文管理防遗忘', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户' };
 const TEAM_CONTEXT_REL = TEAM_CONTEXT_DIR.join('/');
@@ -56,7 +57,9 @@ function fakeServices({ session, pressure = { contextWindow: 1_000_000, projecte
   return { services, state };
 }
 
-function fakeCtx(services) {
+function fakeCtx(services = {}) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
   const tools = new Map();
   const events = [];
   const ctx = {
@@ -65,12 +68,14 @@ function fakeCtx(services) {
     logger: { info() {}, warn() {} },
     systemPrompt: { section() { return () => {}; }, context() { return () => {}; } },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return services?.[name]; },
+    get(name) { return normalized?.[name]; },
   };
   return { ctx, tools, events };
 }
 
 function fakeTeamCtx(services = {}) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
   const tools = new Map();
   const ctx = {
     effect(fn) { fn(); return () => {}; },
@@ -78,7 +83,7 @@ function fakeTeamCtx(services = {}) {
     logger: { info() {}, warn() {} },
     systemPrompt: { section() { return () => {}; } },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return services[name]; },
+    get(name) { return normalized[name]; },
   };
   return { ctx, tools };
 }
@@ -204,18 +209,16 @@ test('relay_team_status：队友到线写团队上下文快照 + pending 提示�
 
 // ── relay_phase：team_note 硬闸门 + 快照兜底 ───────────────────────────
 
-test('relay_phase 跨 phase：读不到 Agent Teams 时用快照兜底——队友待处理仍要 team_note', async () => {
+test('relay_phase 跨 phase：读不到 Agent Teams 时用快照兜底——队友待处理只 warning，不拒绝', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-tc-fallback', cwd, seq: 0 });
   mergeTeamContext(cwd, 'session-tc-fallback', { name: 'mate-9', band: 'relay' });
   const bundle = applyAgent(fakeServices({ session }).services);
   const phase = bundle.tools.get('relay_phase');
-  await assert.rejects(
-    phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } }),
-    /team context.*mate-9.*team_note/s,
-  );
-  const ok = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK, team_note: 'mate-9 已 checkpoint；phase 边界后 handoff 重建小队' }, { agent: { session, options: {} } });
+  const warned = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  assert.match(warned.teamWarning, /mate-9/, 'v0.7.0：队友上下文提醒降级为 warning，不拒绝切 phase');
+  const ok = await phase.execute({ phase: 'verify', contract_check: CONTRACT_CHECK, team_note: 'mate-9 已 checkpoint；phase 边界后 handoff 重建小队' }, { agent: { session, options: {} } });
   assert.equal(readTeamContext(cwd, 'session-tc-fallback').pending.length, 0);
   assert.equal(readTeamContext(cwd, 'session-tc-fallback').note, 'mate-9 已 checkpoint；phase 边界后 handoff 重建小队');
   assert.equal(ok.team, undefined, '无 Agent Teams 服务 → 不加 team 段');
@@ -292,7 +295,7 @@ test('派活时评估队友上下文：send_message 到 organize 队友 → 下�
   const pre = bundle.events.find((entry) => entry.name === 'agent/pre-step').listener;
   const injected = [];
   const leadAgent = { session: leadSession, options: {}, inject(message) { injected.push(message); } };
-  const send = (target) => post({ name: 'send_message', arguments: { target, message: '开始做 X' }, agent: leadAgent }, { isError: false }, async () => ({}));
+  const send = (target) => post({ name: 'send_message', arguments: { agent: target, message: '开始做 X' }, agent: leadAgent }, { isError: false }, async () => ({}));
 
   await send('mate-1'); // 到线队友：派活需要先管理
   await send('mate-2'); // 在线内：不需要
@@ -341,7 +344,7 @@ test('每次派活先读状态：空闲队友每次都先给判断点（到线�
   // 本插件的派活闸门（同 ctx 上可能还有别的 pre-execute 监听，按名字取）。
   const pre = bundle.events.filter((entry) => entry.name === 'tools/pre-execute').map((entry) => entry.listener).find((listener) => listener.name === 'dshContextRelayDispatchGate');
   const leadAgent = { session: leadSession, options: {} };
-  const call = (target) => pre({ name: 'send_message', arguments: { target, message: '做 X' }, agent: leadAgent, signal: new AbortController().signal }, async () => ({ kind: 'allow' }));
+  const call = (target) => pre({ name: 'send_message', arguments: { agent: target, message: '做 X' }, agent: leadAgent, signal: new AbortController().signal }, async () => ({ kind: 'allow' }));
 
   // 到线 + 空闲：判断点给「先管理再派 / 直接派」
   const denied = await call('mate-1');

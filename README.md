@@ -34,7 +34,6 @@
 - 提问先说结论和影响，再给选项（推荐 + 默认 + 后果），等你一句话；
 - 不可逆、对外、付费、凭据、删除这类动作，先停下来说清「做什么、为什么、怎么撤」，拿到明确同意才动；
 - 同一类问题不重复问；你给过的答案会记住，并带进交接；
-- 已经有智能体团队时，Lead 想再开一个独立子代理要先问你，不会绕开团队另起炉灶。
 
 ### 3. 优化长任务、复杂任务的执行能力，降低偏移
 
@@ -62,7 +61,7 @@
 
 ## 安装
 
-要求：DSH `>=0.2.1-rc.2`、Node.js `>=20`。已验证 DSH 0.2.2-rc.1（当前内核）与 0.2.2-rc.2（升级目标）：两代内核自动选择官方 preset 行；团队能力（体检/换代/重建）在 rc.2 由 subagent 树适配。
+要求：DSH `>=0.2.2-rc.2`（只支持这一代内核）、Node.js `>=20`。已验证 DSH 0.2.2-rc.2：preset 行跟随官方 ptc patch；团队能力（体检/换代/架构师）由 subagent 树适配；台账为 Leader-only，队友不读写。
 
 ### 方式 A（推荐）：DSH Web UI 侧栏「插件」安装
 
@@ -137,7 +136,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 - **上下文不靠记忆**：同一行注入还会带「[上下文] band=…」与「[队友] 队友待处理…」——Lead 自己的到线档位（到线时给边界动作）、队友谁该打检查点/清空/换代，都摆在焦点行上（事件驱动；快照落盘，压缩/重启后仍在）；
 - **每次派活前先读状态由 Lead 判断**：Lead 给空闲队友发任务前（`send_message`），插件先读该队友档位/状态并**先给一个判断点**（这条消息先不发出）——到线/读不到：①先管理再派（让它 `relay_checkpoint` 收口，再 `relay_freshen({reset:true, brief})` 清空复用，同成员 0 额度，换身份才 renew，处理完重派）；②直接派（原样重发即放行，算 Lead 的判断）。在线内也会给判断点（直接派 or 先 checkpoint）。忙队友只有到线/读不到才拦，普通协调消息不拦；忽略的，切阶段时 `team_note` 兜底——不静默忘记队友上下文；
 - **字段**：编号（短 slug）、标题、状态（待办/进行中/阻塞/已完成）、负责人、下一步、阻塞原因、证据、完成标准、依赖、所属阶段；
-- **落盘**：`.scratch/context-relay/work-items/<session>.json`（会话级：每个根会话一份，队友共用 Lead 的台账；交接时自动复制到新会话），agent 用 `relay_work_items` 维护；
+- **落盘**：`.scratch/context-relay/work-items/<session>.json`（会话级、Leader-only：每个根会话一份；交接时自动复制到新会话），agent 用 `relay_work_items` 维护；
 - **对账**：交接时未闭合项自动变成新会话的「下一步」（最多 8 条）；压缩材料自动带「未闭合工作项」段；进「交付」阶段默认要求全部完成或阻塞；
 - **面板**：输入框上方 `台账 3/8` 胶囊，点开按状态分组看全部条目；只读，编辑一律走 agent 工具。
 
@@ -148,9 +147,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 长任务里最贵的是「路线没想清就开写」。这个模式给团队配一个**固定架构师队友**（名字固定为 `architect`，只建一次、长期复用）：
 
 - **Lead 只做两件事**：与用户对齐需求（边界/验收/取舍）、读项目文档理解业务与现状；
-- **架构师把需求转成工程路线**：每次任务都以**低上下文**开始——只读必须的上下文（Lead 的需求 brief、文档指针、相关模块入口），产出工程实现文档（默认 `.scratch/context-relay/architecture/<task>.md`，含需求对齐/技术路线/模块接口/数据协议/风险取舍/待决策/实现步骤与验收）；交付后**只 `checkpoint` 归档**并等下一任务——**清空发生在新任务到达时**，由 Lead 按需要决定是否 `freshen(reset)`（brief=新任务）再派；任务连续且上下文还低就直接接着做；
+- **架构师把需求转成工程路线**：每次任务都以**低上下文**开始——只读必须的上下文（Lead 的需求 brief、文档指针、相关模块入口），产出工程实现文档（默认 `.scratch/context-relay/architecture/<task>.md`，含需求对齐/技术路线/模块接口/数据协议/风险取舍/待决策/实现步骤与验收）；Lead 用 `relay_architect({mode:'fresh'})` 换新上下文（旧代先 checkpoint），任务连续且上下文还低才用 `mode:'continue'`；交付后只 `checkpoint` 归档并等下一任务；
 - **需要用户拍板的**：架构师写进文档「待决策」并报 Lead，由 Lead 拿去找你敲定，再把结论回给架构师——架构师不直接问你、不自行替用户决定；
-- **开关**：composer 里「预算无上限」旁边多一个「架构师」小胶囊（只对「接力·超长任务」会话显示），按会话控制 Lead 是否把工程路线设计交给架构师（默认开）；接力到新会话会继承。
+- **开关与模型**：composer 里「预算无上限」旁边有「架构师」小胶囊（只对「接力·超长任务」会话显示），按会话控制是否把工程路线交给架构师（默认开）。**模型在 DSH 的模型菜单里选**：点开输入框的模型选择器，「模型 / 推理等级」下面就是「架构师模型 / 架构师推理等级」两行，菜单外壳、定位与键盘/失焦行为由官方菜单负责（选完保持展开，方便接着调推理等级）。**架构师模型受官方子代理模型白名单约束**：菜单只列本会话白名单内的模型；旧会话没有白名单记录时按官方语义只允许 Lead 当前模型（新会话会使用设置里的白名单）。**不设默认模型**：未选择时 `relay_architect` 拒绝，Lead 先问你一次；选择随接力继承，绝不静默继承 Lead 模型。
 
 ## 配置
 
@@ -165,15 +164,12 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `architect` | `true` | 专职架构师开关的**默认值**（composer「架构师」小胶囊按会话覆盖；只在 relay-long 会话生效）。 |
 | `workItems` | `true` | 启用工作台账（工具 + 闸门 + 面板）；`false` 完全回退旧行为。 |
 | `workItemsGate` | `'strict'` | **交付（ship）阶段**的台账校验强度：`strict`（不合格拒绝）/ `warn`（只提示）/ `off`。交接与压缩始终把台账写进材料、文件损坏只警告（fail-open），不受本项影响。 |
-| `workItemsPhaseGate` | `'strict'` | **切阶段（phase 边界）**收口闸门：本阶段未完成的分点未收口且未 carry → `strict` 拒绝切阶段 / `warn` 放行+提示 / `off`。单线程小任务用 `items:[]` 声明放行。 |
+| `workItemsPhaseGate` | `'warn'` | **切阶段（phase 边界）**收口提示：本阶段未完成的分点未收口且未 carry → `warn` 放行+提示（默认）/ `strict` 拒绝切阶段 / `off`。单线程小任务用 `items:[]` 声明放行。 |
 | `workItemsPath` | `（默认按会话）` | 台账文件位置覆盖：显式设置则所有会话共用该文件（旧 workspace 级行为）；默认按会话落在 `.scratch/context-relay/work-items/<session>.json`。 |
 | `workItemsMax` | `30` | 台账条目上限（1–100）。 |
 | `injectBrief` | `true` | 压缩成功后是否把那一页交接材料放回对话。 |
 | `handoffApproval` | `'required'` | 压缩/交接必须走官方审批；没有审批界面的部署可以设 `'off'`（风险由部署方承担）。 |
 | `inheritOnHandoff` | `true` | 交接后新会话沿用旧会话的模型和权限；`false` 则回部署默认。 |
-| `releaseOnCompress` | `true` | 压缩后顺手释放当前 Lead 名下仍占着的已结束子会话和已退休队友身份（内核自然结束时通常已自动释放，一般无可释放）。 |
-| `releaseRetiredGeneration` | `true` | 队友换代后，顺手释放旧身份仍占着的会话。 |
-| `teamFirstSubagents` | `'ask'` | 已有团队时，Lead 开独立子代理要先问你；`'off'` 只保留协议文本。部署没有审批服务时不拦（只留文本）；`handoffApproval='off'` 时整道审批门不安装、本项不生效。 |
 | `presetId` / `longPresetId` | `relay` / `relay-long` | 两个模式的内部 id。 |
 
 侧栏设置（人类可改，热生效）：水位线基准 + 默认模式 / 自动决定 / 自动压缩 / 自动交接 / 预算无上限。
@@ -190,18 +186,18 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `relay_phase` | 声明或切换阶段；校验进入条件和自查，交付阶段要求独立审查与汇报。 |
 | `relay_organize` | 写那一页交接材料（自动附文档体检结论和关键文件索引）→ 官方压缩 → 材料注入回对话（含「压缩后需要时重读」提示）。每会话默认最多一次；人类在面板选『压缩继续』时按人类选择执行第二次（仍过审批）；无面板模式时第二次压缩需人类明确要求（`force`）。 |
 | `relay_handoff` | 生成 ≤8KB 交接单（含滚动进度文件与工作台账），创建新接力会话并清理旧会话树。 |
-| `relay_work_items` | 读写工作台账：无参数 = 读；Lead 整表替换（可带 `rev` 乐观锁）；队友用 `updates` 补丁只改自己名下条目的状态/下一步/证据/阻塞。 |
+| `relay_work_items` | 读写 Leader 自己的工作台账：无参数 = 读；Lead 整表替换（可带 `rev` 乐观锁）；队友/子代理不可读写。 |
 | `relay_recommend` | Lead 专用：把模型建议的做法写进面板（切阶段、压缩、交接、人类选择后清空）。 |
 | `doc_lint` | 四项文档体检（配额 / 违禁措辞 / 索引 / git），输出 ≤2KB。 |
 
-**接力 · 超长任务**另有团队工具：`relay_team_status`、`relay_renew`、`relay_rehydrate`（Lead）与 `relay_checkpoint`、`relay_freshen`（队友）。
+**接力 · 超长任务**另有团队工具：`relay_team_status`、`relay_renew`、`relay_architect`（Lead）与 `relay_checkpoint`、`relay_freshen`（队友）。架构师模型在输入框的模型菜单里选择（「架构师模型 / 架构师推理等级」两行；未选择时 Lead 先问你一次；handoff 继承）。
 
-HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`GET/PUT /context-relay/panel`、`GET /context-relay/api`（交接发布箱）、`GET /context-relay/work-items?sessionId=`（工作台账，供面板轮询）。
+HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`GET/PUT /context-relay/panel`、`GET /context-relay/architect-models?sessionId=`（按会话白名单过滤的架构师模型目录）、`GET /context-relay/work-items?sessionId=`（工作台账，供面板轮询）。
 
 ## 安全边界与代价
 
 - **审批**：压缩和交接默认要你点头；免审只来自面板里的自动授权（「压缩」「交接」「只下一次操作」）。面板模式本身只决定「做什么」，不产生免审。
-- **团队优先**：已有团队时，Lead 另开独立子代理要你确认；关掉该配置或部署没有审批服务时退化为协议文本。
+- **团队与子代理**：DSH 0.2.2-rc.2 起队友本身就是 subagent 树成员，relay 不再区分「开子代理」与「用队友」，子代理创建由官方工具面负责。
 - **交接会开新会话并消耗额度**：会中断旧会话树里正在跑的队友和后台任务，并迁移定时任务；旧会话标记为已交接，留作审计。
 - **压缩有损**：旧对话细节只留在那一页材料里；重要结论请写进文档。
 - **不自动循环**：relay 保持人来把关；重复性整块劳动请用官方 Ralph / workflow / subagent（有团队时开子代理需先确认）。
@@ -217,11 +213,11 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 - 一个会话默认只压缩一次，避免摘要越压越漂；人类在面板把模式选为『压缩继续』时按人类选择执行第二次（仍过审批）；没有面板模式时第二次压缩需要人类明确要求（`force`）。
 - 面板状态写盘失败时只留在内存里（重启即丢）；设置文件是持久化优先。
 - 界面文案只有中文；文档以中文为准。
-- 工作台账是**会话级**：同一个工作区的多个接力会话各有一份（不再互相串账/覆盖）；队友共用 Lead 的台账；交接时复制到新会话（rev 保留）。面板只读，编辑走 agent 工具；条目上限默认 30，超限会拒绝写入并提示先关闭/归档已完成项（不会自动删）。
-- 资源回收是兜底：内核在子会话自然结束时通常已自动释放，压缩时点通常没有可回收的（不承诺省内存）；只有换代时旧身份仍驻留等少数情况会真正释放。
-- 团队优先的硬门按工具名精确匹配 `subagent` / `subagent_fork`，其它自定义派工工具不在覆盖内；DSH 0.2.2-rc.2 起队友就是 subagent 树成员，该软闸门无法区分「开子代理」与「用队友」，自动放行。
-- DSH 0.2.2-rc.2 起 Agent Teams 只剩共享任务板，插件通过 subagent 树适配队友；逐 id 资源释放没有等价 API（交接仍整树 drain），rc.2 上资源回收退化为 no-op。
-- preset 行数据跟随 0.2.2-rc.1 / 0.2.2-rc.2 两套官方 ptc patch；更早内核（0.2.1 系列）不再单独维护行数据。
+- 工作台账是**会话级、Leader-only**：同一个工作区的多个接力会话各有一份；队友/子代理不读写 Lead 台账，也不在 UI 展示。交接时复制到新会话（rev 保留）。面板只读，编辑走 agent 工具；条目上限默认 30，超限会拒绝写入并提示先关闭/归档已完成项（不会自动删）。
+- 资源回收不承诺：内核在子会话自然结束时通常已自动释放；relay 只保留内部 activation 句柄用于换代容量，不再向用户承诺「压缩后释放内存」。
+- 团队优先闸门已删除：DSH 0.2.2-rc.2 起队友就是 subagent 树成员，无法区分「开子代理」与「用队友」。
+- 架构师不设默认模型：首次需要时由 Lead 问用户一次（或用户在输入框的模型菜单里选择「架构师模型」）；未选择时 `relay_architect` 拒绝，绝不静默继承 Lead 模型；选中的模型还必须在该会话的官方子代理白名单内。
+- preset 行数据只跟随 0.2.2-rc.2 的官方 ptc patch；更早内核（rc.1 / 0.2.1 系列）不再支持。
 
 ## 开发
 

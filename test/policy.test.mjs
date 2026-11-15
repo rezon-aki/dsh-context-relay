@@ -431,8 +431,8 @@ test('buildHandoff clips items by Unicode code points and reports caps.chars in 
   assert.ok(markdown.length > caps.chars.used, 'markdown.length 是 code unit，不能当口径');
 });
 
-test('DEFAULT_PANEL_STATE / normalizePanelState: 14 字段白名单（v0.3.3 模型推荐 + v0.6.4 架构师），handoffPreAuthorized 已删除，unlimitedBudget/architect 三值严格化', () => {
-  const keys = ['architect', 'authorizeNext', 'autoChoose', 'autoCompress', 'autoDecision', 'autoHandoff', 'defaultOperation', 'handedOff', 'handoffPreset', 'handoffUnlimitedBudget', 'recommendedAt', 'recommendedOperation', 'recommendedReason', 'unlimitedBudget'];
+test('DEFAULT_PANEL_STATE / normalizePanelState: 15 字段白名单（v0.3.3 模型推荐 + v0.6.4 架构师 + v0.7.0 架构师模型），handoffPreAuthorized 已删除，unlimitedBudget/architect 三值严格化', () => {
+  const keys = ['architect', 'architectModel', 'authorizeNext', 'autoChoose', 'autoCompress', 'autoDecision', 'autoHandoff', 'defaultOperation', 'handedOff', 'handoffPreset', 'handoffUnlimitedBudget', 'recommendedAt', 'recommendedOperation', 'recommendedReason', 'unlimitedBudget'];
   assert.deepEqual(Object.keys(DEFAULT_PANEL_STATE).sort(), keys);
   assert.equal('handoffPreAuthorized' in DEFAULT_PANEL_STATE, false);
   const state = normalizePanelState({ handoffPreAuthorized: true, autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
@@ -454,6 +454,12 @@ test('DEFAULT_PANEL_STATE / normalizePanelState: 14 字段白名单（v0.3.3 模
   assert.equal(normalizePanelState({ architect: false }).architect, false);
   assert.equal(normalizePanelState({ architect: 'true' }).architect, null);
   assert.equal(normalizePanelState({}).architect, null);
+  // v0.7.0 架构师模型：{provider,model,reasoningEffort?}；缺 provider/model 或非法 → null（未选择）
+  assert.deepEqual(normalizePanelState({ architectModel: { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' } }).architectModel, { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' });
+  assert.deepEqual(normalizePanelState({ architectModel: { provider: 'geekai', model: 'gpt-6.1-sol' } }).architectModel, { provider: 'geekai', model: 'gpt-6.1-sol' });
+  assert.equal(normalizePanelState({ architectModel: { provider: 'geekai' } }).architectModel, null);
+  assert.equal(normalizePanelState({ architectModel: { provider: 'bad provider', model: 'x' } }).architectModel, null);
+  assert.equal(normalizePanelState({}).architectModel, null, '缺省 null = 首次由 Lead 问用户');
   // v0.2.14 handoffPreset（下一个接力会话模式）：preset id 字符集 1-64 位、字母/数字开头；其余（含旧 panel.json 脏值）归 null
   assert.equal(DEFAULT_PANEL_STATE.handoffPreset, null);
   for (const ok of ['relay', 'relay-long', 'my.mode_1', 'a', 'A'.repeat(64), '9x']) {

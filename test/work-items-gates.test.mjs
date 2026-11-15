@@ -18,6 +18,7 @@ import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
@@ -40,6 +41,10 @@ function tmpCwd() {
 }
 
 function fakeCtx(overrides = {}) {
+  const provided = overrides.services ?? {};
+  const fixture = provided.agentTeams !== undefined && provided.subagents === undefined ? subagentsFromLegacy(provided.agentTeams) : undefined;
+  const services = fixture === undefined ? provided : { ...provided, subagents: fixture, agents: provided.agents ?? fixture.agentsService };
+  const normalized = services;
   const tools = new Map();
   const sections = [];
   const events = [];
@@ -50,7 +55,7 @@ function fakeCtx(overrides = {}) {
     logger: { info(message) { logs.push('info ' + message); }, warn(message) { logs.push('warn ' + message); } },
     systemPrompt: { section(definition) { sections.push(definition); return () => {}; }, context() { return () => {}; } },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return overrides.services?.[name]; },
+    get(name) { return normalized[name]; },
   };
   return { ctx, tools, sections, events, logs };
 }
@@ -219,7 +224,7 @@ test('relay_phase：carry 无效 id 显式报告；items 非字符串拒绝', as
   );
 });
 
-test('relay_work_items：队友只能 patch 自己 owner 的项；整表替换 lead-only；非 Team subagent 只读也被拒', async () => {
+test('relay_work_items：v0.7.0 起 Lead-only；队友/子代理读写一律拒绝', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   writeLedger(cwd, [
@@ -228,34 +233,25 @@ test('relay_work_items：队友只能 patch 自己 owner 的项；整表替换 l
   ], { rev: 4 });
   const lead = { session: fakeSession({ id: 'session-wi-lead2', cwd, seq: 0 }), options: {} };
   const teammate = { session: fakeSession({ id: 'session-wi-w1', cwd, seq: 0, header: { cwd, origin: 'subagent' } }), options: {} };
-  const plainSub = { session: fakeSession({ id: 'session-wi-sub', cwd, seq: 0, header: { cwd, origin: 'subagent' } }), options: {} };
-  const teams = {
-    tryMembership: (caller) => (caller === teammate ? { role: 'teammate', name: 'worker-1' } : caller === lead ? { role: 'lead', name: 'lead' } : undefined),
-    listMembers: () => [],
-  };
-  const { tools } = applyAgent(fakeServices({ session: lead.session, extra: { agentTeams: teams } }).services);
+  const { tools } = applyAgent(fakeServices({ session: lead.session }).services);
   const tool = tools.get('relay_work_items');
 
-  const read = await tool.execute({}, { agent: teammate });
-  assert.equal(read.ok, true);
-  assert.equal(read.items.length, 2, '队友读全量');
-  const patched = await tool.execute({ updates: [{ id: 'own-a', status: 'done', evidence: ['lib/a.js:1'] }] }, { agent: teammate });
-  assert.equal(patched.ok, true, JSON.stringify(patched));
-  assert.equal(patched.mode, 'patch');
-  assert.equal(patched.counts.done, 1);
-  assert.equal(patched.rev, 5);
-  assert.equal(readLedgerFile(cwd).rev, 5);
-  const scoped = await tool.execute({ updates: [{ id: 'lead-a', status: 'done' }] }, { agent: teammate });
-  assert.equal(scoped.ok, false);
-  assert.equal(scoped.code, 'teammate-scope');
-  const replace = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }] }, { agent: teammate });
-  assert.equal(replace.ok, false);
-  assert.equal(replace.code, 'lead-only', '队友不能整表替换');
-  const subRead = await tool.execute({}, { agent: plainSub });
-  assert.equal(subRead.ok, false);
-  assert.equal(subRead.code, 'lead-only', '非 Team subagent 连读都不行');
-  const noop = await tool.execute({ updates: [] }, { agent: teammate });
-  assert.equal(noop.code, 'invalid-item');
+  for (const agent of [teammate]) {
+    const read = await tool.execute({}, { agent });
+    assert.equal(read.ok, false, '队友不能读 Leader 台账');
+    assert.equal(read.code, 'lead-only');
+    const patch = await tool.execute({ updates: [{ id: 'own-a', status: 'done' }] }, { agent });
+    assert.equal(patch.ok, false);
+    assert.equal(patch.code, 'lead-only');
+    const replace = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }] }, { agent });
+    assert.equal(replace.ok, false);
+    assert.equal(replace.code, 'lead-only');
+  }
+  const leadRead = await tool.execute({}, { agent: lead });
+  assert.equal(leadRead.ok, true);
+  assert.equal(leadRead.items.length, 2);
+  const leadReplace = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }], rev: 4, drop: ['own-a', 'lead-a'] }, { agent: lead });
+  assert.equal(leadReplace.ok, true, JSON.stringify(leadReplace));
 });
 
 test('relay_work_items：workItems=false 时结构化拒绝且不读写（work-items-disabled）', async () => {
@@ -322,7 +318,7 @@ test('relay_status：台账存在附 workItems 摘要 + text 末行；空台账 
 
 // ── 会话级台账（v0.5.1：跟会话走） ───────────────────────────────────
 
-test('会话级台账：同 cwd 两个会话互不串账；队友读写的是 Lead 的台账', async () => {
+test('会话级台账：同 cwd 两个会话互不串账；队友不碰 Lead 台账（v0.7.0 Lead-only）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const leadA = fakeSession({ id: 'session-scope-a', cwd, seq: 0 });
@@ -340,20 +336,13 @@ test('会话级台账：同 cwd 两个会话互不串账；队友读写的是 Le
   assert.equal((await callA({})).exists, true);
   assert.equal((await callB({})).exists, false, '另一个会话读不到本会话台账');
 
-  // 队友（subagent + parentSession=Lead）共享 Lead 的会话级台账：读同一文件、可按 owner patch。
+  // v0.7.0：台账是 Leader 自己的项目管理队列；队友不读也不写。
   const mate = fakeSession({ id: 'session-scope-a-mate', cwd, header: { cwd, origin: 'subagent', parentSession: 'session-scope-a' }, seq: 0 });
-  const mateServices = fakeServices({
-    session: mate,
-    extra: { agentTeams: { tryMembership: () => ({ role: 'teammate', name: 'mate-1' }), listMembers: () => [] } },
-  });
-  const mateBundle = applyAgentScoped(mateServices.services);
+  const mateBundle = applyAgentScoped(fakeServices({ session: mate }).services);
   const mateAgent = { session: mate, options: {} };
-  const mateCall = (args) => mateBundle.tools.get('relay_work_items').execute(args, { agent: mateAgent });
-  const mateRead = await mateCall({});
-  assert.equal(mateRead.relativePath, wrote.relativePath, '队友共用 Lead 的台账');
-  const patched = await mateCall({ updates: [{ id: 'a1', status: 'doing', next: '在写' }] });
-  assert.equal(patched.ok, true, JSON.stringify(patched));
-  assert.equal((await callA({})).items[0].status, 'doing', 'Lead 读到队友的 patch');
+  const mateRead = await mateBundle.tools.get('relay_work_items').execute({}, { agent: mateAgent });
+  assert.equal(mateRead.ok, false, '队友不能读 Leader 台账');
+  assert.equal(mateRead.code, 'lead-only');
 });
 
 test('会话级台账：旧 workspace 级文件在首次读取时按 updatedBy 迁移到本会话（不偷别人的）', async () => {
@@ -424,6 +413,31 @@ test('relay_organize：brief 写盘追加「未闭合工作项」段；空台账
   assert.equal(emptyResult.ok, true);
   const emptyBrief = readFileSync(emptyResult.briefPath, 'utf8');
   assert.ok(!emptyBrief.includes('## 未闭合工作项'), '空台账 brief 不新增段');
+});
+
+test('relay_organize：默认（无 workItemsPath 覆盖）读会话级台账，旧 workspace 级文件不串入 brief', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const sessionId = 'session-wi-org-scope';
+  // 旧 workspace 级台账（另一会话/旧版本遗留）：不得被本次 brief 读到。
+  writeLedger(cwd, [{ id: 'stale', title: '陈旧条目', status: 'open' }], { rev: 2 });
+  // 本会话级台账：organize brief 应只带它。
+  const scopedPath = join(cwd, '.scratch/context-relay/work-items', sessionId + '.json');
+  mkdirSync(dirname(scopedPath), { recursive: true });
+  writeFileSync(scopedPath, JSON.stringify({
+    version: 1, rev: 5, updatedAt: '2026-11-15T00:00:00.000Z', updatedBy: 'test',
+    items: [{ id: 'api-export', title: '导出 API', status: 'doing', next: '写 handler', phase: 'build' }],
+  }, null, 2));
+  const session = fakeSession({ id: sessionId, cwd, seq: 0 });
+  const compaction = { async compactIfNeeded() { return { shadowedTokenCount: 100 }; } };
+  const { tools } = applyAgentScoped(fakeServices({ session, compaction }).services);
+  const result = await tools.get('relay_organize').execute({ phase: 'build', brief: '完成设计', force: true }, { agent: { session, options: {}, inject() {} } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const briefText = readFileSync(result.briefPath, 'utf8');
+  assert.match(briefText, /## 未闭合工作项/);
+  assert.match(briefText, /\[api-export\] 导出 API/);
+  assert.match(briefText, /work-items\/session-wi-org-scope\.json · rev 5/);
+  assert.ok(!briefText.includes('陈旧条目'), '不得读 workspace 级旧台账');
 });
 
 // ── relay_phase：ship 闸门 ────────────────────────────────────────────
@@ -503,7 +517,7 @@ test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；item
     { id: 'c1', title: '其他阶段', status: 'doing', next: 'y', phase: 'verify' },
   ], { rev: 1 });
   const session = fakeSession({ id: 'session-wi-leftover', cwd, seq: 0 });
-  const { tools } = applyAgent(fakeServices({ session }).services);
+  const { tools } = applyAgent(fakeServices({ session }).services, { workItemsPhaseGate: 'strict' });
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
   // discover→build：discover 无未闭合 → 放行；items 开分点（中文标题回退 point）
@@ -581,7 +595,7 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   assert.match(injected[2].content[0].text, /未领取：open「补文档」/);
 });
 
-test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处理未写 team_note 拒绝（零副作用）', async () => {
+test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处理未写 team_note 只 warning（放行）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-team-triage', cwd, seq: 0 });
@@ -602,16 +616,15 @@ test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处�
   const phase = bundle.tools.get('relay_phase');
   const ctxFile = join(cwd, '.scratch/context-relay/team-context/session-team-triage.json');
 
-  // 队友 mate-1 到 organize 且没写 team_note：phase 边界拒绝（不静默忘记队友上下文）。
-  await assert.rejects(
-    phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } }),
-    /team context.*mate-1.*team_note/s,
-  );
-  assert.ok(!existsSync(join(cwd, WORK_ITEMS_REL)), '拒绝路径不写台账');
-  assert.ok(!existsSync(ctxFile), '拒绝路径不写队友上下文快照');
+  // 队友 mate-1 到 organize 且没写 team_note：v0.7.0 只 warning，不拒绝切 phase。
+  const warned = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  assert.match(warned.teamWarning, /mate-1/, '队友上下文提醒降级为 warning');
+  assert.ok(!existsSync(join(cwd, WORK_ITEMS_REL)), '不写台账');
+  assert.ok(existsSync(ctxFile), 'triage 快照照常落盘');
+  assert.deepEqual(warned.team.pending, ['mate-1']);
 
-  // 写了处理结论才放行；triage 全量返回，快照落盘且 handler 标记已处理（焦点行不再重复催）。
-  const result = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK, team_note: 'mate-1 已 checkpoint，边界后 freshen(reset) 复用' }, { agent: { session, options: {} } });
+  // 写了处理结论后 triage 全量返回，handler 标记已处理（焦点行不再重复催）。
+  const result = await phase.execute({ phase: 'verify', contract_check: CONTRACT_CHECK, team_note: 'mate-1 已 checkpoint，边界后 freshen(reset) 复用' }, { agent: { session, options: {} } });
   assert.equal(result.team.members.length, 2);
   assert.deepEqual(result.team.members.map((row) => row.name), ['mate-1', 'mate-2']);
   assert.equal(result.team.members[0].band, 'organize');
@@ -828,6 +841,8 @@ test('到线提醒接入：台账非空时注入的 notice 带台账行；空台
 // ── team-tools：checkpoint 摘要 / renew owner 迁移 ──────────────────────
 
 function fakeTeamCtx(services = {}) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
   const tools = new Map();
   const listeners = [];
   const warns = [];
@@ -837,7 +852,7 @@ function fakeTeamCtx(services = {}) {
     logger: { info() {}, warn(...args) { warns.push(args.join(' ')); } },
     systemPrompt: { section() { return () => {}; } },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return services[name]; },
+    get(name) { return normalized[name]; },
   };
   return { ctx, tools, listeners, warns };
 }
@@ -921,41 +936,4 @@ test('relay_checkpoint：返回体带自己 owner 的未闭合台账摘要（无
   const offResult = await offTools.find((tool) => tool.name === 'relay_checkpoint').execute({ one_line: '禁用台账' }, { agent: offAgent });
   assert.equal(offResult.ok, true);
   assert.equal(offResult.workItems, null, 'workItems=false 不读台账');
-});
-
-test('relay_renew：换代成功后 owner 从旧代名迁移到新代名（workItemsMigrated）；失败不阻断', async () => {
-  resetSharedState();
-  const dir = tmpCwd();
-  writeLedger(dir, [
-    { id: 'own-a', title: '自己分支', status: 'doing', owner: 'impl-g1', next: '继续改' },
-    { id: 'other-a', title: '别人分支', status: 'doing', owner: 'reviewer', next: 'x' },
-  ]);
-  const lead = makeTeamAgent({ sessionId: TEAM_LEAD, cwd: dir });
-  const teammate = makeTeamAgent({ sessionId: 'session-impl-1', cwd: dir });
-  const teams = makeTeamService({
-    members: [
-      { id: TEAM_LEAD, name: 'lead', role: 'lead', status: 'running' },
-      { id: 'session-impl-1', name: 'impl-g1', role: 'teammate', status: 'inactive', description: '实现' },
-    ],
-    memberships: new Map([[lead, teamMembership('lead', 'lead', lead)]]),
-  });
-  const bundle = fakeTeamCtx({ agentTeams: teams });
-  // 先写 checkpoint（renew 前置条件）
-  const writeTeams = makeTeamService({ memberships: new Map([[teammate, teamMembership('teammate', 'impl-g1', lead)]]) });
-  const writeBundle = fakeTeamCtx({ agentTeams: writeTeams });
-  const writeTools = createTeamTools({ ctx: writeBundle.ctx, currentThresholds: () => thresholds, workItems: workItemsConfig }).teammateTools;
-  const checkpoint = await writeTools.find((tool) => tool.name === 'relay_checkpoint').execute({ one_line: '登录修复完成' }, { agent: teammate });
-  assert.equal(checkpoint.ok, true, JSON.stringify(checkpoint));
-  // 换代
-  const leadTools = createTeamTools({ ctx: bundle.ctx, currentThresholds: () => thresholds, workItems: workItemsConfig }).leadTools;
-  const renew = leadTools.find((tool) => tool.name === 'relay_renew');
-  const result = await renew.execute({ name: 'impl-g1' }, { agent: lead });
-  assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(result.next.name, 'impl-g2');
-  assert.equal(result.workItemsMigrated, 1, '1 条 owner 迁移');
-  const ledgerAfter = readLedgerFile(dir);
-  const own = ledgerAfter.items.find((item) => item.id === 'own-a');
-  assert.equal(own.owner, 'impl-g2', '同 lineage 新代名接手');
-  const other = ledgerAfter.items.find((item) => item.id === 'other-a');
-  assert.equal(other.owner, 'reviewer', '非旧代名 owner 不迁移');
 });

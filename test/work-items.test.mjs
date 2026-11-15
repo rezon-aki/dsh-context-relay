@@ -27,8 +27,6 @@ import {
   ledgerHandoffSection,
   ledgerEntryLine,
   checkShipGate,
-  applyItemUpdates,
-  migrateOwner,
   checkPhaseGate,
   applyPhaseCarry,
   createPhaseItems,
@@ -49,12 +47,12 @@ const readSeed = (cwd) => readWorkItems(cwd);
 
 // ---- config / path ----
 
-test('normalizeWorkItemsConfig：默认 enabled/strict/30，非法 gate 与 max 归一', () => {
-  assert.deepEqual(normalizeWorkItemsConfig(), { enabled: true, gate: 'strict', phaseGate: 'strict', pathOverride: undefined, max: 30 });
-  assert.deepEqual(normalizeWorkItemsConfig({ workItems: false }), { enabled: false, gate: 'strict', phaseGate: 'strict', pathOverride: undefined, max: 30 });
+test('normalizeWorkItemsConfig：默认 enabled/strict/warn/30，非法 gate 与 max 归一', () => {
+  assert.deepEqual(normalizeWorkItemsConfig(), { enabled: true, gate: 'strict', phaseGate: 'warn', pathOverride: undefined, max: 30 });
+  assert.deepEqual(normalizeWorkItemsConfig({ workItems: false }), { enabled: false, gate: 'strict', phaseGate: 'warn', pathOverride: undefined, max: 30 });
   assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'warn' }).phaseGate, 'warn');
   assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'off' }).phaseGate, 'off');
-  assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'nonsense' }).phaseGate, 'strict');
+  assert.equal(normalizeWorkItemsConfig({ workItemsPhaseGate: 'nonsense' }).phaseGate, 'warn');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'warn' }).gate, 'warn');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'off' }).gate, 'off');
   assert.equal(normalizeWorkItemsConfig({ workItemsGate: 'STRICT' }).gate, 'strict');
@@ -571,108 +569,6 @@ test('checkShipGate：off 直接放行；warn 放行但给 warnings；默认 str
   const cwd = tempCwd();
   seed(cwd, [{ id: 'doing-a', title: 'A', status: 'doing', next: 'x' }]);
   assert.equal(checkShipGate(readSeed(cwd), { gate: 'warn' }).ok, true);
-});
-
-// ---- teammate edits / owner migration ----
-
-test('applyItemUpdates：队友可改自己条目；未知 id/越权/合并后非法分别报错', () => {
-  const cwd = tempCwd();
-  seed(cwd, [
-    { id: 'mine', title: '我的', status: 'doing', owner: 'worker-1', next: '写 handler' },
-    { id: 'other', title: '别人', status: 'open', owner: 'worker-2', next: '开工' },
-    { id: 'lead-item', title: 'Lead 的', status: 'open', next: '排期' },
-  ]);
-  const read = readSeed(cwd);
-
-  const applied = applyItemUpdates(read, {
-    owner: 'worker-1',
-    updates: [{ id: 'mine', status: 'done', evidence: ['lib/x.js:1'] }],
-  });
-  assert.equal(applied.ok, true);
-  assert.equal(applied.counts.done, 1);
-  const mine = applied.items.find((item) => item.id === 'mine');
-  assert.equal(mine.status, 'done');
-  assert.deepEqual(mine.evidence, ['lib/x.js:1']);
-  assert.equal(mine.title, '我的');
-  assert.equal(mine.owner, 'worker-1');
-
-  // 修改 next 但 status 仍 doing → 合法。
-  const nextOnly = applyItemUpdates(read, { owner: 'worker-1', updates: [{ id: 'mine', next: '写测试' }] });
-  assert.equal(nextOnly.ok, true);
-  assert.equal(nextOnly.items.find((item) => item.id === 'mine').next, '写测试');
-
-  const unknown = applyItemUpdates(read, { owner: 'worker-1', updates: [{ id: 'ghost', status: 'done' }] });
-  assert.equal(unknown.ok, false);
-  assert.equal(unknown.code, 'invalid-item');
-  assert.equal(unknown.errors[0].code, 'invalid-item');
-
-  const scope = applyItemUpdates(read, { owner: 'worker-1', updates: [{ id: 'other', status: 'done' }] });
-  assert.equal(scope.ok, false);
-  assert.equal(scope.code, 'teammate-scope');
-  assert.deepEqual(scope.ids, ['other']);
-
-  // 无 owner 条目视为 Lead 名下：队友越权、lead 可改。
-  assert.equal(applyItemUpdates(read, { owner: 'worker-1', updates: [{ id: 'lead-item', status: 'doing', next: 'x' }] }).code, 'teammate-scope');
-  assert.equal(applyItemUpdates(read, { owner: 'lead', updates: [{ id: 'lead-item', status: 'doing', next: 'x' }] }).ok, true);
-
-  const invalidMerged = applyItemUpdates(read, { owner: 'worker-2', updates: [{ id: 'other', status: 'blocked' }] });
-  assert.equal(invalidMerged.ok, false);
-  assert.equal(invalidMerged.code, 'invalid-item');
-  assert.ok(invalidMerged.errors.some((error) => error.code === 'missing-blocked'));
-
-  assert.equal(applyItemUpdates(read, { owner: 'worker-1', updates: [] }).code, 'invalid-item');
-  assert.equal(applyItemUpdates(read, { owner: 'worker-1' }).code, 'invalid-item');
-});
-
-test('applyItemUpdates 结果可直接 writeWorkItems 落盘（读-改-写闭环）', () => {
-  const cwd = tempCwd();
-  seed(cwd, [{ id: 'mine', title: '我的', status: 'doing', owner: 'worker-1', next: '写 handler' }]);
-  const read = readSeed(cwd);
-  const applied = applyItemUpdates(read, { owner: 'worker-1', updates: [{ id: 'mine', status: 'done', evidence: ['lib/x.js:1'] }] });
-  assert.equal(applied.ok, true);
-  const written = writeWorkItems(cwd, { items: applied.items, rev: read.rev, updatedBy: 'worker-1' });
-  assert.equal(written.ok, true);
-  const after = readSeed(cwd);
-  assert.equal(after.items[0].status, 'done');
-  assert.deepEqual(after.items[0].evidence, ['lib/x.js:1']);
-  assert.equal(after.rev, read.rev + 1);
-});
-
-test('migrateOwner：owner 从旧代迁到新代；无匹配/同代/空台账不写盘；非法参数报错', () => {
-  const cwd = tempCwd();
-  seed(cwd, [
-    { id: 'item-a', title: 'A', status: 'doing', owner: 'worker-1-old', next: 'x' },
-    { id: 'item-b', title: 'B', status: 'open', owner: 'worker-1-old', next: 'y' },
-    { id: 'item-c', title: 'C', status: 'open', owner: 'worker-2', next: 'z' },
-  ]);
-  const read = readSeed(cwd);
-  const migrated = migrateOwner(cwd, { from: 'worker-1-old', to: 'worker-1-new' });
-  assert.equal(migrated.ok, true);
-  assert.equal(migrated.changed, 2);
-  assert.equal(migrated.counts.total, 3);
-  const after = readSeed(cwd);
-  assert.equal(after.items.find((item) => item.id === 'item-a').owner, 'worker-1-new');
-  assert.equal(after.items.find((item) => item.id === 'item-b').owner, 'worker-1-new');
-  assert.equal(after.items.find((item) => item.id === 'item-c').owner, 'worker-2');
-  assert.equal(after.rev, read.rev + 1);
-
-  const noMatch = migrateOwner(cwd, { from: 'nobody', to: 'somebody' });
-  assert.deepEqual(noMatch, { ok: true, changed: 0, counts: after.counts });
-  const same = migrateOwner(cwd, { from: 'worker-2', to: 'worker-2' });
-  assert.equal(same.changed, 0);
-  assert.equal(readSeed(cwd).rev, after.rev); // 无变化不落盘
-
-  const emptyCwd = tempCwd();
-  assert.deepEqual(migrateOwner(emptyCwd, { from: 'a', to: 'b' }), {
-    ok: true,
-    changed: 0,
-    counts: { total: 0, open: 0, doing: 0, blocked: 0, done: 0, pending: 0 },
-  });
-
-  const invalid = migrateOwner(cwd, { from: '', to: 'x' });
-  assert.equal(invalid.ok, false);
-  assert.equal(invalid.code, 'invalid-item');
-  assert.equal(migrateOwner(cwd, {}).ok, false);
 });
 
 // ---- v0.6.0 phase 元数据 / 关 phase 闸门 ----

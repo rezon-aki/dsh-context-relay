@@ -10,10 +10,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
 import { clearTeamStatusMemory, createTeamTools } from '../lib/agent/team-tools.js';
-import { TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPendingResets, hasPendingReset } from '../lib/agent/reset.js';
 import { clearSentinelMemory, LAST_BAND } from '../lib/agent/sentinel.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 import { thresholdsFromPercent } from '../lib/policy.js';
+import { configurePanelStore, updatePanelState } from '../lib/panel-store.js';
 import {
   TEAM_LIMITS,
   appendLedger,
@@ -63,6 +65,10 @@ test('lineage/gen/next 名：<lineage>-g<N>，无后缀视为首代，跳过已�
   assert.equal(isValidTeammateName('impl-g2'), true);
   assert.equal(isValidTeammateName('Impl-2'), false);
   assert.equal(isValidTeammateName('lead'), false);
+  assert.equal(isValidTeammateName('2impl'), false, 'rc.2 要求字母开头');
+  assert.equal(isValidTeammateName('a'.repeat(32)), true, 'rc.2 上限 32');
+  assert.equal(isValidTeammateName('a'.repeat(33)), false, '超过 32 必须提前拒绝');
+  assert.equal(isValidTeammateName('a'.repeat(30) + '-g2'), false, '长 lineage 的后代名超过 32');
 });
 
 test('buildCheckpointMarkdown：一行结论必填；列表/单条超限裁剪；整份 ≤4KB 标记', () => {
@@ -151,6 +157,8 @@ test('classifyHealth：fresh/watch/stale/spent/unknown 与建议动作', () => {
 // ── 工具契约（fake ctx） ───────────────────────────────────────────────
 
 function fakeCtx(services = {}) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
   const sections = [];
   const tools = new Map();
   const listeners = [];
@@ -161,7 +169,7 @@ function fakeCtx(services = {}) {
     logger: { info() {}, warn(...args) { warns.push(args.join(' ')); } },
     systemPrompt: { section(definition) { sections.push(definition); return () => {}; } },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return services[name]; },
+    get(name) { return normalized[name]; },
   };
   return { ctx, sections, tools, listeners, warns };
 }
@@ -343,6 +351,87 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
   } finally { clearTeamStatusMemory(); cleanup(dir); }
 });
 
+test('relay_architect：未选择架构师模型时拒绝，不静默继承 Lead 模型', async () => {
+  const dir = tempWorkspace();
+  try {
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    const teams = makeTeamService({ memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+    const ctx = fakeCtx({ agentTeams: teams });
+    const { leadTools } = createTeamTools(makeRuntime(ctx.ctx));
+    const tool = leadTools.find((item) => item.name === 'relay_architect');
+    assert.ok(tool, 'relay_architect 已注册');
+    const result = await tool.execute({ brief: '设计登录模块' }, { agent: lead });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'architect-model-unselected');
+    assert.match(result.summary, /choose the architect model/);
+    assert.equal(teams.calls.spawn.length, 0, '未选模型不得创建成员');
+  } finally { cleanup(dir); }
+});
+
+test('relay_architect：面板已选模型时创建 architect（legacy 路径；文档路径/roster 落盘）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { architectModel: { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' } });
+    const teams = makeTeamService({
+      members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }],
+      memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+    });
+    // v0.7.1：架构师模型受官方子代理白名单约束；夹具把 geekai/gpt-6.1-sol 列为允许路由。
+    const sessionProjections = { stateOf: (_session, key) => (key === 'subagentModelSelectionPolicy' ? [{ provider: 'geekai', model: 'gpt-6.1-sol' }] : undefined) };
+    const ctx = fakeCtx({ agentTeams: teams, sessionProjections });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '设计登录模块', task_id: 'login', doc_pointers: ['docs/login.md'], write_scope: ['.scratch/context-relay/architecture/'] }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.mode, 'fresh');
+    assert.equal(result.name, 'architect');
+    assert.equal(result.docPath, '.scratch/context-relay/architecture/login.md');
+    assert.deepEqual(result.model, { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' });
+    assert.equal(teams.calls.spawn.length, 1);
+    assert.equal(teams.calls.spawn[0].name, 'architect');
+    assert.match(teams.calls.spawn[0].prompt[0].text, /设计登录模块/);
+    assert.match(teams.calls.spawn[0].prompt[0].text, /context-relay\/architecture\/login\.md/);
+    assert.ok(existsSync(join(dir, '.scratch', 'context-relay', 'team', LEAD, 'roster.json')), 'architect lineage 写入 roster');
+  } finally { cleanup(dir); }
+});
+
+test('relay_architect：模型不在官方子代理白名单 → 拒绝且零 spawn（不绕过策略）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { architectModel: { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' } });
+    const teams = makeTeamService({ members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }], memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+    const sessionProjections = { stateOf: (_session, key) => (key === 'subagentModelSelectionPolicy' ? [{ provider: 'deepseek-account', model: 'deepseek-flash' }] : undefined) };
+    const ctx = fakeCtx({ agentTeams: teams, sessionProjections });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '设计登录模块' }, { agent: lead });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'architect-model-not-allowed');
+    assert.deepEqual(result.allowedModels, [{ provider: 'deepseek-account', model: 'deepseek-flash' }]);
+    assert.match(result.summary, /allowlist/);
+    assert.equal(teams.calls.spawn.length, 0, '白名单外的模型不得创建成员');
+  } finally { cleanup(dir); }
+});
+
+test('relay_architect：没有白名单记录时只允许 Lead 当前路由（官方语义），不允许任意模型', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { architectModel: { provider: 'geekai', model: 'gpt-6.1-sol' } });
+    const teams = makeTeamService({ members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }], memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
+    const sessionProjections = { stateOf: (_session, key) => (key === 'modelSelection' ? { pending: null, lastUsed: { provider: 'deepseek', model: 'test' } } : undefined) };
+    const ctx = fakeCtx({ agentTeams: teams, sessionProjections });
+    const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '设计登录模块' }, { agent: lead });
+    assert.equal(result.code, 'architect-model-not-allowed');
+    assert.deepEqual(result.allowedModels, [{ provider: 'deepseek', model: 'test' }]);
+    assert.equal(teams.calls.spawn.length, 0);
+  } finally { cleanup(dir); }
+});
+
 test('relay_renew：无 checkpoint 先催（pending）；有记录则换代（分区交接/roster/ledger + 展示路径）', async () => {
   const dir = tempWorkspace();
   try {
@@ -375,7 +464,7 @@ test('relay_renew：无 checkpoint 先催（pending）；有记录则换代（�
     assert.equal(teams.calls.spawn.length, 1);
     assert.equal(teams.calls.spawn[0].name, 'impl-g2');
     assert.equal(teams.calls.spawn[0].context, 'fresh');
-    assert.equal(teams.calls.spawn[0].provider, 'spawn');
+    assert.equal(teams.calls.spawn[0].provider, 'spawn-in-process', 'rc.2 优先 spawn-in-process');
     assert.match(teams.calls.spawn[0].prompt[0].text, /登录修复完成/);
     assert.match(teams.calls.spawn[0].prompt[0].text, /不改鉴权/);
     assert.ok(existsSync(handoffPathOf(dir, 'impl', 1, LEAD)));
@@ -418,7 +507,7 @@ test('relay_renew：成员额度满（TEAM_MEMBER_LIMIT）→ member-limit + res
     assert.doesNotMatch(result.summary, /maxMembers/, '用户裁决不改部署上限，文案不再建议调高');
     assert.match(result.summary, /relay_freshen\(\{reset:true/);
     assert.match(result.summary, /relay_handoff/);
-    assert.match(result.summary, /relay_rehydrate/);
+    assert.doesNotMatch(result.summary, /relay_rehydrate/, 'v0.7.0 已删除 rehydrate 工具');
     const roster = readRoster(dir, LEAD);
     assert.equal(roster.lineages.impl.generations.find((item) => item.name === 'impl-g1').retiredAt, undefined, '旧代不退役');
     assert.equal(teams.calls.spawn.length, 1);
@@ -713,7 +802,7 @@ test('pre-step：无 pending 时直接 next()，不做任何 IO', async () => {
 
 // ── agent 装配 ────────────────────────────────────────────────────────
 
-test('装配：routerMode 下 root 注册 status/renew/rehydrate + 注入 team-lead 段；队友注册 checkpoint/freshen + 注入 team-worker 段；classic 不注册', async () => {
+test('装配：routerMode 下 root 注册 status/renew/architect + 注入 team-lead 段；队友注册 checkpoint/freshen + 注入 team-worker 段；classic 不注册', async () => {
   // root
   const f = fakeCtx();
   apply(f.ctx, { routerMode: true });
@@ -722,7 +811,7 @@ test('装配：routerMode 下 root 注册 status/renew/rehydrate + 注入 team-l
   const rootCalls = [];
   const rootSections = [];
   await listener.listener({ agent: makeAgent({ calls: rootCalls, sections: rootSections }) });
-  assert.deepEqual(rootCalls, ['relay_team_status', 'relay_renew', 'relay_rehydrate'], 'root 拿到 Lead 保鲜/重建工具');
+  assert.deepEqual(rootCalls, ['relay_team_status', 'relay_renew', 'relay_architect'], 'root 拿到 Lead 保鲜/架构师工具');
   assert.ok(rootSections.some((section) => section.name === 'context-relay:team-lead' && section.text === TEAM_LEAD_PROTOCOL_TEXT));
   // teammate
   const teammateCalls = [];
@@ -732,7 +821,7 @@ test('装配：routerMode 下 root 注册 status/renew/rehydrate + 注入 team-l
   apply(g.ctx, { routerMode: true });
   await g.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: teammate });
   assert.deepEqual(teammateCalls, ['relay_checkpoint', 'relay_freshen'], '队友拿到 checkpoint + freshen 工具');
-  assert.ok(teammateSections.some((section) => section.name === 'context-relay:team-worker' && section.text === TEAM_WORKER_PROTOCOL_TEXT));
+  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '队友只注入紧凑协议（不再叠第二条 team-worker 段）');
   assert.ok(!teammateCalls.includes('relay_team_status'), '队友不拿 Lead 工具');
   // classic：不注册、不注入
   const c = fakeCtx();

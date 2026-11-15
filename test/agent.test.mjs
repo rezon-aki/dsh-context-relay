@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { apply } from '../lib/agent.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
-import { listHandoffs } from '../lib/handoff-store.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const HANDOFF_KEY = Symbol.for('dsh-context-relay.handoffs');
 /** 每次切 phase 必填的契约自检（两条用户契约的工作时落地）。 */
@@ -34,6 +34,9 @@ function resetSharedState() {
 
 /** 极简 fake ctx：只实现 agent.js 用到的接口，捕获注册产物 + logger 里程碑。 */
 function fakeCtx(overrides = {}) {
+  const provided = overrides.services ?? {};
+  const fixture = provided.agentTeams !== undefined && provided.subagents === undefined ? subagentsFromLegacy(provided.agentTeams) : undefined;
+  const services = fixture === undefined ? provided : { ...provided, subagents: fixture, agents: provided.agents ?? fixture.agentsService };
   const tools = new Map();
   const sections = [];
   const events = [];
@@ -59,7 +62,7 @@ function fakeCtx(overrides = {}) {
       context() { return () => {}; },
     },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return overrides.services?.[name]; },
+    get(name) { return services[name]; },
   };
   return { ctx, tools, sections, events, cleanups, logs };
 }
@@ -280,6 +283,8 @@ test('v0.2.7：relay_handoff 在首条消息（首 step prompt assembly）之前
     const childId = 'session-budget-child-' + item.name;
     const session = fakeSession({ id: parentId, cwd, seq: 0 });
     if (Object.keys(item.parent).length > 0) updatePanelState(parentId, item.parent);
+    // v0.7.1：架构师模型随 handoff 继承（与 unlimitedBudget 同一时机写入子会话）。
+    updatePanelState(parentId, { architectModel: { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' } });
     const seen = [];
     const liveSession = { id: childId, header: { cwd }, requestHeader: () => undefined };
     const { tools } = applyAgent(fakeServices({
@@ -296,6 +301,7 @@ test('v0.2.7：relay_handoff 在首条消息（首 step prompt assembly）之前
     assert.equal(seen.length, 1, '首条消息只发一次');
     assert.equal(seen[0], item.expect, item.name + ': followup 时子会话已带 unlimitedBudget=' + String(item.expect));
     assert.equal(panelStateOf(childId).unlimitedBudget, item.expect, item.name + ': 交接后子会话面板值');
+    assert.deepEqual(panelStateOf(childId).architectModel, { provider: 'geekai', model: 'gpt-6.1-sol', reasoningEffort: 'max' }, item.name + ': 架构师模型随交接继承');
     // 强制语义持久性：交接后把侧栏默认改成相反值——只有「显式落库」的子会话记录才能保持交接设定
     // （相等默认的 no-op 被 force 关掉；没写记录时此处会翻转成 !expect 而失败）。
     globalThis[Symbol.for('dsh-context-relay.settings')].unlimitedBudget = item.expect !== true;
@@ -936,8 +942,6 @@ test('relay_handoff requires human approval and records nothing on refusal', asy
   const refused = await tools.get('relay_handoff').execute({ status: { goal: 'x' } }, { agent: { session, options: {} } });
   assert.equal(refused.ok, false);
   assert.match(refused.summary, /human approval required|refused/);
-  const { listHandoffs } = await import('../lib/handoff-store.js');
-  assert.equal(listHandoffs().length, 0);
 });
 
 test('relay_handoff creates a new root session, bounded handoff, and records it for M3', async () => {
@@ -979,30 +983,24 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
         create: async (sessionId, request) => { cleanupCalls.createdSchedules.push([sessionId, request]); cleanupCalls.order.push('schedule-transfer'); return { id: 'sched-new' }; },
         delete: async (request) => { cleanupCalls.deletedSchedules.push(request); return { deleted: true }; },
       },
-      agentTeams: {
-        tryMembership: () => ({ role: 'lead', name: 'lead' }),
-        listMembers: () => [
-          { role: 'lead', name: 'lead', status: 'running' },
-          { role: 'teammate', id: 'teammate-1', name: 'reviewer', status: 'running' },
-        ],
-        interrupt: (caller, name) => { cleanupCalls.teammateInterrupts.push(name); cleanupCalls.order.push('teammate-interrupt'); },
-      },
       subagents: {
+        rootOf: () => ({ session: { id: 'session-caller' } }),
+        namesOf: (caller) => ({ self: caller?.session?.id === 'session-caller' ? 'lead' : caller?.session?.id }),
         listDescendants: async () => [
-          { kind: 'child', id: 'child-1', mode: 'continuable', activity: 'running', parentId: 'session-caller', depth: 1 },
-          { kind: 'child', id: 'teammate-1', mode: 'continuable', activity: 'running', parentId: 'session-caller', depth: 1 },
+          { kind: 'child', id: 'child-1', mode: 'one-shot', activity: 'running', parentId: 'session-caller', depth: 1, path: 'child' },
+          { kind: 'child', id: 'teammate-1', mode: 'continuable', activity: 'running', parentId: 'session-caller', depth: 1, path: 'reviewer' },
           { kind: 'diagnostic', id: 'child-broken', reason: 'corrupt' },
         ],
-        // 真实 API：listChildren 返回 SubagentCatalogEntry（无 kind/activity 字段）。
-        listChildren: async () => [{ id: 'child-1', createdAt: 0, mode: 'continuable', label: 'child' }],
         interrupt: (id, authority) => { cleanupCalls.subagentInterrupts.push({ id, authority }); cleanupCalls.order.push('subagent-interrupt'); },
-        drainChildren: async (caller, ids) => { cleanupCalls.drained.push(ids); cleanupCalls.order.push('drain-children'); },
         drainDescendants: async (parents) => { cleanupCalls.drainedDescendants.push(parents.map((parent) => parent.session.id)); cleanupCalls.order.push('drain-descendants'); },
       },
       sessionController: {
         async create(request) { created.push(request); return { sessionId: 'session-new' }; },
       },
-      agents: { list: () => [{ session: liveSession, status: 'idle', followup(message) { followed.push(message); } }] },
+      agents: {
+        get: (id) => (id === 'teammate-1' || id === 'child-1' ? { status: 'running' } : undefined),
+        list: () => [{ session: liveSession, status: 'idle', followup(message) { followed.push(message); } }],
+      },
       workspaceRegistry: { async resolveByPath() { return { id: 'ws-1', title: 'ws', async attachSession() {} }; } },
       sessionTitle: { rename() {} },
     },
@@ -1043,11 +1041,11 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.equal(result.caps.items.evidence.used, 2); // 1 条 doc_lint + 1 条传入
   assert.match(result.handoffPath, /handoff-\d+\.md$/);
   // 交接清理（2026-11-01 用户需求）：后台任务取消、定时任务迁移、队友/子智能体中断并交给新会话
-  assert.deepEqual(cleanupCalls.killedJobs, [
-    ['bash-old', 'session-caller', 'relay handoff: moved to new session'],
-    ['bash-mate', 'teammate-1', 'relay handoff: moved to new session'],
-    ['bash-child', 'child-1', 'relay handoff: moved to new session'],
+  assert.deepEqual([...cleanupCalls.killedJobs].sort((a, b) => a[0].localeCompare(b[0])), [
     ['bash-broken', 'child-broken', 'relay handoff: moved to new session'],
+    ['bash-child', 'child-1', 'relay handoff: moved to new session'],
+    ['bash-mate', 'teammate-1', 'relay handoff: moved to new session'],
+    ['bash-old', 'session-caller', 'relay handoff: moved to new session'],
   ], '取消旧会话树（Lead/队友/子智能体/诊断子级）名下运行中的后台任务（归属不能跨会话转移）');
   assert.ok(result.handover.inventory.jobs.some((job) => job.id === 'bash-broken'), 'diagnostic 行的子会话 id 也参与 owner 枚举/清理');
   // unowned job 对任何 caller 可见：不得被当作旧会话残留误杀/误记（P1）
@@ -1063,17 +1061,13 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
     { sessionId: 'session-caller', id: 'sched-once' },
     { sessionId: 'teammate-1', id: 'sched-mate' },
   ], '迁移成功后按 owner 删除旧定时任务');
-  assert.deepEqual(cleanupCalls.teammateInterrupts, ['reviewer'], '中断运行中的队友');
-  assert.equal(cleanupCalls.subagentInterrupts.length, 1, '中断运行中的子智能体（队友不算子智能体，去重）');
-  assert.equal(cleanupCalls.subagentInterrupts[0].id, 'child-1');
+  assert.deepEqual(cleanupCalls.subagentInterrupts.map((entry) => entry.id), ['teammate-1', 'child-1'], '先中断队友、再中断驻留子智能体（队友不重复中断）');
   assert.equal(cleanupCalls.subagentInterrupts[0].authority.kind, 'ancestor', 'DSH 契约：interrupt authority 必须是 {kind:"ancestor",agent}');
   assert.equal(cleanupCalls.subagentInterrupts[0].authority.agent.session.id, 'session-caller');
-  assert.deepEqual(cleanupCalls.drained, [['child-1']], '释放驻留子智能体');
   assert.deepEqual(cleanupCalls.drainedDescendants, [['session-caller']], 'drainDescendants 覆盖 materializing/深层子级');
   // 清理顺序（用户要求「尤其清理顺序」）：先中断成员，再 drain，再取消后台任务，最后迁移定时任务。
   const orderIndex = (tag) => cleanupCalls.order.indexOf(tag);
-  assert.ok(orderIndex('teammate-interrupt') >= 0 && orderIndex('subagent-interrupt') >= 0, '先中断成员');
-  assert.ok(orderIndex('teammate-interrupt') < orderIndex('drain-descendants'), '中断队友先于 drain');
+  assert.ok(orderIndex('subagent-interrupt') >= 0, '先中断成员');
   assert.ok(orderIndex('drain-descendants') < orderIndex('job-kill'), '先 drain 成员再取消后台任务');
   assert.ok(orderIndex('job-kill') < orderIndex('schedule-transfer'), '先取消后台任务再迁移定时任务');
   assert.equal(result.handover.cleanup.jobs[0].action, 'killed');
@@ -1133,16 +1127,6 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.equal(capped.inventory.jobs.length, 20);
   assert.equal(capped.truncated, true, 'cleanup=null 也不能丢 truncated');
   assert.equal(capped.cleanup, null);
-  // M3 发布箱：宿主侧靠 recordHandoff/listHandoffs 拉取
-  const { listHandoffs } = await import('../lib/handoff-store.js');
-  const items = listHandoffs();
-  assert.equal(items.length, 1);
-  assert.equal(items[0].id, result.handoffId);
-  assert.equal(items[0].sessionId, 'session-new');
-  assert.equal(items[0].parentSessionId, 'session-caller');
-  assert.equal(items[0].phase, 'build');
-  assert.match(items[0].goal, /ship the relay plugin/);
-  assert.ok(items[0].summary.length <= 200);
 });
 
 test('relay_handoff 交接清理：drain 结算的子智能体后台任务不静默漏报（2026-11-01 审查 P1 / 真机 E2E 发现）', async () => {
@@ -1189,7 +1173,7 @@ test('relay_handoff 交接清理：服务未启用时按 N/A 跳过（不假报 
   assert.deepEqual(result.handover.cleanup.errors, [], '服务未启用的类别不算错误（N/A），也不伪造清理记录');
   assert.ok(!result.summary.includes('NaN'), 'summary 不得出现 NaN（cleanup=null 路径）');
   // 不假干净（2026-11-01 审查 P1）：服务缺失写 N/A，不是「无/0」，且 summary/报告/清单三处一致。
-  for (const key of ['jobs', 'schedule', 'agentTeams', 'subagents']) {
+  for (const key of ['jobs', 'schedule', 'teammates', 'subagents']) {
     assert.ok(result.handover.inventory.skipped.includes(key), 'inventory.skipped 含 ' + key);
     assert.ok(result.handover.cleanup.skipped.includes(key), 'cleanup.skipped 含 ' + key);
   }
@@ -1439,8 +1423,6 @@ test('relay_handoff preflight：超大 evidence 先拒绝（不建会话/不写�
   assert.equal(followed.length, 1, '只发 handoff 首条消息（清理报告不再另发）');
   const bytes = Buffer.byteLength(followed[0].content[0].text, 'utf8');
   assert.ok(bytes <= result.caps.bytes.limit, 'handoff bytes ' + bytes);
-  const { listHandoffs } = await import('../lib/handoff-store.js');
-  assert.equal(listHandoffs().length, 1);
 });
 
 test('relay_handoff 用面板 handoffPreset 选择下一个会话模式（controller 路径；sticky 不消费；不继承子会话）', async () => {
@@ -1535,8 +1517,6 @@ test('relay_handoff refuses subagent/teammate callers before side effects', asyn
   assert.equal(refused.ok, false);
   assert.match(refused.error, /Lead-only/);
   assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, 'refusal must not write a handoff file');
-  const { listHandoffs } = await import('../lib/handoff-store.js');
-  assert.equal(listHandoffs().length, 0);
 });
 
 test('reminder listener stays inside the relay preset scope (no {global:true})', () => {
@@ -2910,7 +2890,6 @@ test('两段式闸门（2026-11-02 用户澄清）：「压缩→新会话」同
     // 零副作用：不建会话、不写 handoff/brief 文件、不写 handoff 发布箱、不改模式/不消费授权
     assert.equal(started.length, 0, '被拒路径不创建会话');
     assert.equal(existsSync(join(sessionCwd, '.scratch', 'context-relay')), false, '被拒路径不写 handoff/brief 文件');
-    assert.equal(listHandoffs().length, 0, '被拒路径不写 handoff 发布箱');
     assert.equal(panelStateOf(session.id).defaultOperation, 'compress-then-handoff', '被拒路径不改模式');
     assert.equal(panelStateOf(session.id).authorizeNext, true, '被拒路径不消费授权');
     assert.equal(panelStateOf(session.id).handedOff, false);
@@ -3525,7 +3504,7 @@ test('文案：autoChoose=on = 模型自决档（自决 + 先记录再执行，�
   assert.match(protocol, /pending 不是跳过、不是同意/, '提问纪律：超时 pending 的语义');
   assert.match(protocol, /汇报一律大白话/, '交互纪律：白话汇报规则');
   assert.match(protocol, /等待纪律/, '等待纪律：派活后不空转等队友');
-  assert.match(protocol, /wait_agent \/ list_agents \/ team_task_list/, '等待纪律：点名不要循环调用的工具');
+  assert.match(protocol, /wait_agent \/ list_agents/, '等待纪律：点名不要循环调用的工具');
   assert.match(protocol, /回执会自动作为消息送达/, '等待纪律：回执自动送达');
   assert.match(protocol, /≤120s/, '等待纪律：只在被阻塞时有界等待');
   assert.match(protocol, /完整上下文索引/, '用户门：Lead 必须给全上下文索引');
@@ -3892,42 +3871,42 @@ test('relay_phase: subagent/Agent Teams 队友不做验收声明（ship → lead
   await assert.rejects(teamTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: teamAgent }), /lead-only/, 'Agent Teams 队友不能声明 ship');
 });
 
-test('contract_check 三问自检：每次切 phase 必填；超预算「继续」先自检、拒绝不丢模式', async () => {
+test('contract_check：每次切 phase 记录 warning，ship 前必填', async () => {
   resetSharedState();
   const session = fakeSession({ id: 'session-contract', seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
-  await assert.rejects(tools.get('relay_phase').execute({ phase: 'build' }, { agent }), /contract_check/, '缺 contract_check 被拒');
-  await assert.rejects(tools.get('relay_phase').execute({ phase: 'build', contract_check: { requirement: '  ', fidelity: 'f', attention: 'a' } }, { agent }), /requirement/, '空 requirement 被拒');
-  await assert.rejects(tools.get('relay_phase').execute({ phase: 'build', contract_check: { requirement: 'r', fidelity: '', attention: 'a' } }, { agent }), /fidelity/, '空 fidelity 被拒');
-  await assert.rejects(tools.get('relay_phase').execute({ phase: 'build', contract_check: { requirement: 'r', fidelity: 'f', attention: ' ' } }, { agent }), /attention/, '空 attention 被拒');
+  const missing = await tools.get('relay_phase').execute({ phase: 'build' }, { agent });
+  assert.equal(missing.phase, 'build');
+  assert.match(missing.contractWarning, /contract_check/, '普通 phase 缺自检只 warning');
+  const empty = await tools.get('relay_phase').execute({ phase: 'verify', contract_check: { requirement: '  ', fidelity: 'f', attention: 'a' } }, { agent });
+  assert.match(empty.contractWarning, /requirement/, '空 requirement 也只 warning');
   const ok = await tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent });
-  assert.equal(ok.phase, 'build');
-  // 超预算 + 面板「继续」：先自检；自检拒绝不丢预设，放行后才消费
+  assert.equal(ok.contractWarning, undefined, '自检完整不告警');
+  // 超预算 + 面板「继续」：先记录 warning；模式持久不消费。
   const overSession = fakeSession({ id: 'session-contract-over', seq: 0 });
   const overBundle = fakeServices({ session: overSession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const overTools = applyAgent(overBundle.services).tools;
   const overAgent = { session: overSession, options: {}, inject() {} };
   updatePanelState(overSession.id, { defaultOperation: 'continue' });
-  await assert.rejects(overTools.get('relay_phase').execute({ phase: 'verify' }, { agent: overAgent }), /contract_check/);
-  assert.equal(panelStateOf(overSession.id).defaultOperation, 'continue', '自检拒绝不丢预设');
-  const crossed = await overTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: overAgent });
+  const crossed = await overTools.get('relay_phase').execute({ phase: 'verify' }, { agent: overAgent });
   assert.equal(crossed.phase, 'verify');
-  assert.equal(panelStateOf(overSession.id).defaultOperation, 'continue', '放行后模式持久（不消费）');
-  // P2（2026-11-01 审查）：contract_check 被拒不得落 next_operation/autoDecision（拒绝路径无副作用）。
-  const pollutionSession = fakeSession({ id: 'session-contract-pollution', seq: 0 });
-  const pollutionTools = applyAgent(fakeServices({ session: pollutionSession }).services).tools;
-  updatePanelState(pollutionSession.id, { autoChoose: true });
-  assert.equal(panelStateOf(pollutionSession.id).autoDecision, null);
-  await assert.rejects(pollutionTools.get('relay_phase').execute({ phase: 'verify', next_operation: 'handoff' }, { agent: { session: pollutionSession, options: {} } }), /contract_check/);
-  assert.equal(panelStateOf(pollutionSession.id).autoDecision, null, '自检拒绝后不得写 autoDecision');
-  // P2（二次复核发现）：队友预算内切 phase 同样必须自检（只有超预算走 escalation 的路径可免）。
+  assert.match(crossed.contractWarning, /contract_check/);
+  assert.equal(panelStateOf(overSession.id).defaultOperation, 'continue', '模式持久（不消费）');
+  // ship 前必须自检。
+  const shipSession = fakeSession({ id: 'session-contract-ship', seq: 0 });
+  const shipTools = applyAgent(fakeServices({ session: shipSession }).services).tools;
+  const shipAgent = { session: shipSession, options: {} };
+  await shipTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: shipAgent });
+  await assert.rejects(shipTools.get('relay_phase').execute({ phase: 'ship', user_gate: SHIP_GATE }, { agent: shipAgent }), /contract_check/);
+  const shipped = await shipTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: shipAgent });
+  assert.equal(shipped.phase, 'ship');
+  // 队友普通 phase 缺自检同样只 warning。
   const teammateSession = fakeSession({ id: 'session-contract-team', seq: 0 });
   const teammateTools = applyAgent(fakeServices({ session: teammateSession, extra: { agentTeams: { tryMembership: () => ({ role: 'teammate', name: 'rev' }), listMembers: () => [] } } }).services).tools;
-  const teammateAgent = { session: teammateSession, options: {} };
-  await assert.rejects(teammateTools.get('relay_phase').execute({ phase: 'build' }, { agent: teammateAgent }), /contract_check/, '队友预算内切 phase 也必须自检');
-  const teammateOk = await teammateTools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: teammateAgent });
-  assert.equal(teammateOk.phase, 'build');
+  const teammate = await teammateTools.get('relay_phase').execute({ phase: 'build' }, { agent: { session: teammateSession, options: {} } });
+  assert.equal(teammate.phase, 'build');
+  assert.match(teammate.contractWarning, /contract_check/);
 });
 
 test('approval gate: 验收（relay_phase 进 ship）不弹审批；organize/handoff 仍 ask', async () => {
@@ -4459,12 +4438,12 @@ test('v0.6.4 专职架构师段：只对 relay-long 注入；Lead 段按会话�
   assert.ok(section, 'relay-long 注入架构师段');
   assert.match(section.text({ agent: leadAgent }), /专职架构师/, 'root Lead：分工段');
   assert.match(section.text({ agent: leadAgent }), /工程实现路线设计交给 architect/);
-  assert.match(section.text({ agent: architectAgent }), /工程实现路线/, 'architect 队友：架构师段');
-  assert.match(section.text({ agent: architectAgent }), /relay_freshen/);
-  // 会话开关关掉 → Lead 段不注入；架构师队友段不受影响（它已建成架构师身份）
+  // 架构师自己的协议由 agent/created 的 ARCHITECT_WORKER 影子注入（见 router 测试），
+  // preset 层架构师段只给 Lead，避免与 TEAMMATE/TEAM_WORKER 叠加。
+  assert.equal(section.text({ agent: architectAgent }), '', 'preset 层架构师段不重复注入 worker');
+  // 会话开关关掉 → Lead 段不注入
   updatePanelState('session-arch-lead', { architect: false });
   assert.equal(section.text({ agent: leadAgent }), '', '面板小胶囊关掉 → Lead 段空');
-  assert.match(section.text({ agent: architectAgent }), /工程实现路线/);
   // 未改面板的新会话跟随 settings 默认（关）→ 不注入
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, architect: false };
   assert.equal(section.text({ agent: { session: fakeSession({ id: 'session-arch-fresh', seq: 0, header: {} }) } }), '');

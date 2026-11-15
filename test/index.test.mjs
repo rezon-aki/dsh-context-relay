@@ -10,7 +10,6 @@ import { apply, relayPresetDefinition } from '../lib/index.js';
 import { PTC_BASE_PLUGINS } from '../lib/preset-base.js';
 import { RELAY_PROJECTION_KEY } from '../lib/projection.js';
 import { normalizePanelState, thresholdsFromPercent } from '../lib/policy.js';
-import { recordHandoff } from '../lib/handoff-store.js';
 import {
   LIVE_TTL_MS,
   clearPanelMemory,
@@ -86,7 +85,7 @@ const rowKey = (row, withDisabled) => row.id + '|' + row.name + '|' + (withDisab
 /** 测试隔离用的临时路径（每次 unique，避免测到开发机真实 ~/.dsh 配置/面板状态）。 */
 const tmpPath = (prefix, name = 'store.json') => join(mkdtempSync(join(tmpdir(), prefix)), name);
 
-function fakeHost({ connection, noGet = false, agentPresets, config, sessionProjections, sessions } = {}) {
+function fakeHost({ connection, noGet = false, agentPresets, config, sessionProjections, sessions, llm } = {}) {
   // 测试隔离：settingsPath/panelPath 默认指向临时文件，避免读写开发机真实 ~/.dsh/... 配置
   // （真实 settings.json 的默认值会经 panel-store 合并进 panel 默认值）。
   const isolatedConfig = { ...(config ?? {}) };
@@ -124,7 +123,7 @@ function fakeHost({ connection, noGet = false, agentPresets, config, sessionProj
           },
         };
         // headless / 极简 fake ctx 可能没有 get：验证放行路径时不注入。
-        if (!noGet) injected.get = (name) => (name === 'connection' ? connection : name === 'sessions' ? sessions : name === 'sessionProjections' ? sessionProjections : undefined);
+        if (!noGet) injected.get = (name) => (name === 'connection' ? connection : name === 'sessions' ? sessions : name === 'sessionProjections' ? sessionProjections : name === 'llm' ? llm : undefined);
         callback(injected);
       }
       if (wanted.includes('sessionProjections') && sessionProjections !== undefined) {
@@ -141,12 +140,12 @@ function fakeHost({ connection, noGet = false, agentPresets, config, sessionProj
     },
   };
   apply(ctx, isolatedConfig);
-  return { ctx, cleanups, registrations, stats, warnings, config: isolatedConfig, getRoute: (path = '/context-relay/api') => routes.get(path) };
+  return { ctx, cleanups, registrations, stats, warnings, config: isolatedConfig, getRoute: (path = '/context-relay/settings') => routes.get(path) };
 }
 
 function call(route, { method = 'GET', headers = {} } = {}) {
   const out = { statusCode: 0, headers: {}, body: '' };
-  const req = { method, url: '/context-relay/api', headers: Object.assign({ host: '127.0.0.1:3080' }, headers) };
+  const req = { method, url: '/context-relay/settings', headers: Object.assign({ host: '127.0.0.1:3080' }, headers) };
   const res = {
     set statusCode(v) { out.statusCode = v; },
     get statusCode() { return out.statusCode; },
@@ -216,29 +215,6 @@ function httpRequest({ port, path, method = 'PUT', body = '' }) {
     req.end(body);
   });
 }
-
-test('host: exact GET /context-relay/api 返回 handoff 发布箱（最新在前）', () => {
-  const { getRoute } = fakeHost();
-  const route = getRoute();
-  assert.ok(route && typeof route.handler === 'function');
-  // webServer 路由参数：exact 匹配由宿主完成，handler 不再手工解析 URL。
-  assert.equal(route.kind, 'exact');
-  assert.equal(route.path, '/context-relay/api');
-  const firstId = recordHandoff({ sessionId: 'sess-1', parentSessionId: 'sess-0', title: '接力 A', phase: 'build', goal: 'goal', summary: 'sum' });
-  const secondId = recordHandoff({ sessionId: 'sess-2', parentSessionId: 'sess-1', title: '接力 B', phase: 'verify', goal: 'goal2', summary: 'sum2' });
-  assert.notEqual(firstId, secondId);
-  const { out, json } = call(route);
-  assert.equal(out.statusCode, 200);
-  assert.match(out.headers['content-type'], /application\/json/);
-  assert.equal(out.headers['cache-control'], 'no-store');
-  assert.equal(json.ok, true);
-  assert.ok(Array.isArray(json.handoffs) && json.handoffs.length >= 2, '发布箱保留多条（B-发布箱多条）');
-  // 最新在前（client 逐条消费）
-  assert.deepEqual(json.handoffs.slice(0, 2).map((item) => item.sessionId), ['sess-2', 'sess-1']);
-  assert.equal(json.handoffs[0].parentSessionId, 'sess-1');
-  // 非 GET → 405
-  assert.equal(call(route, { method: 'POST' }).out.statusCode, 405);
-});
 
 test('host: connection.requestRejection 401/403 时路由直接拒绝', () => {
   for (const status of [401, 403]) {
@@ -403,7 +379,7 @@ test('preset：行集合与官方 ptc.patch.yml 一致（找不到官方文件�
 
 test('package.json：engines 下限与 client.inject 条目真实存在（找不到 DSH 时 skip）', (t) => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.equal(pkg.dsh.engines.dsh, '>=0.2.1-rc.2');
+  assert.equal(pkg.dsh.engines.dsh, '>=0.2.2-rc.2');
   assert.ok(!pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-runtime'));
   assert.ok(!pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-slots'));
   const root = officialDshRoot();
@@ -642,6 +618,70 @@ test('host: panel.json 损坏 → apply 隔离备份 + warn，路由照常可用
   // 之后的写入可以正常重建文件
   assert.equal((await putPanel(host, { sessionId: 'sess-after-corrupt', autoCompress: true })).json.persisted, true);
   assert.equal(existsSync(panelPath), true);
+});
+
+test('host: GET /context-relay/architect-models 按官方子代理白名单过滤（不截断 / 父路由兜底 / 缺服务 / 405）', async () => {
+  const providers = Array.from({ length: 9 }, (_, index) => ({ id: 'provider-' + index, name: 'Provider ' + index }));
+  const models = Array.from({ length: 25 }, (_, index) => ({ id: 'model-' + index, name: 'Model ' + index }));
+  const resolveCalls = [];
+  const llm = {
+    listProviders: () => providers,
+    async listModels() { return models; },
+    async resolveModelInfo(_provider, modelId) {
+      resolveCalls.push(modelId);
+      if (modelId === 'model-0') throw new Error('capability lookup failed');
+      return { reasoning: { efforts: [{ id: 'max', name: 'Max' }], defaultEffort: 'max' } };
+    },
+  };
+  const session = { id: 'sess-arch', header: { id: 'sess-arch', cwd: '/tmp' }, requestHeader: () => ({ config: { provider: 'provider-0', model: 'model-3' } }) };
+  const policy = [{ provider: 'provider-0', model: 'model-0' }, { provider: 'provider-1', model: 'model-1' }];
+  const projections = (policyValue, selection) => ({
+    register: () => () => {},
+    snapshot: () => ({ values: {} }),
+    stateOf(_session, key) {
+      if (key === 'subagentModelSelectionPolicy') return policyValue;
+      if (key === 'modelSelection') return selection;
+      return undefined;
+    },
+  });
+  const host = fakeHost({ llm, sessions: { get: (id) => (id === 'sess-arch' ? session : undefined) }, sessionProjections: projections(policy) });
+  const route = host.getRoute('/context-relay/architect-models');
+  assert.ok(route, 'architect-models 路由已注册');
+  const res = await callAsync(route, { url: '/context-relay/architect-models?sessionId=sess-arch' });
+  assert.equal(res.out.statusCode, 200);
+  assert.equal(res.json.ok, true);
+  assert.equal(res.json.restricted, true);
+  assert.equal(res.json.parentOnly, false);
+  assert.deepEqual(res.json.providers.map((provider) => provider.id), ['provider-0', 'provider-1'], '只保留白名单内的 provider');
+  assert.equal(res.json.providers[0].models.length, 1, 'provider-0 只保留白名单模型');
+  assert.equal(res.json.providers[1].models.length, 1, 'provider-1 只保留白名单模型');
+  assert.deepEqual(resolveCalls.sort(), ['model-0', 'model-1'], '只对白名单模型解析元数据（不是全量 N+1）');
+  assert.deepEqual(res.json.providers[0].models[0].efforts, [], 'resolveModelInfo 抛错 → 该模型降级为无推理档，不影响其他行');
+  assert.deepEqual(res.json.providers[1].models[0].efforts, [{ id: 'max', name: 'Max', default: true }]);
+
+  // 没有会话白名单记录：按官方语义只允许父会话当前路由，并标记 parentOnly。
+  const parentHost = fakeHost({
+    llm,
+    sessions: { get: (id) => (id === 'sess-arch' ? session : undefined) },
+    sessionProjections: projections(null, { pending: null, lastUsed: { provider: 'provider-0', model: 'model-3' } }),
+  });
+  const parent = await callAsync(parentHost.getRoute('/context-relay/architect-models'), { url: '/context-relay/architect-models?sessionId=sess-arch' });
+  assert.equal(parent.json.parentOnly, true);
+  assert.deepEqual(parent.json.allowedModels, [{ provider: 'provider-0', model: 'model-3' }]);
+  assert.deepEqual(parent.json.providers.map((provider) => provider.id), ['provider-0']);
+  assert.equal(parent.json.providers[0].models[0].id, 'model-3');
+
+  // 缺 sessionId / 未知会话：明确 400/404，不返回全量目录。
+  assert.equal((await callAsync(route, { url: '/context-relay/architect-models' })).out.statusCode, 400);
+  assert.equal((await callAsync(route, { url: '/context-relay/architect-models?sessionId=sess-unknown' })).out.statusCode, 404);
+  // 方法限制
+  assert.equal((await callAsync(route, { method: 'POST', url: '/context-relay/architect-models?sessionId=sess-arch' })).out.statusCode, 405);
+  // llm 服务缺失：明确降级，不 500
+  const bare = fakeHost({ sessions: { get: (id) => (id === 'sess-arch' ? session : undefined) }, sessionProjections: projections(policy) });
+  const empty = await callAsync(bare.getRoute('/context-relay/architect-models'), { url: '/context-relay/architect-models?sessionId=sess-arch' });
+  assert.equal(empty.out.statusCode, 200);
+  assert.equal(empty.json.unavailable, true);
+  assert.equal(empty.json.restricted, true);
 });
 
 test('host: settings PUT 持久化失败 → 500 明确 code，内存/globalThis 不半提交（B-P2-10）', async () => {

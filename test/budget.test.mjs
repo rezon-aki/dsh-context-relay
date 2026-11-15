@@ -18,6 +18,7 @@ import { clearDeriveMemory } from '../lib/agent/derive.js';
 import { clearSharedMemory } from '../lib/agent/shared.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 
 /** 每次切 phase 必填的契约自检（预算闸门排在自检之后，这里给固定值）。 */
 const CONTRACT_CHECK = {
@@ -46,6 +47,9 @@ function resetSharedState() {
 
 /** 极简 fake ctx：只实现 agent.js 用到的接口，捕获注册产物 + logger 里程碑。 */
 function fakeCtx(overrides = {}) {
+  const provided = overrides.services ?? {};
+  const fixture = provided.agentTeams !== undefined && provided.subagents === undefined ? subagentsFromLegacy(provided.agentTeams) : undefined;
+  const services = fixture === undefined ? provided : { ...provided, subagents: fixture, agents: provided.agents ?? fixture.agentsService };
   const tools = new Map();
   const sections = [];
   const events = [];
@@ -71,7 +75,7 @@ function fakeCtx(overrides = {}) {
       context() { return () => {}; },
     },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return overrides.services?.[name]; },
+    get(name) { return services[name]; },
   };
   return { ctx, tools, sections, events, cleanups, logs };
 }

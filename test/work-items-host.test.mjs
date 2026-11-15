@@ -176,15 +176,15 @@ test('host: 默认会话级路径（未配置 workItemsPath）→ 读 work-items
   assert.equal(got.json.path, '.scratch/context-relay/work-items/sess-relay.json');
   assert.equal(got.json.workItems.rev, 12);
 
-  // 队友会话（parentSession=Lead）解析到 Lead 的会话级台账，不读自己的。
+  // v0.7.0：台账是 Leader 自己的项目管理队列；队友会话不展示/不读取。
   const mateHost = fakeHost({
     config: { workItemsPath: null },
     sessions: { get: () => sessionOf('sess-mate', { agentPreset: 'relay', cwd, origin: 'subagent', parentSession: 'sess-relay' }) },
   });
   const mateGot = await getWorkItems(mateHost, 'sess-mate');
   assert.equal(mateGot.out.statusCode, 200);
-  assert.equal(mateGot.json.path, '.scratch/context-relay/work-items/sess-relay.json');
-  assert.equal(mateGot.json.workItems.rev, 12);
+  assert.equal(mateGot.json.leadOnly, true);
+  assert.equal(mateGot.json.workItems, null);
 });
 
 test('host: work-items relay 会话 cwd 不可得 → 200 + workItems:null（不 500）', async () => {

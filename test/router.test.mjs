@@ -9,16 +9,20 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, TEAM_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, PROTOCOL_TEXT_LONG, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
+import { clearSharedMemory, markPendingArchitect } from '../lib/agent/shared.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 
 /** 最小 fake ctx：记录 systemPrompt section、工具注册、事件监听与 warn。 */
 function fakeCtx(services = {}) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
   const sections = [];
   const tools = new Map();
   const listeners = [];
@@ -38,7 +42,7 @@ function fakeCtx(services = {}) {
       context() { return () => {}; },
     },
     tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
-    get(name) { return services[name]; },
+    get(name) { return normalized[name]; },
   };
   return { ctx, sections, tools, listeners, warns };
 }
@@ -47,8 +51,10 @@ function fakeCtx(services = {}) {
  * options.sessionId：给 root 会话种子的路径提供会话 id（缺省不带 id，种子 fail-open 跳过）。 */
 function makeAgent(header, calls, sections = [], options = {}) {
   const restrictThrows = options.restrictThrows ?? new Set();
+  const registered = [];
   return {
     session: { header, ...(options.sessionId === undefined ? {} : { id: options.sessionId }) },
+    registered,
     ctx: {
       inject(services, callback) {
         if (options.injectThrows === true) throw new Error('service unavailable');
@@ -61,6 +67,7 @@ function makeAgent(header, calls, sections = [], options = {}) {
                 calls.push(name);
                 return () => {};
               },
+              register(definition) { registered.push(definition.name); return () => {}; },
             },
           });
           return { dispose() {} };
@@ -97,8 +104,8 @@ test('超长任务协议资产：角色纪律 / 回执契约 / PTC dispatch+coll
   // PTC 两段模板：dispatch（批量建卡+spawn）与 collect（短等+digest）
   assert.match(text, /PTC dispatch 模板/);
   assert.match(text, /PTC collect 模板/);
-  assert.match(text, /team_task_create/);
-  assert.match(text, /spawn_teammate/);
+  assert.match(text, /subagent\(\{ name: who/);
+  assert.match(text, /send_message\(\{ agent: who/);
   assert.match(text, /wait_agent/);
   assert.match(text, /digest/);
   // 边界如实：PTC 软约束 + 消息不可过滤
@@ -186,26 +193,21 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
 
 test('v0.3.2 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/rehydrate 纪律', () => {
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 800, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
-  assert.ok(TEAM_WORKER_PROTOCOL_TEXT.length <= 500, 'TEAM_WORKER 超预算: ' + TEAM_WORKER_PROTOCOL_TEXT.length);
   for (const phrase of ['队友是长期资产', 'relay_team_status', 'relay_checkpoint', 'relay_renew', '没有 checkpoint 不换代', 'escalation', 'ledger/roster']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
-  // v0.3.2：reset 是真清空（同成员/不占额度），renew 只换身份，满额/重启走 handoff+rehydrate
-  for (const phrase of ['relay_freshen({reset:true', '真清空', '不占额度', '只用于换身份/角色', 'member-limit', 'relay_handoff', 'relay_rehydrate']) {
+  // v0.3.2：reset 是真清空（同成员/不占额度），renew 只换身份；v0.7.0 删除独立 rehydrate
+  for (const phrase of ['relay_freshen({reset:true', '真清空', '不占额度', '只用于换身份/角色', 'member-limit', 'relay_handoff']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/rehydrate 纪律: ' + phrase);
   }
-  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代最多 2 次', '不向人类提问', 'session_event_read', '快照权威']) {
-    assert.ok(TEAM_WORKER_PROTOCOL_TEXT.includes(phrase), '队友保鲜段缺短语: ' + phrase);
-  }
-  for (const phrase of ['relay_freshen({reset:true', '真清空', '不引用旧上下文', '≤100 字']) {
-    assert.ok(TEAM_WORKER_PROTOCOL_TEXT.includes(phrase), '队友段缺 reset 纪律: ' + phrase);
+  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字']) {
+    assert.ok(TEAMMATE_PROTOCOL_TEXT.includes(phrase), '紧凑队友段缺短语: ' + phrase);
   }
   // v0.3.2 真机会话反馈：固定小队/复用优先 + 成员额度稀缺（spawn 与 renew 都占额）
   for (const phrase of ['固定小队', '成员额度', 'relay_team_status']) {
     assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 复用/额度纪律缺失: ' + phrase);
   }
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('member-limit'), 'Lead 段缺 member-limit 处理指引');
-  assert.ok(TEAM_WORKER_PROTOCOL_TEXT.includes('必须调用'), '队友段缺 checkpoint 硬要求');
 });
 
 test('Router deny 清单：只含执行/写类工具（read/glob/grep 保持可用）', () => {
@@ -214,7 +216,7 @@ test('Router deny 清单：只含执行/写类工具（read/glob/grep 保持可�
     assert.ok(!ROUTER_DENY_TOOLS.includes(allowed), allowed + ' 不应在 deny 清单');
   }
   // v0.2.17 B：lead-only 工具清单 = 注册名（relay_ 前缀防漂移）
-  assert.deepEqual([...LEAD_ONLY_TOOLS], ['relay_organize', 'relay_handoff', 'relay_recommend']);
+  assert.deepEqual([...LEAD_ONLY_TOOLS], ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items']);
   // v0.2.17 D：普通子代理额外隐藏清单只含 relay_phase（relay_status 仍可见），与 lead-only 不重叠
   assert.deepEqual([...SUBAGENT_ONLY_HIDDEN_TOOLS], ['relay_phase']);
   assert.equal(LEAD_ONLY_TOOLS.filter((name) => SUBAGENT_ONLY_HIDDEN_TOOLS.includes(name)).length, 0);
@@ -279,13 +281,20 @@ test('v0.2.17 B/D：classic 也监听 agent/created——非 root 裁 lead-only�
   apply(f.ctx, {});
   const listener = agentListener(f);
   assert.ok(listener !== undefined, 'classic 也应注册 per-agent 安装监听器');
-  // 非 root 的三种 header 形状（origin/parentSession/delegationDepth 任一成立）→ 裁 lead-only 工具
-  for (const header of [{ origin: 'subagent' }, { parentSession: 'session-parent' }, { delegationDepth: 1 }]) {
+  // rc.2 起 depth=1 子会话就是直接队友：classic 下保留 preset 全量协议，只裁 lead-only（不装影子）。
+  for (const header of [{ origin: 'subagent' }, { delegationDepth: 1 }]) {
     const calls = [];
     const sections = [];
     await listener.listener({ agent: makeAgent(header, calls, sections) });
-    // 无 agentTeams 服务 → 不可能有队友 → B + D + C：裁 lead-only + 额外隐藏 relay_phase + 影子协议
-    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '非 root 普通子代理应裁 lead-only + relay_phase：' + JSON.stringify(header));
+    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], '直接队友只裁 lead-only：' + JSON.stringify(header));
+    assert.deepEqual(sections, [], '直接队友保留全量协议（classic）');
+  }
+  // depth≥2 才是普通子代理：裁 lead-only + 额外隐藏 relay_phase + 影子协议。
+  {
+    const calls = [];
+    const sections = [];
+    await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, calls, sections) });
+    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理应裁 lead-only + relay_phase');
     assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
   }
   // root → 不裁任何工具（classic 不变；relay_phase 保留）
@@ -293,6 +302,12 @@ test('v0.2.17 B/D：classic 也监听 agent/created——非 root 裁 lead-only�
   await listener.listener({ agent: makeAgent({}, calls) });
   assert.deepEqual(calls, []);
   assert.ok(!calls.includes('relay_phase'), 'root 保留 relay_phase');
+  // parentSession 是 fork 血缘，不是 subagent：普通 fork 根会话按 root 处理（不裁、不装影子）。
+  const forkCalls = [];
+  const forkSections = [];
+  await listener.listener({ agent: makeAgent({ parentSession: 'session-parent' }, forkCalls, forkSections) });
+  assert.deepEqual(forkCalls, [], '普通 fork 根会话不被当子代理');
+  assert.deepEqual(forkSections, [], '普通 fork 根会话保留全量协议');
 });
 
 test('v0.2.17 B：非 root 工具裁剪 fail-open——单名未注册跳过、全部失败 warn、inject 失败不抛', async () => {
@@ -301,10 +316,10 @@ test('v0.2.17 B：非 root 工具裁剪 fail-open——单名未注册跳过、�
   const listener = agentListener(f);
   // 单个工具名未注册 → 其余仍裁
   const partial = [];
-  await listener.listener({ agent: makeAgent({ origin: 'subagent' }, partial, [], { restrictThrows: new Set(['relay_organize']) }) });
-  assert.deepEqual(partial, ['relay_handoff', 'relay_recommend', ...SUBAGENT_ONLY_HIDDEN_TOOLS], '未知工具名跳过，其余仍裁（含 D）');
+  await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, partial, [], { restrictThrows: new Set(['relay_organize']) }) });
+  assert.deepEqual(partial, ['relay_handoff', 'relay_recommend', 'relay_work_items', ...SUBAGENT_ONLY_HIDDEN_TOOLS], '未知工具名跳过，其余仍裁（含 D）');
   // 全部失败 ≠ 平台缺单个工具：必须 warn，不能静默 fail-open
-  await listener.listener({ agent: makeAgent({ origin: 'subagent' }, [], [], { restrictThrows: new Set([...LEAD_ONLY_TOOLS]) }) });
+  await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, [], [], { restrictThrows: new Set([...LEAD_ONLY_TOOLS]) }) });
   assert.ok(f.warns.some((line) => line.includes('worker restrict: no tools restricted')), '全部 restrict 失败应 warn');
   // inject 本身失败 → warn 后跳过，不抛（不阻断会话创建）
   await assert.doesNotReject(async () => listener.listener({ agent: makeAgent({ origin: 'subagent' }, [], [], { injectThrows: true }) }), 'inject 失败不得让 agent/created 抛错');
@@ -316,20 +331,11 @@ test('v0.2.17 C：非 root 非队友 → 同名影子覆盖 context-relay:protoc
   apply(f.ctx, {});
   const calls = [];
   const sections = [];
-  await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 1 }, calls, sections) });
+  await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
   assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS]);
   assert.equal(sections.length, 1);
   assert.equal(sections[0].name, 'context-relay:protocol', '必须与 preset 层同名才能影子覆盖');
   assert.equal(sections[0].order, 10150, 'order 沿用 preset 段顺序');
-  assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
-});
-
-test('v0.2.17 C：agentTeams.tryMembership 返回 undefined（普通子代理）→ 仍覆盖', async () => {
-  const f = fakeCtx({ agentTeams: { tryMembership: () => undefined } });
-  apply(f.ctx, {});
-  const sections = [];
-  await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent' }, [], sections) });
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
   assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
 });
 
@@ -344,34 +350,14 @@ test('v0.2.17 C：队友保留全协议（不影子覆盖），但 B 仍裁 lead
   assert.deepEqual(sections, [], '队友保留 preset 全量协议（task-15 已中性化身份句）');
 });
 
-test('v0.2.17 C：tryMembership 抛错 → 保守不覆盖（保留全协议）并 warn，B 不受影响', async () => {
-  const f = fakeCtx({ agentTeams: { tryMembership: () => { throw new Error('team boom'); } } });
-  apply(f.ctx, {});
-  const calls = [];
-  const sections = [];
-  await assert.doesNotReject(async () => agentListener(f).listener({ agent: makeAgent({ origin: 'subagent' }, calls, sections) }));
-  assert.deepEqual(sections, [], '区分失败时不得覆盖全协议');
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], 'B 工具裁剪照旧');
-  assert.ok(!calls.includes('relay_phase'), 'D：区分不了队友时保守保留 relay_phase');
-  assert.ok(f.warns.some((line) => line.includes('worker protocol skipped: team membership unavailable')), 'warn 记录');
-  // ctx.get 本身抛错（服务层异常）→ 同样保守不覆盖，不阻断会话创建
-  const g = fakeCtx();
-  g.ctx.get = () => { throw new Error('service boom'); };
-  apply(g.ctx, {});
-  const sections2 = [];
-  await assert.doesNotReject(async () => agentListener(g).listener({ agent: makeAgent({ origin: 'subagent' }, [], sections2) }));
-  assert.deepEqual(sections2, [], '服务解析失败不得覆盖全协议');
-  assert.ok(g.warns.some((line) => line.includes('worker protocol skipped: team membership unavailable')), 'get 抛错同样 warn');
-});
-
 test('v0.2.17 C：root 不注入 worker 影子；非 root agent.ctx 缺失时 fail-open 只 warn', async () => {
   const f = fakeCtx();
   apply(f.ctx, {});
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({}, [], sections) });
   assert.deepEqual(sections, [], 'root 保留 preset 全量协议');
-  // 非 root 但 ctx 缺失（非常规 composition）→ 不抛，warn
-  await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent' } } } }));
+  // 非 root 深代 ctx 缺失（非常规 composition）→ 不抛，warn
+  await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent', delegationDepth: 2 } } } }));
   assert.ok(f.warns.some((line) => line.includes('worker restrict skipped: agent.ctx unavailable')));
   assert.ok(f.warns.some((line) => line.includes('worker protocol skipped: agent.ctx unavailable')));
 });
@@ -392,23 +378,28 @@ test('routerMode=true：root agent 经 agent/created 在自身 scope 注入 Rout
   assert.equal(sections[1].text, TEAM_LEAD_PROTOCOL_TEXT, '队友保鲜段文本与资产一致');
 });
 
-test('routerMode=true：非 root 只做 B+C+D（裁 lead-only + relay_phase + worker 影子），不裁 Router 工具、不注入 Router 段', async () => {
+test('routerMode=true：depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2 子代理裁 relay_phase + worker 影子；都不裁 Router 工具', async () => {
   const f = fakeCtx();
   apply(f.ctx, { routerMode: true });
   const listener = agentListener(f);
-  for (const header of [
-    { origin: 'subagent' },
-    { parentSession: 'session-parent' },
-    { delegationDepth: 1 },
-    { origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 },
-  ]) {
-    const calls = [];
-    const sections = [];
-    await listener.listener({ agent: makeAgent(header, calls, sections) });
-    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '非 root 只裁 lead-only + relay_phase：' + JSON.stringify(header));
-    assert.ok(!calls.includes('bash'), '非 root 不裁 Router 执行类工具：' + JSON.stringify(header));
-    assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '非 root 只注入 worker 影子（不注入 Router 段）：' + JSON.stringify(header));
-  }
+  const teammateCalls = [];
+  const teammateSections = [];
+  const teammate = makeAgent({ origin: 'subagent', delegationDepth: 1 }, teammateCalls, teammateSections);
+  await listener.listener({ agent: teammate });
+  assert.deepEqual(teammateCalls, [...LEAD_ONLY_TOOLS], '直接队友只裁 lead-only（保留 relay_phase）');
+  assert.ok(!teammateCalls.includes('bash'), '不裁 Router 执行类工具');
+  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '直接队友只装紧凑协议（不再叠 team-worker 段）');
+  assert.equal(teammateSections[0].text, TEAMMATE_PROTOCOL_TEXT);
+  assert.deepEqual(teammate.registered, ['relay_checkpoint', 'relay_freshen'], '直接队友拿 checkpoint/freshen');
+  // depth≥2：普通子代理
+  const calls = [];
+  const sections = [];
+  const deep = makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections);
+  await listener.listener({ agent: deep });
+  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理只裁 lead-only + relay_phase');
+  assert.ok(!calls.includes('bash'), '不裁 Router 执行类工具');
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '普通子代理只注入 worker 影子');
+  assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
 });
 
 test('routerMode=true：fail-open——单个工具名未注册时其余仍裁、监听器不抛（不阻断会话创建）', async () => {
@@ -533,7 +524,7 @@ test('v0.2.17 D：普通子代理额外隐藏 relay_phase——各 membership �
     apply(f.ctx, {});
     const calls = [];
     const sections = [];
-    await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 1 }, calls, sections) });
+    await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
     assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理应裁三项（' + item.label + '）');
     assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议照装（' + item.label + '）');
     assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT, '影子文本不变（' + item.label + '）');
@@ -559,17 +550,72 @@ test('v0.2.17 D：队友只裁 organize/handoff（relay_phase 保留、不装影
   assert.deepEqual(rootSections, [], 'root 不装影子协议');
 });
 
+
+test('v0.7.1 创建瞬间架构师识别：pending 标记认领（不依赖 subagents 服务），消费后下一个 depth=1 是普通队友', async () => {
+  clearSharedMemory();
+  const f = fakeCtx();
+  apply(f.ctx, { routerMode: true });
+  const listener = agentListener(f);
+  // 模拟 relay_architect：spawn 前登记 pending（rc.2 的 agent/created 早于 subagents.resident 登记）。
+  markPendingArchitect('session-lead');
+  const calls = [];
+  const sections = [];
+  const architect = makeAgent({ origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1 }, calls, sections);
+  await listener.listener({ agent: architect });
+  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '架构师只裁 lead-only + relay_phase');
+  assert.deepEqual(architect.registered, ['relay_checkpoint'], '架构师只拿 checkpoint，不拿 freshen');
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
+  assert.equal(sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT, 'pending 命中 → 架构师独立协议');
+  // pending 消费后：同父的下一个 depth=1 子会话是普通队友。
+  const teammateCalls = [];
+  const teammateSections = [];
+  const teammate = makeAgent({ origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1 }, teammateCalls, teammateSections);
+  await listener.listener({ agent: teammate });
+  assert.deepEqual(teammate.registered, ['relay_checkpoint', 'relay_freshen'], '下一个 depth=1 是队友');
+  assert.equal(teammateSections[0].text, TEAMMATE_PROTOCOL_TEXT, '队友拿紧凑队友协议');
+  clearSharedMemory();
+});
+
+test('v0.7.1 创建瞬间架构师识别：resume 后 roster 里的 sessionId 仍认架构师', async () => {
+  clearSharedMemory();
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-router-arch-'));
+  const rosterDir = join(cwd, '.scratch', 'context-relay', 'team', 'session-lead');
+  mkdirSync(rosterDir, { recursive: true });
+  writeFileSync(join(rosterDir, 'roster.json'), JSON.stringify({
+    version: 1,
+    lineages: {
+      architect: {
+        profile: { role: 'architect', description: '专职架构师' },
+        generations: [{ gen: 1, name: 'architect', sessionId: 'session-arch-1', createdAt: '2026-11-15T00:00:00.000Z' }],
+        activeGen: 1,
+      },
+    },
+  }));
+  const f = fakeCtx();
+  apply(f.ctx, { routerMode: true });
+  const sections = [];
+  const architect = makeAgent(
+    { origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1, cwd },
+    [],
+    sections,
+    { sessionId: 'session-arch-1' },
+  );
+  await agentListener(f).listener({ agent: architect });
+  assert.equal(sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT, 'roster 命中 → 架构师协议（resume/重启）');
+  clearSharedMemory();
+});
+
 test('v0.2.17 D：fail-open——relay_phase 未注册时只 warn，B 与影子协议不受影响', async () => {
   const f = fakeCtx();
   apply(f.ctx, {});
   const calls = [];
   const sections = [];
-  await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent' }, calls, sections, { restrictThrows: new Set(['relay_phase']) }) });
+  await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections, { restrictThrows: new Set(['relay_phase']) }) });
   assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], 'relay_phase 未注册 → 跳过，B 仍生效');
   assert.ok(f.warns.some((line) => line.includes('subagent restrict: no tools restricted')), 'D 全部失败应 warn（不静默）');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议不受 D 失败影响');
   // agent.ctx 缺失：两段 restrict 均只 warn、不抛（不阻断会话创建）
-  await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent' } } } }));
+  await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent', delegationDepth: 2 } } } }));
   assert.ok(f.warns.some((line) => line.includes('subagent restrict skipped: agent.ctx unavailable')), 'ctx 缺失时 D 也 fail-open + warn');
 });
 // ── v0.6.4 专职架构师协议资产 ─────────────────────────────────────────
@@ -577,7 +623,7 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   assert.equal(ARCHITECT_NAME, 'architect');
   assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.length <= 900, 'ARCHITECT_LEAD 超预算: ' + ARCHITECT_LEAD_PROTOCOL_TEXT.length);
   assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.length <= 700, 'ARCHITECT_WORKER 超预算: ' + ARCHITECT_WORKER_PROTOCOL_TEXT.length);
-  for (const phrase of ['专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'spawn_teammate', '同会话只建一次', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
+  for (const phrase of ['专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
     assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
   }
   for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码']) {
