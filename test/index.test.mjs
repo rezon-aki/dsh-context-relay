@@ -359,7 +359,7 @@ test('preset：apply 只注册唯一模式；agent 行选项白名单透传（�
   assert.deepEqual(customRow.config.relayPresetIds, ['myrelay-long']);
 });
 
-test('preset：delegationGate 非法值不崩（注册照常；归一为 warn 在 agent 面，strict 原样透传留 v0.10.0）', async () => {
+test('preset：delegationGate 非法值不崩（注册照常；归一为 warn 在 agent 面，strict 原样透传）', async () => {
   const host = fakeHost({ config: { delegationGate: 'banana' } });
   await tick();
   assert.equal(host.registrations.length, 1, '非法 delegationGate 不阻断 preset 注册');
@@ -368,7 +368,7 @@ test('preset：delegationGate 非法值不崩（注册照常；归一为 warn �
   const strictHost = fakeHost({ config: { delegationGate: 'strict' } });
   await tick();
   const strictRow = strictHost.registrations[0].plugins.find((item) => item.id === 'compaction').config.at(-1);
-  assert.equal(strictRow.config.delegationGate, 'strict', 'strict 原样透传（agent 面归一 warn + 一次日志，v0.10.0 启用）');
+  assert.equal(strictRow.config.delegationGate, 'strict', 'strict 原样透传（v0.10.0 C14b 起 agent 面原样生效）');
 });
 
 test('preset：行集合与官方 ptc.patch.yml 一致（找不到官方文件时 skip）', (t) => {

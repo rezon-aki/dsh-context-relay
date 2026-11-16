@@ -73,7 +73,7 @@
 - 主链 `discover → decide → build → verify → ship`；`blocked`/`cancel` 出口（`exit_reason` 必填、零副作用拒绝）；允许 verify→build 返修；ship 出口可恢复（仅当本次退出确实从 ship 退出时回 ship，其余仍只能 verify→ship）。
 - 两段式用户门：**设计门**——首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true}`；**实现↔设计对齐**——ship 的 `user_gate{review, report}` 非空硬门 + `user_gate.verification{tier: minimal|heavy, approved_by_user?, items[]}`，heavy 无用户授权即拒。`contract_check` 只在 ship 必填；`exit_criteria` 只在 discover/decide 且仅 crossing 时校验。
 - 台账：items 只在主链跨 phase 时登记（同 phase 传 items 显式拒绝，零副作用）；`phase=null` 条目纳入 strict 关闸；`GET /context-relay/work-items` 纯只读（不触发旧 workspace 台账惰性迁移写盘）；ship 严格校验 done 需 evidence；上限 30，超限先归档 done。
-- 委派闸门 `delegationGate`：warn（默认）/ off；build→verify 检查会话 Lead 执行占比与 `lead-exec:` 证据。`strict` 档仍是预留，config 层归一为 warn。
+- 委派闸门 `delegationGate`：warn（默认，只提醒）/ strict（命中即拒，零副作用）/ off；build→verify 检查会话 Lead 执行占比与 `lead-exec:` 证据。
 
 ## 8. 团队与派活（C8）
 

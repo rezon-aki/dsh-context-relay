@@ -234,14 +234,14 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 6350],
+      ['context-relay:protocol', 6348],
       ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 1635],
+      ['context-relay:work-ledger', 1633],
       ['context-relay:architect', 693],
-      ['context-relay:router', 1944],
+      ['context-relay:router', 1942],
       ['context-relay:team-lead', 614],
     ],
-    sectionChars: 11251,
+    sectionChars: 11245,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
@@ -250,7 +250,7 @@ const ROLE_SNAPSHOT = {
     ],
     toolDescChars: 4465,
     toolSchemaChars: 17287,
-    totalChars: 28538,
+    totalChars: 28532,
   },
   teammate: {
     sections: [

@@ -96,7 +96,7 @@ test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执�
   assert.match(text, /Lead 只调度/);
   assert.match(text, /写文件、改代码、跑命令\/测试、查日志一律派 worker/);
   assert.match(text, /不设「小任务自己干」例外/);
-  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '目标 ≤20%', 'warn 档只提醒', 'strict 留 v0.10.0', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
+  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '目标 ≤20%', 'warn 档只提醒', 'strict 可配，命中即拒', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
     assert.ok(text.includes(phrase), 'ROUTER 缺短语: ' + phrase);
   }
   // 回执契约：文件 ≤4KB + 单条消息 ≤200 字 + 头 3 行机读 + verdict
@@ -206,7 +206,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER �
     "写实现文档、读长日志也派 worker",
     "目标 ≤20%",
     "warn 档只提醒",
-    "strict 留 v0.10.0",
+    "strict 可配，命中即拒",
     // 固定小队语义：细节真源在 PROTOCOL base/TEAM_LEAD，ROUTER 只留短语 + 指针
     '固定小队',
     '成员额度',
@@ -298,7 +298,7 @@ test('v0.9.0 批次4 P1：WORK_LEDGER 承载注入去重行为说明（P3 新文
     assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺 P1 行为句: ' + phrase);
   }
   // 其余台账规则逐字保留（P3 只把重复说明改指针）
-  for (const phrase of ['台账是 **Lead 的项目管理队列**', '官方任务板为准', 'officialTaskId', '默认上限 30', 'archive.path/count', 'build→verify 默认 warn 校验', 'strict 留 v0.10.0', 'phase 边界响应自动带队友 triage']) {
+  for (const phrase of ['台账是 **Lead 的项目管理队列**', '官方任务板为准', 'officialTaskId', '默认上限 30', 'archive.path/count', 'build→verify 默认 warn 校验', 'strict 可配，命中即拒', 'phase 边界响应自动带队友 triage']) {
     assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺既有规则: ' + phrase);
   }
 });

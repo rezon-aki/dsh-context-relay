@@ -77,16 +77,16 @@ test('常量口径：阈值/样本下限/默认档/回执目录与读取上限�
   assert.equal(DELEGATION_DIGEST_CHARS, 600);
 });
 
-test('normalizeDelegationConfig：默认 warn；off 保留；strict → warn + requestedStrict；非法 → warn', () => {
-  assert.deepEqual(normalizeDelegationConfig(), { gate: 'warn', requestedStrict: false });
-  assert.deepEqual(normalizeDelegationConfig({}), { gate: 'warn', requestedStrict: false });
-  assert.deepEqual(normalizeDelegationConfig(null), { gate: 'warn', requestedStrict: false });
-  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'warn' }), { gate: 'warn', requestedStrict: false });
-  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'off' }), { gate: 'off', requestedStrict: false });
-  // v0.9.0 D1=A：strict 在 config 层归一为 warn，只记 requestedStrict（agent.js 打一次 warn 日志；v0.10.0 启用）。
-  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'strict' }), { gate: 'warn', requestedStrict: true });
+test('normalizeDelegationConfig：默认 warn；off / strict 原样保留（v0.10.0 C14b strict 生效）；非法 → warn', () => {
+  assert.deepEqual(normalizeDelegationConfig(), { gate: 'warn' });
+  assert.deepEqual(normalizeDelegationConfig({}), { gate: 'warn' });
+  assert.deepEqual(normalizeDelegationConfig(null), { gate: 'warn' });
+  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'warn' }), { gate: 'warn' });
+  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'off' }), { gate: 'off' });
+  // v0.10.0 C14b：strict 不再归一为 warn（v0.9.0 的 requestedStrict 标记已删，config.patch 路径原样生效）。
+  assert.deepEqual(normalizeDelegationConfig({ delegationGate: 'strict' }), { gate: 'strict' });
   for (const bad of ['STRICT', 'on', '', 123, null, true, {}]) {
-    assert.deepEqual(normalizeDelegationConfig({ delegationGate: bad }), { gate: 'warn', requestedStrict: false }, '非法值归一 warn：' + String(bad));
+    assert.deepEqual(normalizeDelegationConfig({ delegationGate: bad }), { gate: 'warn' }, '非法值归一 warn：' + String(bad));
   }
 });
 
@@ -228,6 +228,19 @@ test('delegationGateCheck strict：命中 → ok:false + code delegation-gate + 
   const clean = delegationGateCheck({ from: 'build', to: 'verify', execution: executionOf(1, 20), ledger: cleanLedger, sessionId: SESSION, mode: 'strict' });
   assert.equal(clean.ok, true);
   assert.equal(clean.code, undefined);
+});
+
+test('v0.10.0 C14b：config strict 原样生效——命中即拒（warn 同触发项仍放行）', () => {
+  const ledger = ledgerOf([item('s1', 'build', { owner: null })]);
+  const triggered = { from: 'build', to: 'verify', execution: executionOf(30, 60), ledger, sessionId: SESSION };
+  const strict = delegationGateCheck({ ...triggered, mode: normalizeDelegationConfig({ delegationGate: 'strict' }).gate });
+  assert.equal(strict.ok, false, 'strict：命中即拒');
+  assert.equal(strict.code, 'delegation-gate');
+  assert.match(strict.message, /Lead 执行占比 50%/);
+  const warn = delegationGateCheck({ ...triggered, mode: normalizeDelegationConfig({ delegationGate: 'warn' }).gate });
+  assert.equal(warn.ok, true, 'warn：同触发项只提醒、放行');
+  assert.equal(warn.warnings.length, 2);
+  assert.equal(warn.code, undefined);
 });
 
 test('delegationGateCheck：tools 缺省 mode → warn；ids 超过 8 条截断并写「等 N 条」', () => {

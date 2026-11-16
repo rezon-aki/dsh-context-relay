@@ -58,7 +58,7 @@
 
 唯一模式保持「人来把关」：不自动循环、不替你自动批准。
 
-默认 4 人小队，优先复用；按需扩到部署 `maxActiveSubagents`，满额排队/报阻塞。派活 brief 五字段缺一不可：目标 / 必读 1–3 份（指针+when/role，按序自取）/ 写范围 / 验收 / 回执路径。**执行活先派活**：Lead 执行占比目标 ≤20%（`delegationGate` 默认 warn 只提醒、不硬拒；strict 档预留，当前仍归一为 warn）。
+默认 4 人小队，优先复用；按需扩到部署 `maxActiveSubagents`，满额排队/报阻塞。派活 brief 五字段缺一不可：目标 / 必读 1–3 份（指针+when/role，按序自取）/ 写范围 / 验收 / 回执路径。**执行活先派活**：Lead 执行占比目标 ≤20%（`delegationGate` 默认 warn 只提醒、不硬拒；strict 档可配，命中即拒）。
 
 **v0.10.0 是破坏性版本**：classic `relay` 别名、双模式配置、cth/autoChoose/autoDecision/handoffPreset、legacy thresholds、`next_operation` 等兼容路径全部删除；面板授权契约版本升到 3（旧授权一次性失效）。升级前先看[迁移说明](docs/design/MIGRATION.md)。
 
@@ -204,7 +204,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `workItems` | `true` | 启用工作台账（工具 + 闸门 + 面板）；`false` 完全回退旧行为（与 delegation-first 协议互斥，装载时 warn）。 |
 | `workItemsGate` | `'strict'` | **交付（ship）阶段**的台账校验强度：`strict`（不合格拒绝）/ `warn`（只提示）/ `off`。交接与压缩始终把台账写进材料、文件损坏只警告（fail-open），不受本项影响。 |
 | `workItemsPhaseGate` | `'warn'` | **切阶段（phase 边界）**收口提示：本阶段未完成的分点未收口且未 carry（含 `phase=null` 条目）→ `warn` 放行+提示（默认）/ `strict` 拒绝切阶段 / `off`。单线程小任务用 `items:[]` 声明放行。 |
-| `delegationGate` | `'warn'` | **build→verify 委派闸门**：`warn` 只提醒不拒绝（默认）/ `off` 关闭。检查会话累计 Lead 执行占比 >20%（样本 ≥10 次工具调用）与 build/verify 分点由 Lead 自做且无 `lead-exec:` 证据；不阻断切换。`strict` 档为预留，当前仍归一为 warn。 |
+| `delegationGate` | `'warn'` | **build→verify 委派闸门**：`warn` 只提醒不拒绝（默认）/ `strict` 命中即拒（拒绝切换、零副作用）/ `off` 关闭。检查会话累计 Lead 执行占比 >20%（样本 ≥10 次工具调用）与 build/verify 分点由 Lead 自做且无 `lead-exec:` 证据；`warn` 不阻断切换，`strict` 命中时拒绝 build→verify。 |
 | `workItemsPath` | `（默认按会话）` | 台账文件位置覆盖：显式设置则所有会话共用该文件（旧 workspace 级行为）；默认按会话落在 `.scratch/context-relay/work-items/<session>.json`。 |
 | `workItemsMax` | `30` | 台账条目上限（1–100）。 |
 | `injectBrief` | `true` | 压缩成功后是否把那一页交接材料放回对话。 |
@@ -281,7 +281,6 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 - 团队优先闸门已删除：DSH 0.2.2-rc.2 起队友就是 subagent 树成员，无法区分「开子代理」与「用队友」。
 - 架构师模型默认跟随「模型」选择器的默认选择（已选则沿用；不拒绝、不阻塞）；显式选择才必须在该会话官方子代理白名单内。
 - preset 行数据只跟随 0.2.2-rc.2 的官方 ptc patch；更早内核（rc.1 / 0.2.1 系列）不再支持。
-- 委派闸门 `delegationGate` 的 `strict` 档仍是预留（当前归一为 warn）：它只提醒、不阻断 build→verify。
 
 ## 升级与卸载
 

@@ -2667,7 +2667,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：config off 不检查、无字
   assert.equal('delegationWarning' in result, false);
 });
 
-test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零副作用（v0.10.0 启用路径）', async () => {
+test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零副作用（注入口径）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const id = 'session-deleg-gate-strict';
@@ -2680,7 +2680,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零�
   services.sessionProjections.stateOf = () => ({
     phase: 'build', toolCalls: 100, executionCalls: 30,
   });
-  const tools = directRelayTools(services, { delegation: { gate: 'strict', requestedStrict: true } });
+  const tools = directRelayTools(services, { delegation: { gate: 'strict' } });
   await assert.rejects(
     tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } }),
     /relay_phase refused \(delegation gate\)/,
@@ -2688,6 +2688,51 @@ test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零�
   assert.equal(readFileSync(ledgerPath, 'utf8'), ledgerBefore, 'strict 拒绝路径不改台账');
   assert.deepEqual(panelStateOf(id), panelBefore, 'strict 拒绝路径不写面板');
   assert.equal(readWorkItems(cwd, { scopeId: id }).currentPhase, null, 'phase 未切换（台账 currentPhase 未写）');
+});
+
+test('v0.10.0 C14b：config delegationGate="strict" 生效——装配路径 build→verify 命中即拒、零副作用；warn 仍只提醒放行', async () => {
+  resetSharedState();
+  // strict：config 装配（不再归一 warn）→ 闸门命中拒绝；strict 生效 info 日志每次 apply 一次
+  const strictCwd = tmpCwd();
+  const strictId = 'session-deleg-config-strict';
+  await seedRelayLedger(strictCwd, strictId, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  const strictLedgerPath = join(strictCwd, '.scratch', 'context-relay', 'work-items', strictId + '.json');
+  const strictLedgerBefore = readFileSync(strictLedgerPath, 'utf8');
+  const strictPanelBefore = panelStateOf(strictId);
+  const { session: strictSession } = countingSnapshotSession({ id: strictId, cwd: strictCwd });
+  const strictBundle = attachRelayProjection(fakeServices({ session: strictSession }), {
+    phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 100, executionCalls: 30,
+  });
+  const strict = applyAgent(strictBundle.services, { delegationGate: 'strict' });
+  assert.equal(strict.logs.filter((line) => /delegationGate="strict" enabled/.test(line)).length, 1, 'strict 生效 info 日志一次/apply');
+  assert.equal(strict.logs.some((line) => /reserved for v0\.10\.0/.test(line)), false, '不再有 reserved warn');
+  await assert.rejects(
+    strict.tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session: strictSession, options: {} } }),
+    /relay_phase refused \(delegation gate\)/,
+    'strict + 触发项（执行占比 >20% / Lead 自做分点无 lead-exec）→ verify 拒绝',
+  );
+  assert.equal(readFileSync(strictLedgerPath, 'utf8'), strictLedgerBefore, 'strict 拒绝路径不改台账');
+  assert.deepEqual(panelStateOf(strictId), strictPanelBefore, 'strict 拒绝路径不写面板');
+  assert.equal(readWorkItems(strictCwd, { scopeId: strictId }).currentPhase, null, 'phase 未切换（台账 currentPhase 未写）');
+  // warn（默认 config）：同一触发项只提醒、放行
+  const warnCwd = tmpCwd();
+  const warnId = 'session-deleg-config-warn';
+  await seedRelayLedger(warnCwd, warnId, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  const { session: warnSession } = countingSnapshotSession({ id: warnId, cwd: warnCwd });
+  const warnBundle = attachRelayProjection(fakeServices({ session: warnSession }), {
+    phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
+    noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
+    toolCalls: 100, executionCalls: 30,
+  });
+  const warn = applyAgent(warnBundle.services);
+  assert.equal(warn.logs.some((line) => /delegationGate="strict" enabled/.test(line)), false, 'warn（默认）无 strict 日志');
+  const passed = await warn.tools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: { session: warnSession, options: {} } });
+  assert.equal(passed.phase, 'verify', 'warn + 触发项 → 只提醒、放行');
+  assert.equal(passed.delegation.ok, true);
+  assert.deepEqual(passed.delegation.warnings.map((warning) => warning.code), ['lead-exec-ratio', 'lead-owned-points']);
+  assert.match(passed.delegationWarning, /Lead 执行占比 30%/);
 });
 
 test('v0.9.0 批次3 非 build→verify 不检查闸门；ship 结果带 delegation 快照（用户汇报素材）', async () => {

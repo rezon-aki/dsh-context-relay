@@ -30,6 +30,7 @@
 | MIG12 | 面板 / notice 行为细节 | 双 4s 轮询；`[闭环]` 由 bash 等变更类工具触发；只读 `relay_work_items` 会清 pending；notice 先记后投递、target 含命令片段 | 单轮询器并行 2 GET；`[闭环]` 只认 write/edit/apply_patch；只读工具不清 pending；**投递成功后才记**去重键；target 首行 + 脱敏；压缩后复位去重 | 无需动作（行为改善） |
 | MIG13 | 工作区级台账 / 团队旧分区 | `.scratch/context-relay/work-items.json`、无 Lead 会话分区的 `team/<lineage>/` | 会话级台账仍是主路径；旧 workspace 台账读取时 best-effort 同步（GET 不再触发写），旧 team 分区只读回退——两者长期保留、不迁移 | 无需动作；旧文件保留，可人工清理 |
 | MIG14 | 卸载即净 | 卸载后的持久记录 | 不变：注销 preset / skills / HTTP 路由 / 工具 / 投影 / 哨兵；**保留**用户数据与工作区记录 | 需要清理时先备份，再人工删除 |
+| MIG15 | 委派闸门 `delegationGate` 的 `strict` 档 | v0.9.0 预留：`strict` 被静默归一为 `warn`，build→verify 只提醒不拒绝 | v0.10.0 启用：`strict` 原样生效——build→verify 命中（会话累计 Lead 执行占比 >20% 或 build/verify 分点由 Lead 自做且无 `lead-exec:` 证据）即 `relay_phase` 拒绝（零副作用）；默认仍 `warn`（只提醒）/ `off` 关闭 | 无数据动作；需要硬门时才配 `delegationGate: 'strict'`，默认行为不变 |
 
 ## 3. 升级步骤
 

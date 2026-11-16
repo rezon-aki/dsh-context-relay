@@ -1728,7 +1728,7 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], '退役配置不影响装配：仍为单一模式');
 });
 
-test('装配：delegationGate config（off/非法/strict 归一）不崩；strict 归一 warn 并打一次日志', async () => {
+test('装配：delegationGate config（off/非法/strict）不崩；v0.10.0 C14b strict 原样生效（不再 reserved warn）', async () => {
   const off = fakeCtx();
   assert.doesNotThrow(() => apply(off.ctx, { delegationGate: 'off' }));
   assert.equal(off.warns.some((line) => /delegationGate/.test(line)), false, 'off 不产生日志');
@@ -1737,7 +1737,7 @@ test('装配：delegationGate config（off/非法/strict 归一）不崩；stric
   assert.equal(invalid.warns.some((line) => /delegationGate/.test(line)), false, '非法值按缺省 warn 归一（不崩）');
   const strict = fakeCtx();
   assert.doesNotThrow(() => apply(strict.ctx, { delegationGate: 'strict' }));
-  assert.ok(strict.warns.some((line) => /delegationGate="strict" is reserved for v0.10.0/.test(line)), 'strict 归一 warn 并打一次日志');
+  assert.equal(strict.warns.some((line) => /delegationGate/.test(line)), false, 'strict 不再归一 warn、不再打 reserved warn（strict 生效 info 日志见 agent.test.mjs）');
 });
 
 test('装配/reload：进程内 dispatch 记忆丢失可观测（warn + relay_status.delegation.dispatchMemory）', async () => {

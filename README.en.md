@@ -58,7 +58,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 
 The single mode stays human-gated: no autonomous loop, no automatic approval on your behalf.
 
-Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path. **Dispatch execution work first**: the Lead's execution ratio targets ≤20% (`delegationGate` defaults to `warn` — a notice only; the `strict` tier is reserved and currently normalized to warn).
+Teams default to 4 members, reused first and expanded as needed up to deployment `maxActiveSubagents`; queue or report blockage at capacity. Every dispatch brief needs five fields: goal / 1–3 must-read pointers with when/role / write scope / acceptance / report path. **Dispatch execution work first**: the Lead's execution ratio targets ≤20% (`delegationGate` defaults to `warn` — a notice only; the `strict` tier can be configured and refuses the switch on a hit).
 
 **v0.10.0 is a breaking release**: the classic `relay` alias, dual-mode config, cth/autoChoose/autoDecision/handoffPreset, legacy thresholds, `next_operation` and every other compatibility path are removed; the panel authorization contract moves to version 3 (old authorizations expire once). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
 
@@ -204,7 +204,7 @@ Optional host plugin config (advanced):
 | `workItems` | `true` | Enable the work ledger (tool + gates + panel); `false` fully restores the old behaviour (mutually exclusive with the delegation-first protocol; warns at load). |
 | `workItemsGate` | `'strict'` | Ledger check strength for the **delivery (ship) phase**: `strict` (refuse) / `warn` (report only) / `off`. Handoff and compaction always write the ledger into their material and only warn on a corrupt file (fail-open); they are not affected by this key. |
 | `workItemsPhaseGate` | `'warn'` | **Phase-close** notice: unfinished points not closed or carried (including `phase=null` entries) → `warn` proceeds with a notice (default) / `strict` refuses the switch / `off`. Single-thread work declares `items: []`. |
-| `delegationGate` | `'warn'` | **build→verify delegation gate**: `warn` reports only and never refuses (default) / `off` disables it. It checks the session-wide Lead execution ratio >20% (at least 10 tool calls) and build/verify points owned by the Lead without `lead-exec:` evidence; it never blocks the switch. The `strict` tier is reserved and currently normalized to warn. |
+| `delegationGate` | `'warn'` | **build→verify delegation gate**: `warn` reports only and never refuses (default) / `strict` refuses the switch on a hit (zero side effects) / `off` disables it. It checks the session-wide Lead execution ratio >20% (at least 10 tool calls) and build/verify points owned by the Lead without `lead-exec:` evidence; `warn` never blocks the switch, `strict` refuses build→verify on a hit. |
 | `workItemsPath` | `(per-session by default)` | Override for the ledger file path: an explicit value makes all sessions share one file (the old workspace-level behaviour); the default is `.scratch/context-relay/work-items/<session>.json`. |
 | `workItemsMax` | `30` | Item cap (1–100). |
 | `injectBrief` | `true` | Whether the handover page is put back into the conversation after compaction. |
@@ -281,7 +281,6 @@ HTTP (available only behind the local GUI authentication): `GET/PUT /context-rel
 - The team-first gate is removed: from DSH 0.2.2-rc.2 teammates are subagent-tree members, so the plugin cannot distinguish "open a subagent" from "use a teammate".
 - The architect model defaults to the composer model selector's default selection, keeps a session's explicit choice, and does not refuse or block when unselected; only explicit overrides must be inside the session's official subagent allowlist.
 - Preset rows follow the official 0.2.2-rc.2 ptc patch only; earlier kernels (rc.1 / 0.2.1 series) are no longer supported.
-- The `delegationGate` `strict` tier is reserved (currently normalized to warn): it only notifies and never blocks build→verify.
 
 ## Upgrade and uninstall
 

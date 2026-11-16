@@ -40,7 +40,7 @@ disable-model-invocation: true
 
 - **生产纪律**：Lead 只做四类事——**用户交互、决策（裁决）、派活、验收抽样**（外加聚合回执）；**不亲自改码/跑测试/写实现文档/读长日志**，不做「顺手改一下」。
 - **不设自做额度**：没有「小任务自己干」的例外；实现、调查、写文档、跑命令/测试一律由 worker（队友/子代理）承担；Lead 遇到需要执行的工作只能**派活或拆票**。
-- **验收抽样有界**：≤3 次/phase 的 read/grep 核对，不是执行；执行占比看 `relay_status.delegation`，**目标 ≤20%**（warn 档只提醒、不阻断；strict 档为预留、当前仍归一为 warn）——超了先 `relay_dispatch` 派活再继续。
+- **验收抽样有界**：≤3 次/phase 的 read/grep 核对，不是执行；执行占比看 `relay_status.delegation`，**目标 ≤20%**（warn 档只提醒、不阻断；strict 档可配、命中即拒）——超了先 `relay_dispatch` 派活再继续。
 - **工具面裁剪只是辅助护栏**（relay-long 隐藏 bash/pwsh/write/edit）：纪律由本段与常驻协议承载，不靠维护「执行通道清单」；PTC 里 node:fs 等直写属**执行软约束**（插件不做通道守卫），靠自查与回执。
 - 队友与子会话不受影响（worker 必须亲自写/跑）；本段不放宽/收紧队友协议。
 - 适用范围：唯一生产模式「接力模式（Relay）· 超长任务」（relay-long）；classic 别名已删除（旧会话切 preset 即可回填平面）。
@@ -50,7 +50,7 @@ disable-model-invocation: true
 - **派活一律用 `relay_dispatch({itemId, brief, docs, writeScope, acceptance})`**：从台账取分点 → 复用/新建 worker → 标准 brief（目标 / 必读 1–3 / 写范围 / 验收 / 回执路径+verdict）→ 台账写 doing+owner+next；缺字段直接拒绝，返回 worker/reportPath/dispatchId。
 - **收口一律用 `relay_collect({itemId, waitMs?})`**（短等 ≤120s）：只读回执头 3 行（task/revision/verdict）+ digest（≤600 字），台账置 done（evidence=reportPath）或 blocked（原因），**只回 digest**；完整报告留在报告文件，验收抽样才 read（≤3 次/phase）。
 - **不手工派活/不轮询**：不要用 `subagent`/`send_message` 手工派执行活（会漏 brief/台账/回执契约），不要轮询 `wait_agent`/`list_agents`（回执会自动送达）。
-- **台账 owner / lead-exec**：build/verify 分点 owner 必须是 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`（build→verify 默认 warn 校验；strict 档预留，当前归一 warn）。
+- **台账 owner / lead-exec**：build/verify 分点 owner 必须是 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`（build→verify 默认 warn 校验；strict 档可配、命中即拒）。
 - **执行占比目标 ≤20%**：`relay_status.delegation` 给数据（execRatio / 派活 / 收口 / 空闲队友 / advice），warn 档只提醒；超了先派活再继续。
 
 ## 两段式用户门（设计门 + 实现↔设计对齐；最小注意力最大影响，2026-11-16 补充裁决）
@@ -146,7 +146,7 @@ disable-model-invocation: true
 - **闭环（事件驱动，不看时间）**：焦点行 `[台账·build 2/4] doing「…」next「…」` 只在**焦点文本变化**时注入（rev 变化不算；同一 step 到线/边界 notice 优先，最多一条）；**只有真正写文件的工具（write/edit/apply_patch）**成功但没落账 → 下一步提示「[闭环] 上一步改动未落账」（同一未落账签名只提示一次；只读 bash/侦察不再误报）；分点 done 后提示下一个；relay_work_items 成功即视为已落账；只读调用 `relay_work_items` 不清 pending。
 - **关 phase 闸门**：本 phase 未 done 的分点应收口（done 要 evidence / blocked 写原因）或 carry；`phase=null` 条目视同本 phase 纳入闸门（不能绕过 strict）；默认 warn 提示，`workItemsPhaseGate` 可配置 strict 拒绝或 off。
 - **读写**：relay_work_items()读；仅Lead整表替换（rev乐观锁）；队友/子代理不读写；派活/收口用 relay_dispatch/relay_collect（自动写 owner+next 并置 doing / 读 digest 后置 done 或 blocked）。会话级文件 `.scratch/context-relay/work-items/<session>.json`，交接复制到新会话。
-- **字段规则**：执行状态/依赖/验收以官方任务板为准，台账只引用 officialTaskId，不复制；台账status只表示Lead管理动作。open可无next，doing须next，blocked须原因，done须evidence（ship严格校验）；**build/verify 分点 owner 必须写 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`**（build→verify 默认 warn 校验，strict 档预留、当前归一 warn）。默认上限30，超限先归档done到同目录 `<session>-archive.ndjson`；无done可归档才拒绝新增，归档失败不写台账；archive.path/count可查，不自动删。`relay_phase` 的旧 `next_operation` 入参已删除（v0.10.0），下一步只走条目 `next`。
+- **字段规则**：执行状态/依赖/验收以官方任务板为准，台账只引用 officialTaskId，不复制；台账status只表示Lead管理动作。open可无next，doing须next，blocked须原因，done须evidence（ship严格校验）；**build/verify 分点 owner 必须写 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`**（build→verify 默认 warn 校验，strict 档可配、命中即拒）。默认上限30，超限先归档done到同目录 `<session>-archive.ndjson`；无done可归档才拒绝新增，归档失败不写台账；archive.path/count可查，不自动删。`relay_phase` 的旧 `next_operation` 入参已删除（v0.10.0），下一步只走条目 `next`。
 - **对账**：交接把未闭合项写进 next_actions（≤8）；压缩 brief 带「未闭合工作项」段；切 phase 响应带分点摘要（planned/done/opened/carried）与 `carryIgnored`（carry 里无效 id 会显式列出）。
 - **删除条目**：未完成须显式drop；整表移除done与drop的done均先归档，记录reason，归档文件可读。
 - **面板**：composer 状态条旁「台账 N/M」胶囊；只读，编辑走工具。

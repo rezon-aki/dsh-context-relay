@@ -14,6 +14,7 @@
 - **preset 切换口径变更（M-02）**：旧文档「切换需新会话」失效——首轮前/会话中切到 Relay 均会由声明式 reconcile 自动回填 Lead 平面（`agent/created` + 启动回填 + `agent-preset/selected` + 每步惰性兜底），`relay_status.plane` 可自检。
 - **notice 语义变更（C4）**：`[闭环]` 只认 write/edit/apply_patch（只读 bash 不再触发）；只读 `relay_work_items` 不再清 pending；notice 投递成功后才记去重键；正文统一脱敏、闭环 target 只取首行；队友 notice 不再带 Lead 台账行；官方压缩后去重状态复位。
 - **台账语义收紧（C7）**：`relay_phase` 同 phase 传 `items` 显式拒绝（零副作用，补分点用 `relay_work_items` 或下次跨 phase 带）；`phase=null` 条目纳入 strict 关闸；`GET /context-relay/work-items` 纯只读（不再触发旧 workspace 台账惰性迁移写盘）；ship→blocked/cancel 后可恢复回 ship（其余仍只能 verify→ship）。
+- **委派闸门 `strict` 启用（C14b）**：`delegationGate` 的 `strict` 档不再被静默归一为 `warn`——build→verify 命中（会话累计 Lead 执行占比 >20% 或 Lead 自做 build/verify 分点无 `lead-exec:` 证据）即 `relay_phase` 拒绝（零副作用）；默认仍 `warn` 只提醒、`off` 关闭；补 strict/warn 两端到端 + 装配日志测试（用户门/phase 语义不变）。
 - **工具面与文档**：`relay_status` 新增 `plane`/`delegation` 事实；SKILL/README 中英、DESIGN、MIGRATION、ARCHITECTURE 全部对齐 v0.10.0（新增 tracked `docs/design/ARCHITECTURE.md`）。
 
 ### P0（阻断核心链路）

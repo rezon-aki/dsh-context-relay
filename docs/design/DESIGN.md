@@ -128,7 +128,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 - 单一模式：唯一生产模式为「接力模式（Relay）· 超长任务」（id `relay-long`）；classic `relay` 别名与全部兼容路径已在 v0.10.0 删除。
 - Lead 只做用户交互、决策、派活、验收抽样，不亲自改码/跑测试/写实现文档/读长日志；没有执行例外（实现、调查、文档、命令一律派 worker）。
-- 委托可观测：`relay_status` 报告 Lead 执行动作占比、派活数与空闲 worker；委派闸门默认 warn 阈值 20%（超出只提醒、不拒绝），`strict` 档为预留（当前 config 层归一为 warn）；仍不在 phase 中段阻断；ship 委派统计保持 advisory（不对 report 文本做机械校验）。
+- 委托可观测：`relay_status` 报告 Lead 执行动作占比、派活数与空闲 worker；委派闸门默认 warn 阈值 20%（超出只提醒、不拒绝），`strict` 档可配（v0.10.0 启用：build→verify 命中即拒、零副作用）；仍不在 phase 中段阻断；ship 委派统计保持 advisory（不对 report 文本做机械校验）。
 - **preset 可切换**：会话创建时选择 Relay，或先建默认（ptc）会话、在首轮前或会话中切到 Relay——插件通过 `agent/created` / 启动回填 / 官方 `agent-preset/selected` / 每步惰性兜底四个入口幂等安装 Lead 平面（`relay_status.plane` 可自检），不再要求「切换需新会话」。
 - 装配 = 角色表（`lib/plane/roles.js`：deny/协议段/工具组/root 种子）+ client bundle；同一插件注册/注销，卸载即净。
 
