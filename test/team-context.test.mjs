@@ -114,7 +114,7 @@ function applyAgent(services, config = {}) {
 
 // ── 快照模块 ───────────────────────────────────────────────────────────
 
-test('team-context：无文件/非法 scope → exists=false；merge 保留其它队友、新 escalation 清 handled', () => {
+test('team-context：无文件/非法 scope → exists=false；merge 保留其它队友、新 escalation 清 handled', async () => {
   const cwd = tmpCwd();
   const empty = readTeamContext(cwd, 'session-lead-x');
   assert.equal(empty.exists, false);
@@ -122,15 +122,15 @@ test('team-context：无文件/非法 scope → exists=false；merge 保留其�
   assert.equal(teamContextRelativePath('session-lead-x'), TEAM_CONTEXT_REL + '/session-lead-x.json');
   // 非法 scope id（路径穿越）：不读也不写
   assert.equal(readTeamContext(cwd, '../evil').exists, false);
-  assert.equal(mergeTeamContext(cwd, '../evil', { name: 'a', band: 'organize' }).ok, false);
+  assert.equal((await mergeTeamContext(cwd, '../evil', { name: 'a', band: 'organize' })).ok, false);
 
-  mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-a', band: 'organize' });
-  mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-b', band: 'ok' });
+  await mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-a', band: 'organize' });
+  await mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-b', band: 'ok' });
   let context = readTeamContext(cwd, 'session-lead-x');
   assert.deepEqual(context.rows.map((row) => row.name).sort(), ['mate-a', 'mate-b']);
   assert.deepEqual(context.pending.map((row) => row.name), ['mate-a'], 'warn/ok 不算待处理');
 
-  replaceTeamContext(cwd, 'session-lead-x', { phase: 'build', rows: [{ name: 'mate-a', band: 'organize' }, { name: 'mate-b', band: 'relay' }], note: '已处理', handled: ['mate-a'] });
+  await replaceTeamContext(cwd, 'session-lead-x', { phase: 'build', rows: [{ name: 'mate-a', band: 'organize' }, { name: 'mate-b', band: 'relay' }], note: '已处理', handled: ['mate-a'] });
   context = readTeamContext(cwd, 'session-lead-x');
   assert.deepEqual(context.pending.map((row) => row.name), ['mate-b'], 'handled 的队友不再待处理');
   assert.deepEqual(context.handled, ['mate-a']);
@@ -138,18 +138,18 @@ test('team-context：无文件/非法 scope → exists=false；merge 保留其�
   assert.equal(context.phase, 'build');
 
   // 新 escalation = 新的待处理：清掉该名字的 handled
-  mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-a', band: 'relay' });
+  await mergeTeamContext(cwd, 'session-lead-x', { name: 'mate-a', band: 'relay' });
   context = readTeamContext(cwd, 'session-lead-x');
   assert.deepEqual(context.pending.map((row) => row.name).sort(), ['mate-a', 'mate-b']);
 
   // clear 只删该队友
-  assert.equal(clearTeamContextRow(cwd, 'session-lead-x', 'mate-a').cleared, true);
+  assert.equal((await clearTeamContextRow(cwd, 'session-lead-x', 'mate-a')).cleared, true);
   context = readTeamContext(cwd, 'session-lead-x');
   assert.deepEqual(context.rows.map((row) => row.name), ['mate-b']);
-  assert.equal(clearTeamContextRow(cwd, 'session-lead-x', 'nobody').cleared, false);
+  assert.equal((await clearTeamContextRow(cwd, 'session-lead-x', 'nobody')).cleared, false);
 });
 
-test('team-context：损坏 JSON fail-open；teamPendingText 有界；未知 band 归 unknown', () => {
+test('team-context：损坏 JSON fail-open；teamPendingText 有界；未知 band 归 unknown', async () => {
   const cwd = tmpCwd();
   const path = join(cwd, TEAM_CONTEXT_REL, 'session-lead-bad.json');
   mkdirSync(dirname(path), { recursive: true });
@@ -158,7 +158,7 @@ test('team-context：损坏 JSON fail-open；teamPendingText 有界；未知 ban
   assert.equal(broken.exists, false);
   assert.deepEqual(broken.pending, []);
 
-  replaceTeamContext(cwd, 'session-lead-big', {
+  await replaceTeamContext(cwd, 'session-lead-big', {
     rows: [
       { name: 'a', band: 'organize' }, { name: 'b', band: 'relay' }, { name: 'c', band: 'weird' },
       { name: 'd', band: 'unknown' }, { name: 'e', band: 'organize' },
@@ -215,7 +215,7 @@ test('relay_phase 跨 phase：读不到 Agent Teams 时用快照兜底——队�
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-tc-fallback', cwd, seq: 0 });
-  mergeTeamContext(cwd, 'session-tc-fallback', { name: 'mate-9', band: 'relay' });
+  await mergeTeamContext(cwd, 'session-tc-fallback', { name: 'mate-9', band: 'relay' });
   const bundle = applyAgent(fakeServices({ session }).services);
   const phase = bundle.tools.get('relay_phase');
   const warned = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
@@ -237,7 +237,7 @@ test('台账行级去重（P1）：focus/上下文/队友各自内容变化才�
     { id: 'p2', title: '补文档', status: 'open', phase: 'build' },
   ];
   writeLedger(cwd, [items()[0]], { rev: 1, currentPhase: { phase: 'build', since: 1 } });
-  mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
+  await mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
   const session = fakeSession({ id: scope, cwd, seq: 0 });
   const { services, state } = fakeServices({ session });
   const { events } = applyAgent(services);
@@ -258,10 +258,10 @@ test('台账行级去重（P1）：focus/上下文/队友各自内容变化才�
   assert.equal(injected.length, 1);
 
   // D3=A：handled（phase 边界 team_note 记过结论）≠ 恢复 → 同 band 重入不重复提示
-  replaceTeamContext(cwd, scope, { rows: [{ name: 'mate-1', band: 'organize' }], handled: ['mate-1'] });
+  await replaceTeamContext(cwd, scope, { rows: [{ name: 'mate-1', band: 'organize' }], handled: ['mate-1'] });
   await step(); // pending 为空：不注入
   assert.equal(injected.length, 1);
-  mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' }); // 新 escalation 清 handled，band 未变
+  await mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' }); // 新 escalation 清 handled，band 未变
   await step();
   assert.equal(injected.length, 1, 'handled 后同 band 重入不重复（handled≠恢复；D3=A）');
 
@@ -284,10 +284,10 @@ test('台账行级去重（P1）：focus/上下文/队友各自内容变化才�
   assert.doesNotMatch(changed, /\[上下文\]/, 'band 键未变：不重复');
   assert.doesNotMatch(changed, /\[队友\]/, '队友行未变：不重复');
 
-  assert.equal(clearTeamContextRow(cwd, scope, 'mate-1').cleared, true);
+  assert.equal((await clearTeamContextRow(cwd, scope, 'mate-1')).cleared, true);
   await step(); // 队友恢复（row 清除）：静默，删 seen
   assert.equal(injected.length, 3);
-  mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'relay' });
+  await mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'relay' });
   await step(); // 恢复后重入 = 新事件（D3=A）：再提示一次
   assert.equal(injected.length, 4);
   assert.match(injected[3].content[0].text, /mate-1\(relay\)/);
@@ -298,7 +298,7 @@ test('冷启动/热重载：guard 丢失后首步汇总一次（focus+上下文+
   const cwd = tmpCwd();
   const scope = 'session-reload';
   writeLedger(cwd, [{ id: 'p1', title: '修闸门', status: 'doing', next: '写测试', phase: 'build' }], { rev: 1, currentPhase: { phase: 'build', since: 1 } });
-  mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
+  await mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
   // 持久 notice 标记（重启后 LAST_BAND 靠投影/日志 seed）→ 首步不再发到线 notice，直接汇总台账批次。
   const notice = {
     seq: 4,
@@ -369,7 +369,7 @@ test('批次上限 900：超限先丢 [队友] 再丢 [上下文]，focus/闭环
   writeLedger(cwd, [{
     id: 'p1', title: 'a'.repeat(120), status: 'doing', next: 'b'.repeat(160), phase: 'build',
   }], { rev: 1, currentPhase: { phase: 'build', since: 1 } });
-  mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
+  await mergeTeamContext(cwd, scope, { name: 'mate-1', band: 'organize' });
   const notice = {
     seq: 4,
     type: 'user/message',
@@ -457,14 +457,14 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   assert.equal(injected.length, 1);
 
   // 签名去重（P1）：快照待处理清掉后再派同一 target/band → 同签名静默
-  assert.equal(clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1').cleared, true);
+  assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
   await send('mate-1');
   await step();
   assert.equal(injected.length, 1, '同 (target, band) 签名不重复注入');
 
   // band 变化（organize → relay）→ 签名变化再注入一次
   tokens['session-dm-1'] = 520000;
-  assert.equal(clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1').cleared, true);
+  assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
   await send('mate-1');
   await step();
   assert.equal(injected.length, 2, 'band 变化 → 再提示一次');
@@ -472,7 +472,7 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   assert.match(injected[1].content[0].text, /\[派活·队友上下文\] mate-1 band=relay/);
 
   // 同 step 单条 notice 优先级：到线 notice 与派活提示同 step → 只发 notice，派活提示下一步补（不丢）
-  assert.equal(clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1').cleared, true);
+  assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
   tokens['session-dm-1'] = 420000; // band 回到 organize → 派活签名变化（新事件）
   await send('mate-1');
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 }; // Lead 自己升线到 organize

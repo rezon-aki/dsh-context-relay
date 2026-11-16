@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NOTICE_MAX, panelSignatureOf, planNotices } from '../lib/agent/notice/plan.js';
+import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, unavailableNoticeText } from '../lib/agent/notice/plan.js';
 
 /** C4 notice 规划纯函数：事实 → 本步 0/1 条 notice + track/claims（不碰状态、不注入）。 */
 
@@ -171,7 +171,12 @@ test('planNotices：批次超 900 先丢 [队友] 再丢 [上下文]，焦点/�
 });
 
 test('planNotices：指标不可用（M-14）一次性保守提示，claim basis 键', () => {
-  const unavailable = { band: 'ok', used: undefined, window: undefined, ratio: undefined, basis: 'unavailable' };
+  // v0.10 C6/D-04：bandFor 对指标不可用显式返回 band=unavailable（不再静默 ok）——按生产形状喂入。
+  const unavailable = { band: 'unavailable', used: undefined, window: undefined, ratio: undefined, basis: 'unavailable' };
+  assert.match(unavailableNoticeText(), /band=unavailable/);
+  assert.equal(bandLineOf(unavailable, PANEL), '', 'unavailable 不混进台账 [上下文] 行（由 M-14 notice 表达）');
+  assert.equal(bandLineOf({ band: 'ok' }, PANEL), '');
+  assert.equal(bandLineOf({ band: 'warn' }, PANEL), '[上下文] band=warn');
   const plan = planNotices(facts({
     state: unavailable,
     lastBand: 'ok',

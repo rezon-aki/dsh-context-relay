@@ -2,7 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALL_PHASES,
+  BANDS,
   CAPACITY_PRESERVE_RATIO,
+  DELEGATION_EXEC_RATIO_MAX,
   DEFAULT_PANEL_STATE,
   DEFAULT_SETTINGS,
   DEFAULT_THRESHOLDS,
@@ -28,6 +30,13 @@ import {
   normalizeThresholds,
   readPressure,
   shouldOrganize,
+  phaseBudget,
+  OPERATION_LABELS,
+  OPERATION_LONG_LABELS,
+  operationLabelOf,
+  operationLongLabelOf,
+  panelDefaultsOf,
+  resolveEffectiveThresholds,
 } from '../lib/policy.js';
 
 test('threshold defaults are ratio-only 35/40/50 with token fallback', () => {
@@ -84,7 +93,18 @@ test('bandFor: absolute tokens only fall back when window unknown/0', () => {
   assert.equal(bandFor({ used: 170_000 }, t).band, 'relay');
   assert.equal(bandFor({ used: 170_000 }, t).basis, 'tokens');
   assert.equal(bandFor({ used: 110_000, window: 0 }, t).band, 'warn');
-  assert.equal(bandFor({}, t).band, 'ok');
+});
+
+test('bandFor: 指标/投影/计量均不可用 → 显式 band=unavailable（D-04，不再静默 ok）', () => {
+  const unavailable = bandFor({}, DEFAULT_THRESHOLDS);
+  assert.deepEqual(unavailable, { band: 'unavailable', basis: 'unavailable', used: undefined });
+  assert.equal(BANDS.includes('unavailable'), true, 'BANDS 显式包含降级档');
+  // 不参与升线/预算闸门/容量保全：organize 判定 false，phaseBudget 如实标注 unavailable。
+  assert.equal(shouldOrganize(unavailable).organize, false);
+  assert.equal(phaseBudget({}, DEFAULT_THRESHOLDS).band, 'unavailable');
+  assert.equal(phaseBudget({}, DEFAULT_THRESHOLDS).basis, 'unavailable');
+  // used 已知但窗口未知仍是 tokens 兜底（降级只针对 used 缺失，不吞掉部分指标）。
+  assert.equal(bandFor({ used: 90_000 }, DEFAULT_THRESHOLDS).band, 'ok');
 });
 
 test('bandFor honours configured ratios', () => {
@@ -550,6 +570,58 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   for (const bad of ['yes', 1, null, {}, []]) {
     assert.throws(() => normalizeSettings({ architect: bad }), /architect must be a boolean/, '非法 architect 必须拒绝：' + String(bad));
   }
+});
+
+test('resolveEffectiveThresholds：唯一解析入口（settings.explicit > legacy config.thresholds > 默认基准）', () => {
+  const legacy = { warnRatio: 0.45, organizeRatio: 0.5, relayRatio: 0.6, warnTokens: 100000, organizeTokens: 130000, relayTokens: 160000 };
+  // 有 settings 来源（explicit=true）→ settings.threshold 派生，legacy 不参与。
+  assert.deepEqual(
+    resolveEffectiveThresholds({ settings: { threshold: 30 }, explicit: true, legacyThresholds: legacy }),
+    thresholdsFromPercent(30),
+  );
+  // 无 settings 来源 + 部署显式配置 legacy → legacy 原样生效（normalize 形状）。
+  assert.deepEqual(resolveEffectiveThresholds({ settings: { threshold: 35 }, legacyThresholds: legacy }), normalizeThresholds(legacy));
+  // 无 settings 来源 + 无 legacy → 默认基准 35% → 30/35/45。
+  assert.deepEqual(resolveEffectiveThresholds({}), thresholdsFromPercent(DEFAULT_SETTINGS.threshold));
+  assert.deepEqual(resolveEffectiveThresholds({ settings: {} }), thresholdsFromPercent(DEFAULT_SETTINGS.threshold));
+  // explicit 缺省 false（与 legacy 同给时 legacy 生效）；explicit=true 且 legacy 缺省 → 派生。
+  assert.deepEqual(resolveEffectiveThresholds({ legacyThresholds: legacy }), normalizeThresholds(legacy));
+  assert.deepEqual(resolveEffectiveThresholds({ settings: { threshold: 60 }, explicit: true }), thresholdsFromPercent(60));
+});
+
+test('panelDefaultsOf：侧栏设置 → 面板默认值唯一映射（host/agent 只消费）', () => {
+  // 无 live 设置 / 非对象 → undefined（交给 normalizePanelState 回落规范默认）。
+  assert.equal(panelDefaultsOf(null), undefined);
+  assert.equal(panelDefaultsOf('bogus'), undefined);
+  // 六字段映射：非布尔控制位按 undefined（不猜 true/false）。
+  assert.deepEqual(
+    panelDefaultsOf({ defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: 'yes', architect: false }),
+    { defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: undefined, architect: false },
+  );
+  // 缺省参数 = host 发布在 globalThis[Symbol.for('dsh-context-relay.settings')] 的 live 设置。
+  const key = Symbol.for('dsh-context-relay.settings');
+  const previous = globalThis[key];
+  try {
+    globalThis[key] = { defaultOperation: 'handoff', autoCompress: false, unlimitedBudget: false, architect: true };
+    assert.deepEqual(panelDefaultsOf(), { defaultOperation: 'handoff', autoChoose: undefined, autoCompress: false, autoHandoff: undefined, unlimitedBudget: false, architect: true });
+  } finally {
+    if (previous === undefined) delete globalThis[key];
+    else globalThis[key] = previous;
+  }
+});
+
+test('委派常量下沉 policy（D-14）：纯策略层不再反向 import agent 模块', () => {
+  assert.equal(DELEGATION_EXEC_RATIO_MAX, 0.2);
+});
+
+test('panel operation labels：单一真源在 policy（短/长两套），未知回落「问我」', () => {
+  assert.deepEqual(OPERATION_LABELS, { compress: '压缩', handoff: '接力', continue: '继续', 'compress-then-handoff': '压缩→新会话' });
+  assert.deepEqual(OPERATION_LONG_LABELS, { compress: '压缩继续', handoff: '接力新会话', continue: '继续', 'compress-then-handoff': '压缩→新会话' });
+  assert.equal(operationLabelOf('compress'), '压缩');
+  assert.equal(operationLongLabelOf('handoff'), '接力新会话');
+  assert.equal(operationLabelOf(null), '问我');
+  assert.equal(operationLabelOf('bogus'), '问我');
+  assert.equal(operationLongLabelOf('bogus'), '问我', '未知长标签回落短标签（问我）');
 });
 
 test('PANEL_OPERATIONS: 常量仍含 cth（v0.10.0 删），但 D8=A 归一只保留 compress/handoff/continue', () => {

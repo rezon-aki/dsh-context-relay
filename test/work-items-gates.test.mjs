@@ -468,7 +468,7 @@ test('relay_handoff：会话级台账复制到新会话（rev 保留），交接
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-scope-handoff', cwd, seq: 0 });
-  const seeded = writeWorkItems(cwd, { items: [{ id: 'h1', title: 'H', status: 'doing', next: '交接中' }], scopeId: session.id });
+  const seeded = await writeWorkItems(cwd, { items: [{ id: 'h1', title: 'H', status: 'doing', next: '交接中' }], scopeId: session.id });
   assert.equal(seeded.ok, true);
   const followed = [];
   const { tools } = applyAgentScoped(handoffServices({ session, cwd, followed }).services);

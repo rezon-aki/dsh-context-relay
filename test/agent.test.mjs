@@ -156,8 +156,8 @@ function tmpCwd() {
 }
 
 /** v0.9.0 批次3：写一份台账（scope=根会话 id；默认 build/done），用于委派闸门/集成测试。 */
-function seedRelayLedger(cwd, scopeId, items) {
-  const result = writeWorkItems(cwd, {
+async function seedRelayLedger(cwd, scopeId, items) {
+  const result = await writeWorkItems(cwd, {
     items: items.map((item) => ({
       id: item.id,
       title: item.title ?? item.id,
@@ -2302,6 +2302,8 @@ test('concurrent relay operations in one session: second call returns structured
   const gate = preExecuteListener(applied.events);
   const agent = { session, options: {}, inject() {} };
   const first = tools.get('relay_organize').execute({ phase: 'build', brief: 'x', force: true }, { agent });
+  // C5b：brief 写盘改为异步门面（await workspaceStore.writeAtomic）→ 等一等，让首个操作真正进到 compaction。
+  for (let spin = 0; releaseCompact === undefined && spin < 200; spin += 1) await new Promise((resolve) => setTimeout(resolve, 5));
   // B-P2-6：在途 relay 操作注定 relay-busy → 审批闸门直接放行（不弹无谓审批）
   const busyExec = { name: 'relay_organize', arguments: { phase: 'build', brief: 'y', force: true }, callId: 'busy', agent: { session }, signal: new AbortController().signal };
   assert.equal((await gate(busyExec, async () => ({ kind: 'allow' }))).kind, 'allow', 'relay-busy 在途时不弹审批');
@@ -2619,7 +2621,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：默认 warn 放行 + delegati
   resetSharedState();
   const cwd = tmpCwd();
   const id = 'session-deleg-gate-warn';
-  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  await seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
   const { session } = countingSnapshotSession({ id, cwd });
   const bundle = attachRelayProjection(fakeServices({ session }), {
     phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
@@ -2638,7 +2640,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：默认 warn 放行 + delegati
   // 补 lead-exec 证据 + 执行占比正常 → 闸门仍返回 delegation 事实，但 warnings 空、无 delegationWarning
   const cleanCwd = tmpCwd();
   const cleanId = 'session-deleg-gate-clean';
-  seedRelayLedger(cleanCwd, cleanId, [{ id: 'bp1', title: 'build point', status: 'done', evidence: ['lead-exec: 单行修复断链 URL，无 worker 可派'] }]);
+  await seedRelayLedger(cleanCwd, cleanId, [{ id: 'bp1', title: 'build point', status: 'done', evidence: ['lead-exec: 单行修复断链 URL，无 worker 可派'] }]);
   const cleanSession = fakeSession({ id: cleanId, cwd: cleanCwd });
   const cleanBundle = attachRelayProjection(fakeServices({ session: cleanSession }), {
     phase: 'build', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
@@ -2656,7 +2658,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：config off 不检查、无字
   resetSharedState();
   const cwd = tmpCwd();
   const id = 'session-deleg-gate-off';
-  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  await seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
   const { session } = countingSnapshotSession({ id, cwd });
   const bundle = attachRelayProjection(fakeServices({ session }), {
     phase: 'build', toolCalls: 100, executionCalls: 30,
@@ -2672,7 +2674,7 @@ test('v0.9.0 批次3 build→verify 委派闸门：strict runtime 拒绝且零�
   resetSharedState();
   const cwd = tmpCwd();
   const id = 'session-deleg-gate-strict';
-  seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
+  await seedRelayLedger(cwd, id, [{ id: 'bp1', title: 'build point', status: 'done' }]);
   const ledgerPath = join(cwd, '.scratch', 'context-relay', 'work-items', id + '.json');
   const ledgerBefore = readFileSync(ledgerPath, 'utf8');
   const panelBefore = panelStateOf(id);

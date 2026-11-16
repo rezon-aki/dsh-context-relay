@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
+import { thresholdsFromPercent } from '../lib/policy.js';
 
 // lib/client.js 是浏览器 bundle（window.__ModuleLoader__ 格式）：用迷你 React hooks 运行时 + DOM/fetch 桩
 // 在 vm 里驱动真实 bundle，验证 composer 面板（RelayPanel）与侧栏设置卡（RelaySettings）的交互语义。
@@ -118,6 +119,8 @@ function createEnv(options = {}) {
   const calls = [];
   const server = {
     panel: {}, settings: { ...SETTINGS_DEFAULT }, panelPutResponse: null, settingsPutResponse: null,
+    // 生效阈值（host policy.resolveEffectiveThresholds 的结果）：测试可覆盖以验证 client 不再本地套公式。
+    thresholds: null,
     deferPanelGet: false, pendingPanelGets: [], workItems: null, workItemsPayload: null,
     // v0.7.0 架构师模型目录（GET /context-relay/architect-models）；测试可整体覆盖。
     architectModels: null,
@@ -149,8 +152,9 @@ function createEnv(options = {}) {
     const method = options?.method ?? 'GET';
     calls.push({ url, method, body: options?.body });
     if (url === '/context-relay/settings') {
-      if (method === 'PUT') return respond(server.settingsPutResponse ?? { ok: true, persisted: true, settings: server.settings });
-      return respond({ ok: true, settings: server.settings, thresholds: {} });
+      const thresholds = server.thresholds ?? thresholdsFromPercent(server.settings.threshold);
+      if (method === 'PUT') return respond(server.settingsPutResponse ?? { ok: true, persisted: true, settings: server.settings, thresholds });
+      return respond({ ok: true, settings: server.settings, thresholds });
     }
     if (url === '/context-relay/panel') {
       if (method === 'PUT') {
@@ -396,6 +400,34 @@ test('RelaySettings：保存发送五字段（unlimitedBudget 已迁到 composer
   save.props.onClick();
   await instance.flush();
   assert.match(textOf(instance.tree), /settings\.json write failed/);
+});
+
+test('RelaySettings：生效阈值只消费宿主 GET thresholds（C6/D-07：client 不再本地复制 ±5/+10 公式）', async () => {
+  const env = createEnv();
+  env.server.settings = { threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false };
+  // 宿主生效阈值故意不等于「threshold−5 / +10」（legacy → 自定义比例）——client 必须原样显示宿主值。
+  env.server.thresholds = { warnRatio: 0.27, organizeRatio: 0.32, relayRatio: 0.42, warnTokens: 1, organizeTokens: 2, relayTokens: 3 };
+  const RelaySettings = env.slots['plugins.bundle.config'];
+  const instance = env.mount(RelaySettings);
+  await instance.flush();
+  const text = textOf(instance.tree);
+  assert.match(text, /阈值基准 40%：提醒 27% \/ 二次提醒 32% \/ 硬线 42%/);
+  assert.equal(text.includes('提醒 35%'), false, '不得回落到本地公式 threshold-5');
+  assert.equal(text.includes('硬线 50%'), false, '不得回落到本地公式 threshold+10');
+  // 公式源码也已删除（防回潮）。
+  assert.equal(source.includes('Number(settings.threshold) - 5'), false);
+  assert.equal(source.includes('Number(settings.threshold) + 10'), false);
+});
+
+test('RelaySettings：宿主未返回生效阈值时只显示基准（不本地猜）', async () => {
+  const env = createEnv();
+  env.server.thresholds = {};
+  const RelaySettings = env.slots['plugins.bundle.config'];
+  const instance = env.mount(RelaySettings);
+  await instance.flush();
+  const text = textOf(instance.tree);
+  assert.match(text, /阈值基准 40%/);
+  assert.equal(text.includes('提醒 '), false, '没有宿主阈值就不渲染派生线');
 });
 
 test('RelaySettings：侧栏不再提供 unlimitedBudget 开关（v0.2.7 迁移到 composer 小胶囊）', () => {

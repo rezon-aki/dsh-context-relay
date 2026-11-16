@@ -9,7 +9,7 @@ import { realpathSync } from 'node:fs';
 import { apply, relayPresetDefinition } from '../lib/index.js';
 import { PTC_BASE_PLUGINS } from '../lib/preset-base.js';
 import { RELAY_PROJECTION_KEY } from '../lib/projection.js';
-import { normalizePanelState, thresholdsFromPercent } from '../lib/policy.js';
+import { normalizePanelState, panelDefaultsOf, resolveEffectiveThresholds, thresholdsFromPercent } from '../lib/policy.js';
 import {
   LIVE_TTL_MS,
   clearPanelMemory,
@@ -816,6 +816,35 @@ test('host: settings 来源优先级 file > config.settings > config.threshold�
   assert.equal(shorthandSettings.json.settings.threshold, 30);
   assert.deepEqual(shorthandSettings.json.thresholds, thresholdsFromPercent(30));
   assert.equal(shorthandSettings.json.explicit, true);
+});
+
+test('host: 阈值/面板默认值单一解析入口（C6/M-17/D-07）——settings、panel 路由与 policy 同口径', async () => {
+  const host = fakeHost();
+  const settingsRoute = host.getRoute('/context-relay/settings');
+  // settings 路由的 thresholds 必须就是 policy.resolveEffectiveThresholds 对同一三元事实的结果。
+  const got = await callAsync(settingsRoute);
+  assert.deepEqual(got.json.thresholds, resolveEffectiveThresholds({ settings: got.json.settings, explicit: got.json.explicit }));
+  const put = await callAsync(settingsRoute, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ threshold: 60 }) });
+  assert.deepEqual(put.json.thresholds, resolveEffectiveThresholds({ settings: put.json.settings, explicit: put.json.explicit }));
+  // 面板 GET 与 settings 路由同一份生效阈值（不再各自派生）。
+  const panel = await getPanel(host, 'sess-single-source');
+  assert.deepEqual(panel.json.thresholds, put.json.thresholds);
+  assert.deepEqual(panel.json.thresholds, thresholdsFromPercent(60));
+  // host 发布的面板默认值经 policy.panelDefaultsOf 唯一映射（六字段）。
+  assert.deepEqual(panelDefaultsOf(), {
+    defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
+  });
+  // legacy config.thresholds 部署：settings/panel 同样返回 policy 解析的 legacy 阈值，且人类可见基准反推 organize。
+  const legacy = Object.freeze({ warnRatio: 0.45, organizeRatio: 0.5, relayRatio: 0.6, warnTokens: 100000, organizeTokens: 130000, relayTokens: 160000 });
+  const legacyHost = fakeHost({ config: { thresholds: legacy } });
+  const legacySettings = await callAsync(legacyHost.getRoute('/context-relay/settings'));
+  assert.deepEqual(legacySettings.json.thresholds, resolveEffectiveThresholds({
+    settings: legacySettings.json.settings,
+    explicit: legacySettings.json.explicit,
+    legacyThresholds: legacy,
+  }));
+  assert.deepEqual(legacySettings.json.thresholds, legacy);
+  assert.deepEqual((await getPanel(legacyHost, 'sess-single-source-legacy')).json.thresholds, legacy);
 });
 
 test('host: PUT settings >8KB 返回 413 JSON（真实 http server，旧单测 fake destroy 假绿 B-P2-12）', async () => {

@@ -171,7 +171,7 @@ test('policy.phaseBudget: 窗口未知用 *Tokens 兜底；used 缺失 headroom=
   assert.equal(noWindow.headroomToRelay, 40_000);
 
   const unavailable = phaseBudget({}, DEFAULT_THRESHOLDS);
-  assert.equal(unavailable.band, 'ok');
+  assert.equal(unavailable.band, 'unavailable', 'D-04：指标不可用显式降级，不再静默当 ok');
   assert.equal(unavailable.basis, 'unavailable');
   assert.equal(unavailable.used, undefined);
   assert.equal(unavailable.headroomToWarn, undefined);

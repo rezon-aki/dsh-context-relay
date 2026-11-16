@@ -21,9 +21,9 @@ import {
 
 function tmpCwd() { return mkdtempSync(join(tmpdir(), 'relay-chain-')); }
 
-test('appendChainEntry writes bounded ndjson; readChain returns newest', () => {
+test('appendChainEntry writes bounded ndjson; readChain returns newest', async () => {
   const cwd = tmpCwd();
-  const out = appendChainEntry(cwd, { kind: 'compaction', sessionId: 'session-a', phase: 'build', goal: 'g1', compactionId: 'c1', shadowedStart: 10, shadowedEnd: 20, freedTokens: 100, briefPath: 'b.md' });
+  const out = await appendChainEntry(cwd, { kind: 'compaction', sessionId: 'session-a', phase: 'build', goal: 'g1', compactionId: 'c1', shadowedStart: 10, shadowedEnd: 20, freedTokens: 100, briefPath: 'b.md' });
   assert.equal(out.relativePath, CHAIN_RELATIVE);
   assert.equal(out.entries, 1);
   const entries = readChain(cwd, 10);
@@ -32,18 +32,18 @@ test('appendChainEntry writes bounded ndjson; readChain returns newest', () => {
   assert.equal(entries[0].sessionId, 'session-a');
   assert.equal(entries[0].shadowedStart, 10);
   assert.equal(entries[0].shadowedEnd, 20);
-  appendChainEntry(cwd, { kind: 'handoff', sessionId: 'session-a', childSessionId: 'session-b', handoffPath: 'h.md' });
+  await appendChainEntry(cwd, { kind: 'handoff', sessionId: 'session-a', childSessionId: 'session-b', handoffPath: 'h.md' });
   const all = readChain(cwd, 10);
   assert.equal(all.length, 2);
   assert.equal(all[1].childSessionId, 'session-b');
 });
 
-test('appendChainEntry 超界旋转：live 保持上限，旧条目原样进归档（不丢数据）', () => {
+test('appendChainEntry 超界旋转：live 保持上限，旧条目原样进归档（不丢数据）', async () => {
   const cwd = tmpCwd();
   const total = CHAIN_MAX_ENTRIES + 20;
   let archivedTotal = 0;
   for (let i = 0; i < total; i += 1) {
-    const out = appendChainEntry(cwd, {
+    const out = await appendChainEntry(cwd, {
       kind: 'handoff',
       sessionId: 'session-' + i,
       goal: i % 3 === 0 ? 'g'.repeat(120) : 'g' + i,
@@ -71,10 +71,10 @@ test('appendChainEntry 超界旋转：live 保持上限，旧条目原样进归�
   assert.ok(existsSync(chainArchivePathOf(cwd, String(new Date().getFullYear()))));
 });
 
-test('chain 归档按条目 ts 年份分文件（解析失败用当前年）', () => {
+test('chain 归档按条目 ts 年份分文件（解析失败用当前年）', async () => {
   const cwd = tmpCwd();
-  for (let i = 0; i < CHAIN_MAX_ENTRIES; i += 1) appendChainEntry(cwd, { kind: 'compaction', sessionId: 'old-' + i, ts: '2020-01-01T00:00:00.000Z' });
-  const out = appendChainEntry(cwd, { kind: 'compaction', sessionId: 'newest' });
+  for (let i = 0; i < CHAIN_MAX_ENTRIES; i += 1) await appendChainEntry(cwd, { kind: 'compaction', sessionId: 'old-' + i, ts: '2020-01-01T00:00:00.000Z' });
+  const out = await appendChainEntry(cwd, { kind: 'compaction', sessionId: 'newest' });
   assert.equal(out.archived, 1);
   assert.ok(existsSync(chainArchivePathOf(cwd, '2020')));
   assert.equal(readChainArchive(cwd, 5)[0].sessionId, 'old-0');

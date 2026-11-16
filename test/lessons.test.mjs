@@ -59,12 +59,12 @@ test('lessons: HEADER 声明「超 40 条或 8KB 移入归档（不淘汰）」'
   assert.equal(parseLessons(text).length, 1, '表头不参与解析');
 });
 
-test('lessons: 重复写入合并（seen+1、证据刷新），无证据条目静默丢弃', () => {
+test('lessons: 重复写入合并（seen+1、证据刷新），无证据条目静默丢弃', async () => {
   const cwd = freshCwd();
-  const first = recordLessons(cwd, [{ tag: 'test', text: '先跑 npm test 再提交', evidence: 'AGENTS.md:1' }]);
+  const first = await recordLessons(cwd, [{ tag: 'test', text: '先跑 npm test 再提交', evidence: 'AGENTS.md:1' }]);
   assert.equal(first.added, 1);
   assert.equal(first.saved, true);
-  const second = recordLessons(cwd, [
+  const second = await recordLessons(cwd, [
     { tag: 'test', text: '先跑 npm test 再提交', evidence: 'AGENTS.md:2' },
     { tag: 'x', text: '没有证据的空话' },
     { tag: 'x', text: '   ' , evidence: 'nope' },
@@ -77,17 +77,17 @@ test('lessons: 重复写入合并（seen+1、证据刷新），无证据条目�
   assert.equal(entries[0].evidence, 'AGENTS.md:2');
   // 全部无效 → 不落盘、返回 saved:false
   const cwd2 = freshCwd();
-  const none = recordLessons(cwd2, [{ text: '无证据' }]);
+  const none = await recordLessons(cwd2, [{ text: '无证据' }]);
   assert.equal(none.saved, false);
   assert.equal(existsSync(lessonsPath(cwd2)), false);
 });
 
-test('lessons: 单次调用最多 3 条；空数组返回 undefined', () => {
+test('lessons: 单次调用最多 3 条；空数组返回 undefined', async () => {
   const cwd = freshCwd();
-  const result = recordLessons(cwd, [1, 2, 3, 4, 5].map((i) => ({ tag: 't', text: '条目 ' + i, evidence: 'e:' + i })));
+  const result = await recordLessons(cwd, [1, 2, 3, 4, 5].map((i) => ({ tag: 't', text: '条目 ' + i, evidence: 'e:' + i })));
   assert.equal(result.added, LESSON_LIMITS.perCall);
   assert.equal(loadLessons(cwd).length, LESSON_LIMITS.perCall);
-  assert.equal(recordLessons(cwd, []), undefined);
+  assert.equal(await recordLessons(cwd, []), undefined);
 });
 
 test('lessons: 条数上限 40 把最弱条目移出 live（旧且少复现的先走，并入 evictedEntries）', () => {
@@ -146,7 +146,7 @@ test('lessons: 注入上限回归（selected ≤3 条、≤1KB）', () => {
   assert.equal(LESSON_LIMITS.injectBytes, 1024);
 });
 
-test('lessons: 注入总量 ≤1KB：超长 3 条先统一截字段并标注 truncated', () => {
+test('lessons: 注入总量 ≤1KB：超长 3 条先统一截字段并标注 truncated', async () => {
   const entries = [];
   for (let i = 0; i < LESSON_LIMITS.inject; i += 1) {
     entries.push({
@@ -169,7 +169,7 @@ test('lessons: 注入总量 ≤1KB：超长 3 条先统一截字段并标注 tru
   assert.ok(picked.entries.some((entry) => entry.text.endsWith('…') || entry.evidence.endsWith('…')), '字段被截断');
   // lessonsView 透出注入预算用量
   const cwd = freshCwd();
-  saveLessons(cwd, entries);
+  await saveLessons(cwd, entries);
   const view = lessonsView(cwd, { goal: '' });
   assert.equal(view.injection.limit, LESSON_LIMITS.injectBytes);
   assert.equal(view.injection.truncated, true);
@@ -177,7 +177,7 @@ test('lessons: 注入总量 ≤1KB：超长 3 条先统一截字段并标注 tru
   assert.equal(view.selected.length, LESSON_LIMITS.inject);
 });
 
-test('lessons: 手工编辑的未知行保存时原样保留', () => {
+test('lessons: 手工编辑的未知行保存时原样保留', async () => {
   const cwd = freshCwd();
   mkdirSync(dirname(lessonsPath(cwd)), { recursive: true });
   writeFileSync(
@@ -185,7 +185,7 @@ test('lessons: 手工编辑的未知行保存时原样保留', () => {
     formatLessons([{ tag: 't', text: '旧条目', evidence: 'e:1', seen: 1, updated: '2026-10-01' }]) + '手写备注：这条不要删\n- [Bad Tag] nope\n',
     'utf8',
   );
-  const recorded = recordLessons(cwd, [{ tag: 'n', text: '新经验', evidence: 'e:2' }]);
+  const recorded = await recordLessons(cwd, [{ tag: 'n', text: '新经验', evidence: 'e:2' }]);
   assert.equal(recorded.saved, true);
   const text = readFileSync(lessonsPath(cwd), 'utf8');
   assert.match(text, /手写备注：这条不要删/, '手工行不得被静默删除');
@@ -194,13 +194,13 @@ test('lessons: 手工编辑的未知行保存时原样保留', () => {
   assert.equal(loadLessons(cwd).length, 2);
 });
 
-test('lessons: 早退分支返回真实 evicted，且本次入参全非法但有淘汰时落盘并归档（live 减少、归档含被淘汰条目）', () => {
+test('lessons: 早退分支返回真实 evicted，且本次入参全非法但有淘汰时落盘并归档（live 减少、归档含被淘汰条目）', async () => {
   const cwd = freshCwd();
   const now = Date.parse('2026-10-26T00:00:00Z');
   mkdirSync(dirname(lessonsPath(cwd)), { recursive: true });
   writeFileSync(lessonsPath(cwd), formatLessons(oldEntries(45)), 'utf8');
   // 本次入参只有无证据条目 → added/merged=0，但存量 45 条应淘汰到 40 并落盘。
-  const result = recordLessons(cwd, [{ text: '没有证据的空话' }], { now });
+  const result = await recordLessons(cwd, [{ text: '没有证据的空话' }], { now });
   assert.equal(result.added + result.merged, 0);
   assert.equal(result.evicted, 5);
   assert.equal(result.saved, true);
@@ -217,13 +217,13 @@ test('lessons: 早退分支返回真实 evicted，且本次入参全非法但有
   assert.ok(!readFileSync(lessonsPath(cwd), 'utf8').includes('old条目 0'), '被淘汰条目不再留在 live');
 });
 
-test('lessons: 归档为 NDJSON（一行一个完整 JSON），追加不裁剪', () => {
+test('lessons: 归档为 NDJSON（一行一个完整 JSON），追加不裁剪', async () => {
   const cwd = freshCwd();
   const now = Date.parse('2026-10-26T00:00:00Z');
   mkdirSync(dirname(lessonsPath(cwd)), { recursive: true });
   writeFileSync(lessonsPath(cwd), formatLessons(oldEntries(45)), 'utf8');
   assert.equal(existsSync(lessonsArchivePath(cwd)), false, '首次淘汰前不建归档文件');
-  recordLessons(cwd, [{ text: '无效' }], { now });
+  await recordLessons(cwd, [{ text: '无效' }], { now });
   const archivePath = lessonsArchivePath(cwd);
   assert.equal(existsSync(archivePath), true, '首次淘汰自动建归档文件');
   const firstLines = readFileSync(archivePath, 'utf8').trim().split('\n');
@@ -238,7 +238,7 @@ test('lessons: 归档为 NDJSON（一行一个完整 JSON），追加不裁剪',
   }
   // 第二轮淘汰再追加 5 条：旧归档行不裁剪。
   writeFileSync(lessonsPath(cwd), formatLessons(oldEntries(45, 'next')), 'utf8');
-  const second = recordLessons(cwd, [{ text: '无效' }], { now });
+  const second = await recordLessons(cwd, [{ text: '无效' }], { now });
   assert.equal(second.evicted, 5);
   const secondLines = readFileSync(archivePath, 'utf8').trim().split('\n');
   assert.equal(secondLines.length, 10, '归档只追加不裁剪');
@@ -246,21 +246,21 @@ test('lessons: 归档为 NDJSON（一行一个完整 JSON），追加不裁剪',
   assert.equal(JSON.parse(secondLines[5]).text, 'next条目 0');
 });
 
-test('lessons: archiveLessons 空列表不建文件、不追加', () => {
+test('lessons: archiveLessons 空列表不建文件、不追加', async () => {
   const cwd = freshCwd();
-  const result = archiveLessons(cwd, []);
+  const result = await archiveLessons(cwd, []);
   assert.deepEqual(result, { ok: true, path: lessonsArchivePath(cwd), appended: 0 });
   assert.equal(existsSync(lessonsArchivePath(cwd)), false);
 });
 
-test('lessons: 归档 append 失败降级——不抛错、live 仍写盘、本批淘汰回填 live（不丢数据）', () => {
+test('lessons: 归档 append 失败降级——不抛错、live 仍写盘、本批淘汰回填 live（不丢数据）', async () => {
   const cwd = freshCwd();
   const now = Date.parse('2026-10-26T00:00:00Z');
   mkdirSync(dirname(lessonsPath(cwd)), { recursive: true });
   writeFileSync(lessonsPath(cwd), formatLessons(oldEntries(45)), 'utf8');
   // 用目录占位归档路径，制造 append 失败（EISDIR），不阻断主流程。
   mkdirSync(lessonsArchivePath(cwd), { recursive: true });
-  const result = recordLessons(cwd, [{ text: '无效' }], { now });
+  const result = await recordLessons(cwd, [{ text: '无效' }], { now });
   assert.equal(result.saved, true, '归档失败不阻断 live 写盘');
   assert.equal(result.archive?.ok, false, '失败如实返回（调用方可记录/重试）');
   assert.match(String(result.archive.error), /EISDIR|illegal operation/i);
@@ -269,20 +269,20 @@ test('lessons: 归档 append 失败降级——不抛错、live 仍写盘、本�
   assert.equal(loadLessons(cwd).length, 45);
 });
 
-test('lessons: load 缺失/畸形文件返回空；save 原子写', () => {
+test('lessons: load 缺失/畸形文件返回空；save 原子写', async () => {
   const cwd = freshCwd();
   assert.deepEqual(loadLessons(cwd), []);
   mkdirSync(dirname(lessonsPath(cwd)), { recursive: true });
   writeFileSync(lessonsPath(cwd), 'not a lessons file\n', 'utf8');
   assert.deepEqual(loadLessons(cwd), []);
-  const saved = saveLessons(cwd, [{ tag: 't', text: 'x', evidence: 'e', seen: 1, updated: '2026-10-26' }]);
+  const saved = await saveLessons(cwd, [{ tag: 't', text: 'x', evidence: 'e', seen: 1, updated: '2026-10-26' }]);
   assert.equal(saved.ok, true);
   assert.match(readFileSync(lessonsPath(cwd), 'utf8'), /- \[t\] x/);
 });
 
-test('lessons: lessonsView 只返回摘要字段，不泄露 seen/updated 内部字段', () => {
+test('lessons: lessonsView 只返回摘要字段，不泄露 seen/updated 内部字段', async () => {
   const cwd = freshCwd();
-  recordLessons(cwd, [{ tag: 't', text: '经验一', evidence: 'e:1' }]);
+  await recordLessons(cwd, [{ tag: 't', text: '经验一', evidence: 'e:1' }]);
   const view = lessonsView(cwd, { goal: '经验' });
   assert.equal(view.total, 1);
   assert.deepEqual(Object.keys(view.selected[0]).sort(), ['evidence', 'tag', 'text']);
