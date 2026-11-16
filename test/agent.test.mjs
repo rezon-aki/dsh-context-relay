@@ -3278,22 +3278,29 @@ test('v0.9.0 面板状态文本：cth 档退役（归一「问我」），到线
   assert.match(switched.reminder, /继续/);
   resetSharedState();
 });
-test('relay_phase: discover/decide 必须写 exit_criteria（验收口径），build/verify/ship 不强制', async () => {
+test('relay_phase: discover/decide 必须写 exit_criteria（仅 crossing；A-11 同 phase 重声明不强制）', async () => {
   resetSharedState();
   const session = fakeSession({ id: 'session-acceptance', seq: 0 });
   const { services } = fakeServices({ session });
   const { tools } = applyAgent(services);
   const call = (args) => tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, ...args }, { agent: { session, options: {}, inject() {} } });
-  await assert.rejects(call({ phase: 'discover', goal: 'x' }), /exit_criteria/, 'discover 缺验收口径必须拒绝');
+  // 先切到 build（build/verify/ship 不强制 exit_criteria）。
+  const build = await call({ phase: 'build' });
+  assert.equal(build.phase, 'build', 'build 不强制 exit_criteria');
+  await assert.rejects(call({ phase: 'discover', goal: 'x' }), /exit_criteria/, 'crossing 进 discover 缺验收口径必须拒绝');
   await assert.rejects(call({ phase: 'discover', goal: 'x', exit_criteria: '   ' }), /exit_criteria/, '空白 exit_criteria 不算');
-  await assert.rejects(call({ phase: 'decide', goal: 'y' }), /exit_criteria/, 'decide 同样必填');
+  await assert.rejects(call({ phase: 'decide', goal: 'y' }), /exit_criteria/, 'crossing 进 decide 同样必填');
+  // C7/A-11：同 phase 重声明（记 next_operation）不再强制 exit_criteria；next_operation 同 phase 不记录但显式回显忽略。
+  const same = await call({ phase: 'build', next_operation: 'compress' });
+  assert.equal(same.phase, 'build');
+  assert.equal(same.previous, 'build');
+  assert.equal(same.next_operation, 'compress', '同 phase 仍回显 next_operation（不静默丢意图）');
+  assert.equal(same.next_operation_ignored, true, '同 phase 不记录 next_operation（只在 crossing 记录）');
   const ok = await call({ phase: 'discover', goal: 'x', exit_criteria: '报告落盘且含证据，doc_lint 通过' });
   assert.equal(ok.phase, 'discover');
   // v0.9.0 P2（D5=A）：goal/exit_criteria 是入参回显，已从结果删除（真源在台账 currentPhase/投影/入参本身）。
   assert.equal('goal' in ok, false, 'P2：goal 回显已删除');
   assert.equal('exit_criteria' in ok, false, 'P2：exit_criteria 回显已删除');
-  const build = await call({ phase: 'build' });
-  assert.equal(build.phase, 'build', 'build 不强制 exit_criteria');
 });
 
 test('v0.9.0 P2：relay_phase 成功结果带人类可读 text，output.render 只回 text（非 JSON）', async () => {
@@ -3461,7 +3468,8 @@ test('v0.2.17 A6：lessons 只在跨 phase 回灌——同 phase 记录 next_ope
     lessons: [{ tag: 't2', text: '同 phase 记录的经验', evidence: 'AGENTS.md:2' }],
   });
   assert.equal(same.phase, 'build');
-  assert.equal(same.next_operation, 'compress', '同 phase 仍记录 next_operation');
+  assert.equal(same.next_operation, 'compress', '同 phase 仍回显 next_operation（A-11：不记录、显式 ignored）');
+  assert.equal(same.next_operation_ignored, true, '同 phase 不记录 next_operation（只在 crossing 记录）');
   assert.equal(same.lessons.selected, undefined, '同 phase 不回灌 selected');
   assert.equal(same.lessons.injection, undefined, '同 phase 不回灌 injection');
   assert.equal(typeof same.lessons.total, 'number', '同 phase 仍返回 total 摘要');

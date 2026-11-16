@@ -1,6 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -1372,4 +1372,31 @@ test('host v3: GET panel 的 live.organizeCount 可读', async () => {
   const host = fakeHost();
   publishLiveState('sess-count', { band: 'organize', phase: 'build', organizeCount: 3, overBudget: true });
   assert.equal((await getPanel(host, 'sess-count')).json.live.organizeCount, 3);
+});
+
+test('host: GET /context-relay/work-items 只读——不触发旧 workspace 台账惰性迁移写盘（C14）', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-wi-get-ro-'));
+  const sessionId = 'sess-wi-get-ro';
+  const session = { id: sessionId, header: { agentPreset: 'relay-long', cwd } };
+  const legacyPath = join(cwd, '.scratch', 'context-relay', 'work-items.json');
+  mkdirSync(dirname(legacyPath), { recursive: true });
+  writeFileSync(legacyPath, JSON.stringify({
+    version: 1, rev: 4, updatedAt: '2026-11-10T00:00:00.000Z', updatedBy: sessionId,
+    items: [{ id: 'legacy-1', title: '旧台账', status: 'doing', next: 'n' }],
+  }));
+  const host = fakeHost({
+    sessions: { get: () => session },
+    sessionProjections: {
+      register: () => () => {},
+      snapshot: () => ({ values: {} }),
+      stateOf: (_session, key) => (key === 'agentPreset' ? 'relay-long' : undefined),
+    },
+  });
+  const got = await callAsync(host.getRoute('/context-relay/work-items'), { url: '/context-relay/work-items?sessionId=' + encodeURIComponent(sessionId) });
+  assert.equal(got.out.statusCode, 200);
+  assert.equal(got.json.relay, true);
+  const scopedPath = join(cwd, '.scratch', 'context-relay', 'work-items', sessionId + '.json');
+  assert.equal(existsSync(scopedPath), false, '只读 GET 不得惰性迁移写盘');
+  assert.equal(existsSync(legacyPath), true, '旧 workspace 台账原样保留');
+  assert.equal(got.json.workItems, null, '只读 GET 只读当前会话级台账（不搬迁）');
 });

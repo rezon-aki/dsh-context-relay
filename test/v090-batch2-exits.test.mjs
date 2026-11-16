@@ -21,6 +21,7 @@ import { readWorkItems } from '../lib/agent/work-items.js';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：状态机出口+容量保全；边界：本文件写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 const thresholds = thresholdsFromPercent(40);
 
 function resetSharedState() {
@@ -189,6 +190,56 @@ test('relay_phase 出口旁路：出口不触发 phase/分点闸门、不写台�
   assert.deepEqual(readLedgerFile(cwd), before, '出口不改台账文件');
   // ship 仍只能从 verify 进：从 blocked 进 ship 拒绝。
   await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK }), /只能从 verify 来/);
+});
+
+test('relay_phase：ship 出口可恢复（C7/A-10）——ship→blocked 后回 ship 仍需 user_gate/contract_check；ship→verify 返修允许', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-ship-recover', cwd, seq: 0 });
+  const bundle = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => bundle.tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  const shipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  assert.equal(shipped.phase, 'ship');
+  // ship→blocked（用户提出返修/等外部事实）：出口来源 = ship，按设计可从退出前 phase 恢复回 ship。
+  const blocked = await call({ phase: 'blocked', exit_reason: '用户提出返修', contract_check: CONTRACT_CHECK });
+  assert.equal(blocked.phase, 'blocked');
+  assert.equal(blocked.previous, 'ship');
+  // 门禁不放松：恢复 ship 仍必须带 contract_check + user_gate（review/report 非空）。
+  await assert.rejects(call({ phase: 'ship', user_gate: SHIP_GATE }), /contract_check/, '恢复 ship 仍要求 contract_check');
+  await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK }), /user_gate/, '恢复 ship 仍要求 user_gate');
+  const recovered = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  assert.equal(recovered.phase, 'ship');
+  assert.equal(recovered.previous, 'blocked');
+  assert.equal(recovered.resumed, true, 'ship 出口恢复 = resumed');
+  // ship→verify 返修回边（按设计允许回到 verify 重新验收），再 verify→ship。
+  const rework = await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  assert.equal(rework.phase, 'verify');
+  assert.equal(rework.previous, 'ship');
+  const reshipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  assert.equal(reshipped.phase, 'ship');
+  assert.equal(reshipped.previous, 'verify');
+});
+
+test('relay_phase：ship 出口恢复的退出来源可从会话日志重建（重启/热重载后无内存缓存）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  // 冷启动：内存派生缓存为空，只有会话日志（build→verify→ship→blocked）。
+  const log = [
+    { type: 'tool/ptc-dispatch', seq: 1, data: { name: 'relay_phase', arguments: { phase: 'build' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 2, data: { name: 'relay_phase', arguments: { phase: 'verify' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 3, data: { name: 'relay_phase', arguments: { phase: 'ship' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'relay_phase', arguments: { phase: 'blocked', exit_reason: '用户返修' }, isError: false, content: [] } },
+  ];
+  const session = fakeSession({ id: 'session-ship-recover-log', cwd, seq: 0, log });
+  const bundle = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const recovered = await bundle.tools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent });
+  assert.equal(recovered.phase, 'ship');
+  assert.equal(recovered.previous, 'blocked');
+  assert.equal(recovered.resumed, true, '冷启动按日志重建退出来源=ship → 恢复放行');
 });
 
 test('deriveExit：无投影时从日志 fallback 重建出口（restart 后仍可读）', () => {

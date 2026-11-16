@@ -763,6 +763,61 @@ test('checkPhaseGate：strict 拒绝未收口；carry 显式带走；warn 放行
   assert.equal(applied.find((item) => item.id === 'bb').phase, 'discover');
 });
 
+test('checkPhaseGate：phase=null 条目纳入关闸（C7/A-03 strict 不可绕过），carry 可显式带走', async () => {
+  const ledger = {
+    exists: true,
+    currentPhase: { phase: 'build' },
+    items: [
+      { id: 'phased', title: '本 phase 未收口', status: 'doing', next: 'x', phase: 'build' },
+      { id: 'unphased', title: '未标 phase', status: 'doing', next: 'y', phase: null },
+      { id: 'unphased-done', title: '无 phase 已完成', status: 'done', evidence: ['e:1'], phase: null },
+      { id: 'later', title: '别的 phase', status: 'doing', next: 'z', phase: 'verify' },
+    ],
+  };
+  const strict = checkPhaseGate(ledger, { phase: 'build', gate: 'strict' });
+  assert.equal(strict.ok, false, 'phase=null 未闭合条目不能绕过 strict 关闸');
+  assert.deepEqual(strict.leftover, ['phased', 'unphased']);
+  assert.match(strict.message, /未标 phase，视同本 phase/);
+  const carried = checkPhaseGate(ledger, { phase: 'build', carry: ['unphased'], gate: 'strict' });
+  assert.equal(carried.ok, false, '只 carry 一条仍有另一条未收口');
+  assert.deepEqual(carried.carried, ['unphased']);
+  assert.deepEqual(carried.leftover, ['phased']);
+  const warn = checkPhaseGate(ledger, { phase: 'build', gate: 'warn' });
+  assert.equal(warn.ok, true, 'warn 只提示');
+  assert.deepEqual(warn.warnings, ['phase "build" item not closed: phased', 'phase "build" item not closed: unphased']);
+  const applied = applyPhaseCarry(ledger.items, { carry: ['unphased'], from: 'build', to: 'verify' });
+  const moved = applied.find((item) => item.id === 'unphased');
+  assert.equal(moved.phase, 'verify', '无 phase 条目 carry 后落到新 phase（不被静默丢下）');
+  assert.equal(moved.carriedFrom, 'build');
+  assert.equal(applied.find((item) => item.id === 'later').phase, 'verify', '别的 phase 条目不被 carry 影响');
+  assert.equal(applied.find((item) => item.id === 'phased').phase, 'build');
+});
+
+test('readWorkItems migrateLegacy:false：只读路径不迁移写盘（C14）；默认仍迁移', async () => {
+  const scopeId = 'scope-readonly';
+  const writeLegacy = (cwd) => {
+    const path = ledgerPath(cwd);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      version: 1, rev: 3, updatedAt: new Date().toISOString(), updatedBy: scopeId,
+      items: [{ id: 'legacy-1', title: '旧台账条目', status: 'doing', next: 'n' }],
+    }));
+    return path;
+  };
+  const readonlyCwd = tempCwd();
+  writeLegacy(readonlyCwd);
+  const readonly = readWorkItems(readonlyCwd, { scopeId, migrateLegacy: false });
+  assert.equal(readonly.exists, false, '只读路径不迁移：会话级台账仍为空');
+  assert.equal(existsSync(join(readonlyCwd, '.scratch', 'context-relay', 'work-items', scopeId + '.json')), false, '只读路径不得写盘');
+  assert.ok(existsSync(ledgerPath(readonlyCwd)), '旧 workspace 台账原样保留');
+  const migratedCwd = tempCwd();
+  writeLegacy(migratedCwd);
+  const migrated = readWorkItems(migratedCwd, { scopeId });
+  assert.equal(migrated.exists, true, '默认（工具/写路径）仍迁移');
+  assert.equal(migrated.items[0].id, 'legacy-1');
+  assert.ok(existsSync(join(migratedCwd, '.scratch', 'context-relay', 'work-items', scopeId + '.json')), '默认路径迁移写盘');
+});
+
 test('createPhaseItems：标题 → id（中文回退 point、冲突加后缀）、open 无 next、phase 正确', async () => {
   const created = createPhaseItems(['实现关账闸门', '实现关账闸门', 'write tests'], { phase: 'build', existing: [{ id: 'write-tests' }] });
   assert.equal(created.length, 3);

@@ -723,6 +723,56 @@ test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；item
   assert.match(emptySwitched.ledger.hint, /还没有工作台账/, '空台账跨 phase 给开账提示（事件驱动，不建文件）');
 });
 
+test('relay_phase：phase=null 未收口条目不能绕过 strict 关 phase 闸（C7/A-03 复现）；carry 可带走', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  writeLedger(cwd, [{ id: 'n1', title: '无 phase 未收口', status: 'doing', next: 'x' }], {
+    rev: 1, currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 1 },
+  });
+  const session = fakeSession({ id: 'session-wi-null-gate', cwd, seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services, { workItemsPhaseGate: 'strict' });
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /refused \(work items, phase open\)/, 'phase=null 条目纳入 strict 关闸');
+  assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build', '拒绝零副作用（currentPhase 不变）');
+  const carried = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, carry: ['n1'] });
+  assert.equal(carried.phase, 'verify');
+  assert.deepEqual(carried.ledger.carried, ['n1'], '显式 carry 可带走无 phase 条目');
+  assert.equal(readLedgerFile(cwd).items.find((item) => item.id === 'n1').phase, 'verify', 'carry 后条目落到新 phase（不静默丢下）');
+});
+
+test('relay_phase：items 只在主链跨 phase 登记（C7/A-02）——同 phase/出口/出口恢复显式拒绝且零副作用', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-wi-same-items', cwd, seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', contract_check: CONTRACT_CHECK, items: ['首个分点'] });
+  const before = readLedgerFile(cwd);
+  // 同 phase 带 items：显式拒绝（旧版静默丢弃 → 模型以为已登记）；错误给 relay_work_items 指路。
+  await assert.rejects(
+    call({ phase: 'build', contract_check: CONTRACT_CHECK, items: ['迟到分点'] }),
+    (error) => /refused \(items\)/.test(error.message) && /本次 phase 未切换/.test(error.message) && /relay_work_items/.test(error.message),
+    '同 phase items 必须显式拒绝',
+  );
+  assert.deepEqual(readLedgerFile(cwd), before, '同 phase items 拒绝：台账零副作用');
+  await assert.rejects(call({ phase: 'build', items: [] }), /refused \(items\)/, '同 phase 空 items 也显式拒绝');
+  // 出口不登记分点。
+  await assert.rejects(call({ phase: 'blocked', exit_reason: '等用户', contract_check: CONTRACT_CHECK, items: ['x'] }), /出口不登记分点/);
+  assert.deepEqual(readLedgerFile(cwd), before, '出口 items 拒绝：台账零副作用');
+  await call({ phase: 'blocked', exit_reason: '等用户', contract_check: CONTRACT_CHECK });
+  // 从出口恢复也不登记分点（恢复的子 phase 语义不写台账）。
+  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK, items: ['y'] }), /恢复不登记分点/);
+  // 回归：合法主链 crossing 仍正常登记分点（台账照旧写入）。
+  const resumed = await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  assert.equal(resumed.phase, 'build');
+  const crossed = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, items: ['验收分点'] });
+  assert.equal(crossed.ledger.phase, 'verify');
+  assert.equal(crossed.ledger.opened.length, 1, '主链 crossing 的 items 仍登记');
+  assert.equal(readLedgerFile(cwd).currentPhase.phase, 'verify');
+});
+
 // ── 台账闭环（v0.6.0 事件驱动） ────────────────────────────────────────
 
 test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提示；落账后焦点更新、不重复', async () => {
@@ -1075,6 +1125,26 @@ test('到线提醒接入：台账非空时注入的 notice 带台账行；空台
   await offEvents.filter((entry) => entry.name === 'agent/pre-step').at(-1)?.listener({ agent: { session: offSession, options: {}, inject(message) { offInjected.push(message); } } }, async () => ({}));
   assert.equal(offInjected.length, 1);
   assert.ok(!offInjected[0].content[0].text.includes('工作台账'), 'workItems=false 到线提醒不读台账');
+});
+
+test('pre-step 台账只读：旧 workspace 台账不被惰性迁移写盘（C7/B-10 热路径无写副作用）', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-wi-preread', cwd, seq: 0 });
+  mkdirSync(join(cwd, '.scratch', 'context-relay'), { recursive: true });
+  writeFileSync(join(cwd, WORK_ITEMS_REL), JSON.stringify({
+    version: 1, rev: 2, updatedAt: new Date().toISOString(), updatedBy: session.id,
+    items: [{ id: 'legacy-1', title: '旧台账', status: 'doing', next: 'n' }],
+  }));
+  // 不注入 workItemsPath（会话级默认路径）→ 默认读路径本会触发迁移。
+  const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
+  const { events } = applyAgentScoped(bundle.services);
+  const listener = events.filter((entry) => entry.name === 'agent/pre-step').at(-1)?.listener;
+  assert.ok(listener !== undefined, 'pre-step 监听已注册');
+  await listener({ agent: { session, options: {}, inject() {} } }, async () => ({}));
+  const scopedPath = join(cwd, '.scratch', 'context-relay', 'work-items', session.id + '.json');
+  assert.equal(existsSync(scopedPath), false, 'pre-step 只读：不得迁移写盘');
+  assert.ok(existsSync(join(cwd, WORK_ITEMS_REL)), '旧 workspace 台账原样保留');
 });
 
 // ── team-tools：checkpoint 摘要 / renew owner 迁移 ──────────────────────
