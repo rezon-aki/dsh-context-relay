@@ -423,6 +423,37 @@ test('savePanelStore: 写盘失败 warn（限频）并返回 false，内存状�
   assert.equal(warnings.filter((line) => /write failed/.test(line)).length, 1);
 });
 
+// ── M-13：dirty 非空时 reload 保留合并 + warn；写盘失败不静默清 dirty ──────
+test('M-13：正常文件载入时 dirty 非空 → 保留内存改动并合并磁盘其它会话 + warn；写盘失败不清 dirty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-panel-merge-'));
+  const panelPath = join(dir, 'panel.json');
+  const warnings = [];
+  configurePanelStore({ panelPath }, { warn: (message) => warnings.push(String(message)) });
+  updatePanelState('sess-saved', { autoCompress: true }); // 正常落盘（dirty 清空）
+  assert.equal(existsSync(panelPath), true);
+  // 目录不可写 → 落盘失败；内存写入成功、dirty 保留（旧实现会在下次 load 静默丢掉）
+  chmodSync(dir, 0o500);
+  try { updatePanelState('sess-pending', { autoCompress: true }); } finally { chmodSync(dir, 0o700); }
+  assert.equal(panelStateOf('sess-pending').autoCompress, true);
+  assert.equal(warnings.some((line) => /write failed/.test(line)), true, '写盘失败必须 warn');
+  // 外部/旧快照写入磁盘（不含 sess-pending，且 sess-saved 是旧值）→ 再次载入
+  writeFileSync(panelPath, JSON.stringify({
+    schemaVersion: PANEL_SCHEMA_VERSION,
+    sessions: { 'sess-saved': { autoCompress: false }, 'sess-disk': { defaultOperation: 'compress' } },
+  }), 'utf8');
+  loadPanelStore({ panelPath });
+  assert.equal(panelStateOf('sess-pending').autoCompress, true, 'dirty 内存改动不得被正常载入静默清掉');
+  assert.equal(panelStateOf('sess-saved').autoCompress, false, '非 dirty 会话按磁盘载入');
+  assert.equal(panelStateOf('sess-disk').defaultOperation, 'compress', '磁盘其它进程写入的会话保留');
+  assert.equal(warnings.some((line) => /pending/.test(line)), true, '保留合并必须 warn');
+  // 仍标脏：下一次写盘把合并结果落盘
+  assert.equal(savePanelStore(), true);
+  const saved = readPanelFile(panelPath).sessions;
+  assert.equal(saved['sess-pending'].autoCompress, true);
+  assert.equal(saved['sess-saved'].autoCompress, false);
+  assert.equal(saved['sess-disk'].defaultOperation, 'compress');
+});
+
 test('实时状态：新鲜数据可读，超过 LIVE_TTL_MS 未更新视为 stale（不下发旧 band/「已到线」）', () => {
   assert.equal(liveStateOf('sess-live'), undefined);
   publishLiveState('sess-live', { band: 'relay', used: 500000, window: 1000000, ratio: 0.5, phase: 'verify', overBudget: true });

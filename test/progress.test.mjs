@@ -23,9 +23,9 @@ test('滚动进度：PROGRESS_LIMIT_BYTES 默认 32KB（advisory 归档阈值，
   assert.equal(PROGRESS_LIMIT_BYTES, 32768);
 });
 
-test('滚动进度：首次交接创建文件（持有会话/时间线/JSON 机器块），再次交接滚动合并', () => {
+test('滚动进度：首次交接创建文件（持有会话/时间线/JSON 机器块），再次交接滚动合并', async () => {
   const cwd = tmpCwd();
-  const first = updateProgress(cwd, {
+  const first = await updateProgress(cwd, {
     sessionId: 'session-a',
     phase: 'build',
     status: { goal: 'ship relay', phase: 'build', done: ['d1'], next_actions: ['n1'], blocked: ['b1'], success_criteria: ['s1'] },
@@ -44,7 +44,7 @@ test('滚动进度：首次交接创建文件（持有会话/时间线/JSON 机�
   assert.equal(state1.timeline.length, 1);
   assert.match(raw1, /持有会话：session-a/);
   // 第二次交接：持有会话换新、状态覆盖、决策追加去重、时间线 2 条
-  const second = updateProgress(cwd, {
+  const second = await updateProgress(cwd, {
     sessionId: 'session-b',
     phase: 'verify',
     status: { goal: 'ship relay', phase: 'verify', done: ['d1', 'd2'], next_actions: ['n2'], blocked: [] },
@@ -65,10 +65,10 @@ test('滚动进度：首次交接创建文件（持有会话/时间线/JSON 机�
   assert.deepEqual(state2.done, ['d1', 'd2']);
 });
 
-test('滚动进度：超 32KB 自动归档最旧时间线/决策/证据，主文件不超上限', () => {
+test('滚动进度：超 32KB 自动归档最旧时间线/决策/证据，主文件不超上限', async () => {
   const cwd = tmpCwd();
   const many = Array.from({ length: 40 }, (_, index) => 'decision-' + index + '-' + 'x'.repeat(900));
-  const result = updateProgress(cwd, {
+  const result = await updateProgress(cwd, {
     sessionId: 'session-big',
     phase: 'build',
     status: { goal: 'big goal', phase: 'build' },
@@ -89,10 +89,10 @@ test('滚动进度：超 32KB 自动归档最旧时间线/决策/证据，主文
   assert.ok(Buffer.byteLength(readFileSync(progressPath(cwd), 'utf8'), 'utf8') <= PROGRESS_LIMIT_BYTES);
 });
 
-test('滚动进度：状态段超限也保证主文件不超上限并显式记录裁剪（2026-11-01 审查 P1）', () => {
+test('滚动进度：状态段超限也保证主文件不超上限并显式记录裁剪（2026-11-01 审查 P1）', async () => {
   const cwd = tmpCwd();
   const big = (label) => Array.from({ length: 40 }, (_, index) => label + '-' + index + '-' + 'x'.repeat(190));
-  const result = updateProgress(cwd, {
+  const result = await updateProgress(cwd, {
     sessionId: 'session-status-big',
     phase: 'build',
     status: { goal: 'status overflow', phase: 'build', success_criteria: big('sc'), done: big('done'), next_actions: big('next'), blocked: big('blocked') },
@@ -122,7 +122,7 @@ test('滚动进度：状态段超限也保证主文件不超上限并显式记�
   assert.ok(state.key_docs.length <= 12, 'key_docs 条数受限');
 });
 
-test('滚动进度：超限后归档含所有被移除/截短条目，主文件 ≤ limit，无内容丢在注记外', () => {
+test('滚动进度：超限后归档含所有被移除/截短条目，主文件 ≤ limit，无内容丢在注记外', async () => {
   const cwd = tmpCwd();
   const item = (label, index) => label + '-' + index + '-' + 'x'.repeat(320);
   const statusKeys = ['success_criteria', 'done', 'next_actions', 'blocked', 'open_questions'];
@@ -137,7 +137,7 @@ test('滚动进度：超限后归档含所有被移除/截短条目，主文件 
   };
   const counts = { constraints: 8, risks: 8, key_docs: 12 };
   const inputs = full(counts);
-  const result = updateProgress(cwd, {
+  const result = await updateProgress(cwd, {
     sessionId: 'session-archive-all',
     phase: 'build',
     status: {
@@ -180,10 +180,10 @@ test('滚动进度：超限后归档含所有被移除/截短条目，主文件 
   assert.ok(Array.isArray(state.timeline) && state.timeline.length >= 1, '机器块仍可解析');
 });
 
-test('滚动进度：条目长度裁剪也写入 trimmed 且完整原文进归档（不静默；2026-11-01 复核发现）', () => {
+test('滚动进度：条目长度裁剪也写入 trimmed 且完整原文进归档（不静默；2026-11-01 复核发现）', async () => {
   const cwd = tmpCwd();
   const fullDone = 'D'.repeat(40000);
-  const result = updateProgress(cwd, {
+  const result = await updateProgress(cwd, {
     sessionId: 'session-item-clip',
     phase: 'build',
     status: { goal: 'item clip', phase: 'build', done: [fullDone] },
@@ -203,14 +203,14 @@ test('滚动进度：条目长度裁剪也写入 trimmed 且完整原文进归�
   assert.match(archived, /^- status:done D{100}/m);
 });
 
-test('滚动进度：随机大状态 fuzz 仍保证主文件 ≤32KB 且被裁剪数据有归档可回读（2026-11-01 复核发现）', () => {
+test('滚动进度：随机大状态 fuzz 仍保证主文件 ≤32KB 且被裁剪数据有归档可回读（2026-11-01 复核发现）', async () => {
   let seed = 42;
   const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
   const text = (prefix, max) => prefix + 'x'.repeat(Math.floor(rand() * max));
   const list = (prefix, count) => Array.from({ length: count }, (_, index) => text(prefix + index, 400));
   for (let round = 0; round < 30; round += 1) {
     const cwd = tmpCwd();
-    const result = updateProgress(cwd, {
+    const result = await updateProgress(cwd, {
       sessionId: 'session-fuzz-' + round,
       phase: 'build',
       status: {
@@ -237,25 +237,25 @@ test('滚动进度：随机大状态 fuzz 仍保证主文件 ≤32KB 且被裁�
   }
 });
 
-test('滚动进度：文件损坏时备份 .corrupt-<ts> 并重建；restoreProgress 回滚交接前内容', () => {
+test('滚动进度：文件损坏时备份 .corrupt-<ts> 并重建；restoreProgress 回滚交接前内容', async () => {
   const cwd = tmpCwd();
   mkdirSync(join(cwd, '.scratch', 'context-relay'), { recursive: true });
   writeFileSync(progressPath(cwd), 'broken markdown without json block', 'utf8');
-  const result = updateProgress(cwd, { sessionId: 'session-fix', phase: 'build', status: { goal: 'recover' } });
+  const result = await updateProgress(cwd, { sessionId: 'session-fix', phase: 'build', status: { goal: 'recover' } });
   assert.equal(result.updated, true);
   assert.equal(typeof result.corruptBackup, 'string');
   assert.ok(existsSync(result.corruptBackup), '损坏文件已备份');
   assert.equal(parseProgress(readFileSync(progressPath(cwd), 'utf8')).holder, 'session-fix');
   // 回滚：第二次交接前的内容
   const previousRaw = readFileSync(progressPath(cwd), 'utf8');
-  const second = updateProgress(cwd, { sessionId: 'session-next', phase: 'verify', status: { goal: 'recover' } });
+  const second = await updateProgress(cwd, { sessionId: 'session-next', phase: 'verify', status: { goal: 'recover' } });
   assert.equal(parseProgress(readFileSync(progressPath(cwd), 'utf8')).holder, 'session-next');
-  restoreProgress(second);
+  await restoreProgress(second);
   assert.equal(readFileSync(progressPath(cwd), 'utf8'), previousRaw, '回滚到交接前内容');
   // 首次交接失败回滚：没有旧内容 → 删除新建文件
   const fresh = tmpCwd();
-  const created = updateProgress(fresh, { sessionId: 'session-first', phase: 'build', status: { goal: 'first' } });
-  restoreProgress(created);
+  const created = await updateProgress(fresh, { sessionId: 'session-first', phase: 'build', status: { goal: 'first' } });
+  await restoreProgress(created);
   assert.equal(existsSync(progressPath(fresh)), false, '首次创建的进度文件被删除');
 });
 
@@ -270,10 +270,10 @@ test('滚动进度：merge 纯函数不修改入参；renderBoundedProgress 保�
   assert.equal(bounded.archived.length, 0);
 });
 
-test('滚动进度：历史 CAPS 溢出进归档（不静默丢决策/证据/时间线）', () => {
+test('滚动进度：历史 CAPS 溢出进归档（不静默丢决策/证据/时间线）', async () => {
   const cwd = tmpCwd();
   const decisions = Array.from({ length: 45 }, (_, index) => '决策 ' + index);
-  const first = updateProgress(cwd, { sessionId: 's', phase: 'build', status: { goal: 'g' }, decisions });
+  const first = await updateProgress(cwd, { sessionId: 's', phase: 'build', status: { goal: 'g' }, decisions });
   assert.equal(first.historyArchived, 5, '超出 cap 40 的 5 条进 overflow');
   assert.ok(first.archived >= 5);
   const state = parseProgress(readFileSync(progressPath(cwd), 'utf8'));
