@@ -22,6 +22,8 @@ import { readWorkItems } from '../lib/agent/work-items.js';
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：状态机出口+容量保全；边界：本文件写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
+/** C9 设计门：首次进 build 必须带用户确认过的设计文档指针。 */
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
 const thresholds = thresholdsFromPercent(40);
 
 function resetSharedState() {
@@ -118,7 +120,7 @@ test('relay_phase 出口：缺 exit_reason 拒绝且零副作用（不切 phase�
   const bundle = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => bundle.tools.get('relay_phase').execute(args, { agent });
-  await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   const ledgerBefore = readLedgerFile(cwd);
   const before = panelStateOf(session.id);
   for (const bad of [{ phase: 'blocked' }, { phase: 'cancel', exit_reason: '   ' }, { phase: 'blocked', exit_reason: 'x'.repeat(201) }]) {
@@ -159,7 +161,7 @@ test('relay_phase 出口：任意 phase 可进 blocked/cancel；status 带 exit�
   const s2 = fakeSession({ id: 'session-exit-cancel', cwd: cwd2, seq: 0 });
   const b2 = applyAgent(fakeServices({ session: s2 }).services);
   const a2 = { session: s2, options: {} };
-  await b2.tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: a2 });
+  await b2.tools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: a2 });
   const canceled = await b2.tools.get('relay_phase').execute({ phase: 'cancel', exit_reason: '任务取消', contract_check: CONTRACT_CHECK }, { agent: a2 });
   assert.equal(canceled.phase, 'cancel');
   const status2 = await b2.tools.get('relay_status').execute({}, { agent: a2 });
@@ -179,7 +181,7 @@ test('relay_phase 出口旁路：出口不触发 phase/分点闸门、不写台�
   const bundle = applyAgent(fakeServices({ session }).services, { workItemsPhaseGate: 'strict' });
   const agent = { session, options: {} };
   const call = (args) => bundle.tools.get('relay_phase').execute(args, { agent });
-  await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   // 主链验证：此时切 verify 会被 strict 分点闸门拒绝（证明台账确有未收口项）。
   writeLedger(cwd, [{ id: 'b1', title: '未收口', status: 'doing', next: 'x', phase: 'build' }], { rev: 2, currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 2 } });
   await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /work items, phase open/);
@@ -199,7 +201,7 @@ test('relay_phase：ship 出口可恢复（C7/A-10）——ship→blocked 后回
   const bundle = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => bundle.tools.get('relay_phase').execute(args, { agent });
-  await call({ phase: 'build', contract_check: CONTRACT_CHECK });
+  await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
   const shipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
   assert.equal(shipped.phase, 'ship');

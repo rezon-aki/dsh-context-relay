@@ -21,6 +21,8 @@ import { emptyRoster, ensureLineage, retireGeneration, writeRoster } from '../li
 import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const CONTRACT_CHECK = { requirement: '需求已定：上下文管理防遗忘', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户' };
+/** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
 const TEAM_CONTEXT_REL = TEAM_CONTEXT_DIR.join('/');
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const thresholds = thresholdsFromPercent(35);
@@ -218,7 +220,7 @@ test('relay_phase 跨 phase：读不到 Agent Teams 时用快照兜底——队�
   await mergeTeamContext(cwd, 'session-tc-fallback', { name: 'mate-9', band: 'relay' });
   const bundle = applyAgent(fakeServices({ session }).services);
   const phase = bundle.tools.get('relay_phase');
-  const warned = await phase.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
+  const warned = await phase.execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
   assert.match(warned.teamWarning, /mate-9/, 'v0.7.0：队友上下文提醒降级为 warning，不拒绝切 phase');
   const ok = await phase.execute({ phase: 'verify', contract_check: CONTRACT_CHECK, team_note: 'mate-9 已 checkpoint；phase 边界后 handoff 重建小队' }, { agent: { session, options: {} } });
   assert.equal(readTeamContext(cwd, 'session-tc-fallback').pending.length, 0);

@@ -26,6 +26,8 @@ const CONTRACT_CHECK = {
   fidelity: '实现忠实，无偏移/劣化/偷懒/缺失',
   attention: '本阶段不打扰用户（无最小高影响点）',
 };
+/** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
 
 function tmpCwd() {
   return mkdtempSync(join(tmpdir(), 'relay-budget-'));
@@ -377,6 +379,7 @@ test('relay_phase warn 档 action=split：放行切换，返回 budget.action=sp
   const h = harness({ id: 'session-budget-split', pressure: { contextWindow: 1_000_000, projectedTokens: 370_000 } });
   const result = await h.phase({
     phase: 'build',
+    design_gate: DESIGN_GATE,
     contract_check: CONTRACT_CHECK,
     budget_plan: { action: 'split', can_finish: false, estimate_tokens: 80_000, note: '缩小到只写测试' },
   });
@@ -420,7 +423,7 @@ test('relay_phase warn 档 action=proceed + can_finish=true：放行切换，返
 test('relay_phase 非 warn 档：不强制 budget_plan，传入的 plan 被忽略（ok 档直接切换）', async () => {
   const h = harness({ id: 'session-budget-okband', pressure: { contextWindow: 1_000_000, projectedTokens: 20_000 } });
   // 非法 plan（缺 action）也不校验：非 warn 档忽略 budget_plan。
-  const result = await h.phase({ phase: 'build', contract_check: CONTRACT_CHECK, budget_plan: { action: 'bogus' } });
+  const result = await h.phase({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK, budget_plan: { action: 'bogus' } });
   assert.equal(result.phase, 'build');
   // 契约 §1.3：跨 phase 响应带 budget 事实（所有档）；ok 档不强制 budget_plan、也不给动作。
   assert.equal(result.budget.band, 'ok');
@@ -443,7 +446,7 @@ test('relay_phase 非跨 phase（warn 档）：不强制 budget_plan，响应不
 test('relay_phase 跨 phase 实测消耗：lastPhaseCostTokens = 两次 used 差值（同 phase 声明不覆盖起点）', async () => {
   const h = harness({ id: 'session-budget-cost', pressure: { contextWindow: 1_000_000, projectedTokens: 100_000 } });
   // ① ok 档跨 phase：首次声明记录本 phase 起点 used=100k。
-  const first = await h.phase({ phase: 'build', contract_check: CONTRACT_CHECK });
+  const first = await h.phase({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   assert.equal(first.phase, 'build');
   assert.equal(first.budget.band, 'ok', 'ok 档跨 phase 也回 budget 事实（契约 §1.3）');
   assert.equal(first.budget.lastPhaseCostTokens, undefined, '首次跨 phase 无历史实测');

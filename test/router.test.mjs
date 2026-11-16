@@ -139,7 +139,9 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
 
 test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / LONG ≤6460 / ROUTER ≤2000', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
-  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / LONG ≤6,460 / ROUTER ≤2,000；实施实测 6,527/6,423/1,944，均有余量（HEAD 6,744/6,664/2,639）。
+  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / LONG ≤6,460 / ROUTER ≤2,000；
+  // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
+  // 靠删协议内重复句（预算档例外/模式持久/免审重复/全文检索路径等冗余）腾预算，硬约束条款一字不删（HEAD 6,744/6,664/2,639）。
   // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
   assert.ok(PROTOCOL_TEXT.length <= 6560, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
@@ -181,6 +183,15 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / LONG ≤6
     'P0/不可逆',
     '超时≠同意',
     '授权口径（唯一真源）',
+    // C9/AUDIT §12 两段式用户门：设计门（开工前显式停）+ 实现↔设计对齐（并行）+ 最小必要验收/重型授权
+    '两个对齐点',
+    '（A）设计门（开工前，显式停）',
+    'design_gate{path,user_approved:true}',
+    '实现↔设计对齐',
+    '与其他验收**并行**、不串行终检',
+    '默认不做、须用户明确授权',
+    'verification{tier:minimal|heavy,approved_by_user?,items[]}',
+    '不校验顺序',
   ];
   for (const phrase of protocolRequired) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
@@ -261,7 +272,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
   assert.ok(PROTOCOL_TEXT_LONG.includes('## 派活与回执'), '指针目标缺失: ## 派活与回执');
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('## 队友保鲜'), '指针目标缺失: ## 队友保鲜');
   // 4) 合同条款清单：P3 只删重复句，条款本体必须仍在 PROTOCOL base
-  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承']) {
+  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'relay_phase 首次进 build', 'design_gate{path,user_approved:true}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 合同条款缺失: ' + phrase);
   }
   // 5) 旧口径清零（批次1–3 的既有禁令在 P3 后仍不得回潮）
@@ -272,7 +283,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
 
 test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防过度删）', () => {
   const resident = PROTOCOL_TEXT_LONG.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
-  // 批次4 实测 11,324（HEAD 12,572，−1,248 / −9.9%）；预算 11,360/11,000 按设计给定；下限防为预算删过头。
+  // 批次4 实测 11,324（HEAD 12,572，−1,248 / −9.9%）；C9 两段式用户门后实测 11,331（净增 7）；预算 11,360/11,000 按设计给定；下限防为预算删过头。
   assert.ok(resident <= 11360, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
@@ -757,7 +768,7 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承', '专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
     assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
   }
-  for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码']) {
+  for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码', '**设计门材料**', 'design_gate{path,user_approved:true}', '未确认只交付文档、不开工', '验收默认最小必要', '重型验证须用户明确授权']) {
     assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_WORKER 缺短语: ' + phrase);
   }
   assert.ok(!ARCHITECT_WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
