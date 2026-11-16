@@ -74,7 +74,7 @@ disable-model-invocation: true
 - **授权开关（仅当前会话+操作+版本）**：autoCompress=压缩免审批，autoHandoff=交接免审批，authorizeNext=仅下一次操作成功后消费；失败不消费。接力/授权 schema 版本变更即失效；v0.10.0 起 panel `schemaVersion=3`，旧文件第一次载入一次性清空授权。autoChoose 等旧字段已删除。
 - 面板状态按会话持久化 `~/.dsh/data/dsh-context-relay/panel.json`；改动即 `PUT /context-relay/panel`，立即生效。**人类在面板改动时**保存会话快照（此后不跟随侧栏默认变化）；agent 内部状态写入（自决记录/授权消费/`handedOff`）只落会话内部字段，不固化侧栏默认值。
 - 侧栏插件卡：阈值基准、四档默认模式、自动压缩/自动交接/架构师默认值；旧 autoChoose/autoDecision 字段已删除，未知旧键（如 autoPhase/autoContinue）忽略。持久化授权 schemaVersion=3，版本不匹配只清授权，保留模式/架构师等非授权字段。
-- **「你的 token 预算无上限」注入（v0.2.7 起按会话）**：composer 模型选择器（模型名 · 推理等级）**右侧** chip 风格小胶囊「● 预算无上限」（绿点=开 / 灰点=关，仅 relay 会话显示）切换**本会话**；chip popover 里的**开关**（与面板其它开关同款）设置**交接后新会话**是否注入：默认展示跟随本会话当前设置，点击后固定开/关（v0.2.8 由三态胶囊改为开关）。侧栏不再有这个开关（`settings.unlimitedBudget` 仅作默认值/旧配置兼容）。GET /panel 的 relay 标记按**当前 preset 投影**判定（新建会话后在模式选择器选 Relay 也显示；v0.10.0 起首轮前/会话中切换与插件重载后旧会话都会被幂等回填，不需要新建会话）。
+- **「你的 token 预算无上限」注入（v0.2.7 起按会话）**：composer 模型选择器（模型名 · 推理等级）**右侧** chip 风格小胶囊「● 预算无上限」（绿点=开 / 灰点=关，仅 relay 会话显示）切换**本会话**；chip popover 里的**开关**（与面板其它开关同款）设置**交接后新会话**是否注入：默认展示跟随本会话当前设置，点击后固定开/关（v0.2.8 由三态胶囊改为开关）。侧栏不再有这个开关（`settings.unlimitedBudget` 仅作默认值/旧配置兼容）。v0.10.0 起 Lead 的开关值会继承给由它新建的队友/架构师/dispatch worker（spawn 时以 force 写入子会话面板），已存在的队友在下次 `relay_freshen` 复用同会话时同步到 Lead 当前值（架构师 `relay_architect` continue 复用同理）。GET /panel 的 relay 标记按**当前 preset 投影**判定（新建会话后在模式选择器选 Relay 也显示；v0.10.0 起首轮前/会话中切换与插件重载后旧会话都会被幂等回填，不需要新建会话）。
 
 ## 阈值（默认基准 35% → 30/35/45；唯一来源 = 插件 config `threshold` / `settings.threshold`[`settings.json`]；legacy `thresholds` 已删除）
 

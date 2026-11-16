@@ -129,7 +129,7 @@ After installing, restart/reload the profile, refresh the page and create or swi
 - In the panel you can:
   - choose what happens at the line — ask me / continue / compact and continue / hand off; new roots default to compact and continue, explicit choices stay local, and neither modes nor authorizations carry across handoff;
   - give auto-authorisations for compact, hand off, or just the next operation (no approval prompt while enabled);
-  - turn on budget unlimited: the agent receives the line "your token budget is unlimited", so it dares to spend (prompt text only, not a kernel quota);
+  - turn on budget unlimited: the agent receives the line "your token budget is unlimited", so it dares to spend (prompt text only, not a kernel quota); the Lead's setting is inherited by the teammates / architects / dispatch workers it creates (written to the child session panel at spawn), and an existing teammate reusing its session via `relay_freshen` (or an architect continued via `relay_architect`) syncs to the Lead's current value;
   - see what the model suggests (advice only, never executed automatically).
 - At a line you get a status notice (not a user message): it reports state and reminds you to finish the current phase first, without interrupting.
 - The single mode includes teammate management: team status, checkpoints, in-place wipe, and renewal. Teammates are **not polled**: an unchanged repeated status query is refused, reports arrive as messages, and a phase switch returns a teammate triage (keep / checkpoint / reset-reuse / renew).

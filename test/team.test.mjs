@@ -17,11 +17,11 @@ import { DISPATCH_HEALTHS, clearDelegationMemory, createDelegationTools, delegat
 import { DELEGATION_DISPATCH_DIR, dispatchRecordPathOf, receiptFreshnessOf } from '../lib/agent/delegation.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
-import { markPendingArchitect } from '../lib/agent/shared.js';
+import { clearSharedMemory, consumePendingBudgetInherit, markPendingArchitect } from '../lib/agent/shared.js';
 import { COLLECT_OK_PREFIX, DISPATCH_OK_PREFIX } from '../lib/projection.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { thresholdsFromPercent } from '../lib/policy.js';
-import { configurePanelStore, updatePanelState } from '../lib/panel-store.js';
+import { configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import {
   TEAM_LIMITS,
   appendLedger,
@@ -50,6 +50,7 @@ import {
 } from '../lib/agent/team.js';
 
 const LEAD = 'session-lead';
+const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const thresholds = thresholdsFromPercent(35);
 
 function tempWorkspace() {
@@ -1771,3 +1772,184 @@ test('装配：workItems:false 与 delegation-first 协议冲突 → warn 一次
   apply(on.ctx, {});
   assert.equal(on.warns.some((line) => /workItems:false conflicts/.test(line)), false, '默认开启不告警');
 });
+
+// ── v0.10.0：Lead 预算开关继承（spawn 时继承 / freshen 同步） ──────────────
+
+/** 在 fake ctx 上挂 lib/agent.js 的 agent/created 监听器，模拟 rc.2 spawn 创建子会话的瞬间。 */
+function installCreatedListener(fake) {
+  apply(fake.ctx, {});
+  const found = fake.listeners.find((entry) => entry.name === 'agent/created');
+  assert.ok(found, 'agent/created listener registered');
+  return found.listener;
+}
+
+test('relay_renew：spawn 前登记 Lead 预算开关，新队友子会话面板继承（失败也清标记）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    globalThis[SETTINGS_KEY] = { unlimitedBudget: true };
+    updatePanelState(LEAD, { unlimitedBudget: false });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    let createdListener;
+    const teams = makeTeamService({
+      members: [
+        { id: LEAD, name: 'lead', role: 'lead', status: 'running' },
+        { id: 'session-w1', name: 'impl-g1', role: 'teammate', status: 'inactive', description: '实现' },
+        { id: 'session-w2', name: 'review-g1', role: 'teammate', status: 'inactive', description: '审阅' },
+      ],
+      memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+      spawnResult: (request) => {
+        if (request.name.startsWith('review')) throw new Error('provider boom');
+        const child = { session: { id: 'session-' + request.name, header: { origin: 'subagent', delegationDepth: 1, parentSession: LEAD } } };
+        createdListener({ agent: child });
+        return { member: { id: child.session.id, name: request.name, role: 'teammate', status: 'inactive', diagnostics: [] } };
+      },
+    });
+    const f = fakeCtx({ agentTeams: teams });
+    createdListener = installCreatedListener(f);
+    const { leadTools } = createTeamTools(makeRuntime(f.ctx));
+    const renew = leadTools.find((tool) => tool.name === 'relay_renew');
+    await writeCheckpoint(dir, 'impl', '## 记录\n登录修复完成', LEAD);
+    await writeCheckpoint(dir, 'review', '## 记录\n审阅完成', LEAD);
+    const result = await renew.execute({ name: 'impl-g1', reason: 'band=organize' }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(panelStateOf('session-impl-g2').unlimitedBudget, false, '子会话继承 Lead false（覆盖全局 true）');
+    assert.equal(consumePendingBudgetInherit(LEAD), undefined, 'spawn 结束后标记已清');
+    globalThis[SETTINGS_KEY].unlimitedBudget = true;
+    assert.equal(panelStateOf('session-impl-g2').unlimitedBudget, false, 'force 显式落库，全局后续变化不翻转');
+    // 失败路径：spawn 抛错也要清标记（否则残留 60s 内会误继承下一次 spawn）
+    const failed = await renew.execute({ name: 'review-g1' }, { agent: lead });
+    assert.equal(failed.ok, false);
+    assert.equal(consumePendingBudgetInherit(LEAD), undefined, 'spawn 失败也清标记');
+  } finally {
+    delete globalThis[SETTINGS_KEY];
+    clearSharedMemory();
+    cleanup(dir);
+  }
+});
+
+test('relay_architect：fresh spawn 继承 Lead 预算开关（与 pending 架构师标记同 try/finally 清理）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    globalThis[SETTINGS_KEY] = { unlimitedBudget: true };
+    // 进程级面板 Map 跨测试共享：显式清掉其它用例留下的架构师模型选择，避免走显式白名单校验。
+    updatePanelState(LEAD, { unlimitedBudget: false, architectModel: null });
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    let createdListener;
+    const teams = makeTeamService({
+      members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }],
+      memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+      spawnResult: (request) => {
+        const child = { session: { id: 'session-' + request.name, header: { origin: 'subagent', delegationDepth: 1, parentSession: LEAD } } };
+        createdListener({ agent: child });
+        return { member: { id: child.session.id, name: request.name, role: 'teammate', status: 'inactive', diagnostics: [] } };
+      },
+    });
+    const f = fakeCtx({ agentTeams: teams });
+    createdListener = installCreatedListener(f);
+    const tool = createTeamTools(makeRuntime(f.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ brief: '设计登录模块', task_id: 'login' }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(panelStateOf('session-architect').unlimitedBudget, false, '架构师子会话继承 Lead false');
+    assert.equal(consumePendingBudgetInherit(LEAD), undefined, 'spawn 结束后标记已清');
+  } finally {
+    delete globalThis[SETTINGS_KEY];
+    clearSharedMemory();
+    cleanup(dir);
+  }
+});
+
+test('relay_freshen：复用同会话时同步 Lead 当前预算开关（不回写 Lead）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    globalThis[SETTINGS_KEY] = { unlimitedBudget: true };
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { unlimitedBudget: false });
+    const teammate = makeAgent({ sessionId: 'session-w1', cwd: dir, header: { parentSession: LEAD } });
+    const ctx = fakeCtx({
+      agentTeams: makeTeamService({ memberships: new Map([[teammate, membership('teammate', 'impl-g1', lead)]]) }),
+      sessionProjections: { snapshot: () => ({ values: { contextPressure: { projectedTokens: 1000, contextWindow: 100000 } } }) },
+      tokenMeter: { measure: () => ({ totalTokens: 1000 }) },
+    });
+    const { teammateTools } = createTeamTools(makeRuntime(ctx.ctx));
+    const freshen = teammateTools.find((tool) => tool.name === 'relay_freshen');
+    await freshen.execute({ phase: 'build', brief: '继续' }, { agent: teammate });
+    assert.equal(panelStateOf('session-w1').unlimitedBudget, false, '队友 freshen 时同步 Lead false');
+    assert.equal(panelStateOf(LEAD).unlimitedBudget, false, '不回写 Lead');
+    updatePanelState(LEAD, { unlimitedBudget: true });
+    await freshen.execute({ phase: 'build', brief: '继续' }, { agent: teammate });
+    assert.equal(panelStateOf('session-w1').unlimitedBudget, true, 'Lead 改开后下次 freshen 同步 true');
+    // 无 parentSession（非 spawn 会话）→ 不同步、不抛；面板继续跟随全局
+    const orphan = makeAgent({ sessionId: 'session-w2', cwd: dir });
+    const orphanCtx = fakeCtx({ agentTeams: makeTeamService({ memberships: new Map([[orphan, membership('teammate', 'review-g1', lead)]]) }) });
+    await createTeamTools(makeRuntime(orphanCtx.ctx)).teammateTools
+      .find((tool) => tool.name === 'relay_freshen').execute({ phase: 'build', brief: 'x' }, { agent: orphan });
+    assert.equal(panelStateOf('session-w2').unlimitedBudget, true, '无 parentSession 不写面板（跟随全局 true）');
+  } finally {
+    delete globalThis[SETTINGS_KEY];
+    clearSharedMemory();
+    cleanup(dir);
+  }
+});
+
+test('relay_dispatch：spawn 前登记 Lead 预算开关，worker 子会话面板继承', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    globalThis[SETTINGS_KEY] = { unlimitedBudget: true };
+    updatePanelState(LEAD, { unlimitedBudget: false });
+    let createdListener;
+    const { lead, ctx } = dispatchCtx({
+      dir,
+      spawnResult: (request) => {
+        const child = { session: { id: 'session-' + request.name, header: { origin: 'subagent', delegationDepth: 1, parentSession: LEAD } } };
+        createdListener({ agent: child });
+        return { member: { id: child.session.id, name: request.name, role: 'teammate', status: 'inactive', diagnostics: [] } };
+      },
+    });
+    createdListener = installCreatedListener(ctx);
+    await seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.worker.spawned, true, '走 spawn 路径');
+    assert.equal(panelStateOf('session-worker-1').unlimitedBudget, false, 'worker 子会话继承 Lead false');
+    assert.equal(consumePendingBudgetInherit(LEAD), undefined, 'spawn 结束后标记已清');
+  } finally {
+    delete globalThis[SETTINGS_KEY];
+    clearSharedMemory();
+    cleanup(dir);
+    clearDelegationMemory();
+  }
+});
+
+test('relay_architect：mode=continue 复用当前架构师时同步 Lead 当前预算开关（review P2-2）', async () => {
+  const dir = tempWorkspace();
+  try {
+    configurePanelStore({ panelPath: join(dir, 'panel.json') });
+    globalThis[SETTINGS_KEY] = { unlimitedBudget: true };
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    updatePanelState(LEAD, { unlimitedBudget: false, architectModel: null });
+    const teams = makeTeamService({
+      members: [
+        { id: LEAD, name: 'lead', role: 'lead', status: 'running' },
+        { id: 'session-architect', name: 'architect', role: 'teammate', status: 'inactive', description: '专职架构师' },
+      ],
+      memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+    });
+    const f = fakeCtx({ agentTeams: teams });
+    const tool = createTeamTools(makeRuntime(f.ctx)).leadTools.find((item) => item.name === 'relay_architect');
+    const result = await tool.execute({ mode: 'continue', brief: '继续设计登录模块', task_id: 'login' }, { agent: lead });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(panelStateOf('session-architect').unlimitedBudget, false, 'continue 复用同步 Lead false');
+  } finally {
+    delete globalThis[SETTINGS_KEY];
+    clearSharedMemory();
+    cleanup(dir);
+  }
+});
+
+

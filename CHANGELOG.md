@@ -48,6 +48,8 @@
 - **C 子域**：handoff seam 契约测试、collect task/revision 校验、reset 结果可见、`relay_team_status` 签名补 deeper（孙代理数）、client 双 4s 轮询合并为单轮询器并行 2 GET、client 常量契约；work-items GET 只读。
 - **D 子域**：策略单源/去重、9 seam 覆盖、CI 发布硬化、层级与依赖清理；只支持 DSH 0.2.2-rc.2。
 
+- **预算开关团队继承**：Lead 的「预算无上限」值在 spawn 队友 / 架构师 / dispatch worker 时继承（spawn 前登记、`agent/created` 写子会话面板并 force 落库，隔离成子会话后不再随全局默认翻转）；已存在的队友在下次 `relay_freshen` 复用同会话时同步到 Lead 当前值（架构师 `relay_architect` continue 复用同样同步）；`relay_handoff` 的 `handoffUnlimitedBudget` 语义不变。
+
 ### 工具面与命令现状
 
 - 共 15 个工具：7 常驻（`relay_status` / `relay_phase` / `relay_organize` / `relay_handoff` / `relay_work_items` / `relay_recommend` / `relay_doc`）+ `doc_lint` + Lead 专属 5（`relay_team_status` / `relay_renew` / `relay_architect` / `relay_dispatch` / `relay_collect`）+ 队友/架构师 2（`relay_checkpoint` / `relay_freshen`）。
