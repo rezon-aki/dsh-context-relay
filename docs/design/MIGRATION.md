@@ -1,53 +1,55 @@
-# 迁移说明（v0.9.0）
+# 迁移说明（v0.10.0）
 
-> 迁移窗口：**v0.9.0 = 归一 + 只读兜底**（旧会话、旧配置、旧数据继续可用）；**v0.10.0 = 删除兼容路径**（见迁移表末列）。
+> 升级路径：**0.8.x（npm 当前发布线）→ 0.10.0 直接升级**；v0.9.0 未单独发布，其归一动作已包含在 0.10.0 内。
 >
-> 设计目标与边界见 [DESIGN.md](DESIGN.md)；逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
+> 本文只写破坏性变更、升级/回滚步骤与保留数据。设计目标与边界见 [DESIGN.md](DESIGN.md)，实现架构与 seam 契约见 [ARCHITECTURE.md](ARCHITECTURE.md)，逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
 
 ## 1. 原则
 
-- **归一而非迁移**：v0.9.0 在读入时把旧形态解释为新语义（不报错、有兜底），不自动重写旧文件；需要新格式落盘的内容（如面板 `schemaVersion`）在下一次自然写盘时收口。
-- **只读兜底**：旧值可读、无副作用；不再生效的字段读到后忽略或归一，不报错。
-- **删除有窗口**：兼容路径在 v0.10.0 统一删除；删除后旧会话/旧配置按新语义失效属预期，升级前先完成迁移。
-- **不可逆项只有授权**：授权失效后需用户重新授予；其余旧数据不删除。磁盘上的历史文件（旧交接、旧报告等）不做自动改写，需要时人工清理。
+- **一次删净**：v0.9.0 的兼容窗口在 v0.10.0 关闭——旧字段、旧 id、旧配置不再「读入归一」，而是删除或按新语义拒绝。升级前先完成第 3 节动作。
+- **用户数据不自动删除**：`panel.json` / `settings.json` 与工作区 `.scratch/context-relay/**` 保留；插件不自动改写旧交接、报告、进度等文件。
+- **授权一次性失效**：panel `schemaVersion` 2 → 3，旧会话授权不可逆失效，需用户重新授权；模式与架构师设置保留。
+- **协议语义变更不迁移旧会话内容**：旧会话里模型学到的旧口径不会自动纠正；升级后用新协议，必要时 `relay_handoff` 开新会话承接。
+- **只支持 DSH 0.2.2-rc.2**：更早内核（rc.1 / 0.2.1 系列）不再支持。
 
-## 2. 迁移表
+## 2. 破坏性变更表
 
-| # | 对象 | 旧形态（v0.8.x 及更早） | v0.9.0 归一动作 | 只读兜底 | v0.10.0 删除项 |
-|---|---|---|---|---|---|
-| MIG1 | classic preset / 旧会话 | preset id `relay`（双模式默认，Lead 可亲自执行） | 不再注册为生产模式；以**行为相同**的别名 id 注册（部署配置 `legacyPresetCompat` 默认开，描述标「旧会话兼容」） | 旧会话继续可打开/挂载 relay，行为不变；模式选择器多出一个标「旧会话兼容」的别名条目 | 删除 classic 别名 |
-| MIG2 | 长模式 preset / 会话 | `relay-long`（routerMode=true） | 成为唯一生产模式（唯一 id `relay-long`）；显示名保留「接力模式（Relay）· 超长任务」 | 旧会话 id 不变即可继续用（零迁移） | 无 |
-| MIG3 | 部署配置 `presetId` / `longPresetId` / `routerMode` | 双 id 配置 + 可选 routerMode | 单一模式唯一 id（默认 `relay-long`）；`routerMode` 读到时忽略并 warn 一次；`longPresetId` 若已配置沿用为唯一 id；`presetId` 仅作旧别名 id | 旧配置不崩、按新语义解释 | 移除 `routerMode` 读取 |
-| MIG4 | 面板隐藏档 `compress-then-handoff` | 旧面板快照/侧栏默认可能为该档 | 归一为 `null` = 问我；单一模式永久移除该档 | 读到该值不崩；归一为 `null` = 问我（需人类选择继续方式）；读入时不清盘，下一次自然写盘时收口 | 从面板枚举/归一逻辑中删除该档 |
-| MIG5 | 面板隐藏档 `autoChoose` / `autoDecision` | 旧长模式隐藏「自动（模型决定）」，可能出现 autoChoose=true + autoDecision | 单一模式不展示该档；迁移期归一为 `autoChoose=false`、`autoDecision=null`（退役，不保留为高级开关） | 面板读旧值不崩；autoDecision 只在 autoChoose 时生效（归一已保证） | 删除字段 |
-| MIG6 | 旧授权（`autoCompress` / `autoHandoff` / `authorizeNext`） | 任意旧会话/旧版本留下的授权，且旧行为会随接力继承 | 面板 `schemaVersion` 版本化：旧文件载入时全部授权字段失效；接力不再继承授权，接力成功清旧会话授权 | 授权失效不报错；面板显示关；用户可重新开启 | 无（此后授权仅当前会话内有效） |
-| MIG7 | `handoffPreset`（下一个新会话模式） | 面板二态开关 + panel.json 字段 + PUT 白名单 | 删除客户端开关；PUT 兼容接受但忽略（返回 deprecated，不 400）；handoff 目标恒为唯一模式；旧值读入后不再生效 | 旧值可读、无副作用 | 删除字段与 PUT 语义 |
-| MIG8 | legacy `config.thresholds`（40/50 旧基准） | 部署显式配置的旧比例线（0.35 / 0.40 / 0.50），无界面设置来源时生效 | 继续支持（按旧线工作，反推显示基准），载入时 warn 一次「旧 thresholds 已退役，请迁移到 `settings.threshold`」；新部署默认 35% 基准不变 | 读旧配置不崩、按旧线工作 | 移除 legacy 路径（届时统一归一到 `settings.threshold`） |
-| MIG9 | 旧 settings 键 | 已删除键（`autoPhase` / `autoContinue` 等）与旧侧栏 `unlimitedBudget` 默认 | 继续忽略（`normalizeSettings`），文档标注；不报错 | 读旧文件不崩 | 可删兼容忽略（保留忽略成本低，可长期保留） |
-| MIG10 | workspace 级台账 `.scratch/context-relay/work-items.json` | v0.5.1 之前的旧路径 | 读取时 best-effort 同步到会话级台账；不迁移、不删除旧文件 | 旧文件保留 | 评估移除（若不再有旧会话写入） |
-| MIG11 | team legacy 分区 `.scratch/context-relay/team/<lineage>/` | v0.3.1 之前的无 Lead 会话分区 | 保留只读回退；不迁移、不删除 | 旧记录只读回退 | 长期保留（成本低） |
-| MIG12 | 无 `schemaVersion` 的 panel.json | 旧文件 `{ sessions: {...} }` | 载入时补 `schemaVersion: 2` 并按 MIG6 失效授权；其余字段尽量保留（未知键仍丢弃） | 损坏文件隔离为 `*.corrupt-<ts>`，保留内存旧值（fail-safe） | 无 |
-| MIG13 | 旧文档（README / SKILL / 设计文档）的双模式口径 | 文档仍写双模式、推荐派活、2–4 人 | v0.9.0 同步改单模式/强制 brief/默认 4；显示名保留双名「接力模式（Relay）· 超长任务」并注明为唯一模式；历史设计文档标「已被 v0.9.0 取代」 | 历史文档保留 | 无 |
-| MIG14 | 卸载即净 | 插件卸载后的持久记录 | 明确注销 preset / skills / HTTP 路由 / 工具 / 投影 / 哨兵；**保留**用户数据（panel.json / settings.json）与工作区 `.scratch/context-relay/**`（handoff、报告、架构文档、progress、lessons、chain、work-items、team） | 卸载后数据可读、可用文本编辑器清理 | 无 |
+| # | 对象 | 0.8.x 旧形态 | v0.10.0 现状 | 升级动作 |
+|---|---|---|---|---|
+| MIG1 | classic preset / 旧会话 | preset id `relay`（双模式之一，与 `relay-long` 并存） | classic 别名**已删除**，只注册 `relay-long`；旧 classic 会话打开后不挂 relay 平面 | 打开旧会话 → 模式选择器选「接力模式（Relay）· 超长任务」自动回填 Lead 平面（也可新建会话；见 MIG9） |
+| MIG2 | 面板授权（panel.json） | `schemaVersion=2` 或更早；`autoCompress`/`autoHandoff`/`authorizeNext` 可能有效 | `schemaVersion=3`；**旧文件载入时一次性失效全部会话授权**（不可逆），模式/架构师/预算无上限等非授权字段保留 | 打开面板重新开启需要的自动授权；一次授权只对当前会话+操作+版本有效 |
+| MIG3 | 面板隐藏档 `compress-then-handoff`（cth） | 旧面板快照/侧栏默认可能是该档 | 枚举删除；旧值读入归一为 `null`（问我） | 无数据动作；到线时按新模式选择继续方式 |
+| MIG4 | `autoChoose` / `autoDecision` / `handoffPreset` | 面板开关 / 字段 / PUT 白名单 | 字段与语义全部删除，PUT 不再接受，旧值丢弃；交接目标恒为唯一模式 | 无需动作（旧值不再生效） |
+| MIG5 | legacy `config.thresholds`（0.35/0.40/0.50 旧基准） | 部署显式配置的旧比例线，无界面设置时生效 | 删除；阈值唯一来源 = `settings.threshold`（默认 35），四档由基准派生 | 把旧基准换算为 `settings.threshold`（旧 organize 线 ×100），或在侧栏插件卡改基准 |
+| MIG6 | `routerMode` / `legacyPresetCompat` / `presetId` 双 id | 双模式开关与两个 preset id 配置 | 删除；唯一模式 id = `longPresetId`（默认 `relay-long`，未配时由 `presetId` + `-long` 派生） | 删除旧配置键；需要自定义 id 时只配 `longPresetId` |
+| MIG7 | `relay_phase` 的 `next_operation` | 旧入参（早已被忽略，仍写入面板） | schema 删除；下一步只走台账条目 `next` 字段 | 改用 `relay_work_items` 维护 `next` |
+| MIG8 | 用户门 / 协议 | `contract_check` 每次切 phase 必填；无设计门；无验收分级 | **两段式用户门**：首次进 build 必须带 `design_gate{path,user_approved:true}`；`contract_check` 只在 ship 必填；ship 的 `user_gate.verification` 分 `minimal`/`heavy`，heavy 须用户明确授权；实现↔设计对齐改为与验收并行的独立审查 | 无数据动作；按新协议工作（首次实现任务先出设计稿交用户确认） |
+| MIG9 | preset 切换口径 | 旧文档要求「新建会话时选模式 / 切换需新会话」，首轮前切换会静默失效（M-02） | 修复：首轮前或会话中切到 Relay 都会由声明式 reconcile 回填 Lead 平面（`relay_status.plane` 自检） | 旧会话无需重建；切一次 preset 即生效 |
+| MIG10 | 台账语义 | 同 phase 传 `items` 静默丢弃；`phase:null` 条目可绕过 strict 关闸；`GET /context-relay/work-items` 可能触发惰性迁移写盘 | 同 phase 传 `items` **显式拒绝零副作用**；`phase=null` 视同当前 phase 纳入关闸；GET 纯只读；ship 出口可恢复；`next_operation` 删除 | 无数据迁移；行为收紧，按新契约用 `relay_work_items` 补分点 |
+| MIG11 | handoff 定时任务盘点 | 旧 `schedule.list()` 数组 + `delete/create` 迁移（rc.2 下 preflight 恒拒） | 按 rc.2 Host-wide target：`list()` 分页 `.items`、`edit({action:'update',patch:{target}})` 保留投递史；形状不符降级 N/A + warn，不拒绝交接 | 无需动作；旧定时任务在新形状下可盘点/迁移 |
+| MIG12 | 面板 / notice 行为细节 | 双 4s 轮询；`[闭环]` 由 bash 等变更类工具触发；只读 `relay_work_items` 会清 pending；notice 先记后投递、target 含命令片段 | 单轮询器并行 2 GET；`[闭环]` 只认 write/edit/apply_patch；只读工具不清 pending；**投递成功后才记**去重键；target 首行 + 脱敏；压缩后复位去重 | 无需动作（行为改善） |
+| MIG13 | 工作区级台账 / 团队旧分区 | `.scratch/context-relay/work-items.json`、无 Lead 会话分区的 `team/<lineage>/` | 会话级台账仍是主路径；旧 workspace 台账读取时 best-effort 同步（GET 不再触发写），旧 team 分区只读回退——两者长期保留、不迁移 | 无需动作；旧文件保留，可人工清理 |
+| MIG14 | 卸载即净 | 卸载后的持久记录 | 不变：注销 preset / skills / HTTP 路由 / 工具 / 投影 / 哨兵；**保留**用户数据与工作区记录 | 需要清理时先备份，再人工删除 |
 
-## 3. 保留（不迁移）对象
+## 3. 升级步骤
 
-以下对象与模式退役无关，不进入迁移动作：progress / lessons / chain / handoff 文件、reports 与 architecture 文档、scheduled tasks / jobs（交接清理逻辑已覆盖）、architect roster 记录。它们不自动改写、不自动删除。
+1. **备份（可选但推荐）**：`~/.dsh/data/dsh-context-relay/panel.json` 与 `settings.json`；有进行中的长任务时，先让它完成或在旧版本上 `relay_handoff`。
+2. **升级插件**：按 README 安装方式卸载重装新版（或 `dsh plugin --profile web add dsh-context-relay@0.10.0`），重启/重载 profile、刷新页面。
+3. **重新授权**：旧 `panel.json` 首次载入即失效全部会话授权；打开面板重新选择到线处理方式、按需开启自动授权（模式与架构师设置已保留）。
+4. **清理旧配置**：部署配置里如显式写了 `thresholds` / `routerMode` / `legacyPresetCompat` / classic `presetId`，删除它们；阈值改配 `settings.threshold`（或 `threshold`），自定义 preset id 只配 `longPresetId`。
+5. **旧 classic 会话**：打开后在模式选择器切换到「接力模式（Relay）· 超长任务」，Lead 平面会自动回填；不想迁移旧上下文就直接新建接力会话。
+6. **验证**：新建或切换一个接力会话，确认状态条出现；`relay_status.plane.installed=true` 说明平面装好（`degradations` 非空时按提示检查内核 seam）。
+7. **数据保留**：旧交接/报告/进度/团队记录等不自动删除；需要清理时先备份再人工归档。
 
-## 4. 升级、回滚与卸载
+## 4. 回滚
 
-**升级步骤**
+- 代码回退到 0.8.x 后：新 panel.json 的 `schemaVersion=3` 会被旧代码当作未知版本/未知键处理——会话记录仍在，但**授权已被清空（不可逆）**，回滚后需用户重新授权；v0.10.0 期间写入的 `defaultOperation` 三档在旧版仍可识别。
+- 协议/工具面按旧版代码运行；旧会话内容不受影响。数据文件不丢，回滚不需要额外迁移。
 
-1. 升级插件后，旧会话仍可打开（classic 别名在迁移期保持同行为）。
-2. 新建会话时选择唯一模式「接力模式（Relay）· 超长任务」。
-3. 面板授权（自动压缩/自动交接/一次免审）在版本/会话变更后失效，按需重新开启。
-4. 部署若显式配置了旧 `thresholds`，按 warn 提示迁移到 `settings.threshold`。
-5. 旧数据文件不自动清理；需要时人工归档或删除。
+## 5. 保留（不迁移）对象
 
-**回滚**
+以下对象不进入迁移动作：`progress.md` / `lessons.md` / `chain.ndjson` / `handoff-*.md`、`reports/` 与 `architecture/` 文档、台账归档、archived chain/lessons 指针、scheduled tasks / jobs、architect roster 记录。它们不自动改写、不自动删除。
 
-代码回退后，带 `schemaVersion` 的新 panel.json 会被旧版代码丢弃未知顶层键（sessions 仍在）→ 行为回退但数据不丢。授权字段可能已被清空（不可逆），回滚后需用户重新授权。
+## 6. 卸载
 
-**卸载**
-
-卸载注销 preset / skills / HTTP 路由 / 工具 / 投影 / 哨兵；保留用户数据（panel.json / settings.json）与工作区 `.scratch/context-relay/**`。插件不自动删除数据；需要清理时先备份，再用文本编辑器人工删除。
+卸载注销 preset / skills / HTTP 路由 / 工具 / 投影 / 哨兵；保留用户数据（`panel.json` / `settings.json`）与工作区 `.scratch/context-relay/**`。插件不自动删除数据；需要清理时先备份，再用文本编辑器人工删除。

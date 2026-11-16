@@ -2,9 +2,64 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
-## v0.9.0 (unreleased)
+## v0.10.0 (2026-11-16)
 
-尚未发布，package version 保持 0.8.1，不 bump。
+「完整形态」交付：以 2026-11-16 全面审计的 2 P0 / 5 P1 / 14 P2 为主线，完成结构性重塑（声明式 agent 平面 / 官方 seam 契约层 / 单一持久化 / 策略单源 / notice 规划投递分层 / 两段式用户门）与**兼容债一次删净**。基线 v0.8.1；v0.9.0 未单独发布，其批次 1–4 内容并入本版（历史段保留于下方）。
+
+### 破坏性变更（升级前必读）
+
+- **panel.json `schemaVersion` 2 → 3**：旧面板文件载入时**一次性失效**会话授权（`autoCompress` / `autoHandoff` / `authorizeNext`），模式与架构师设置保留；用户需重新开启自动授权（不可逆，回滚不恢复）。
+- **兼容路径删除**（v0.9.0 迁移期结束）：classic `relay` 别名（旧 classic 会话不再挂 relay 平面，切一次 preset 即回填）、`routerMode`、`legacyPresetCompat`、legacy `config.thresholds`（阈值唯一来源 = `settings.threshold`）、面板 `compress-then-handoff`/`autoChoose`/`autoDecision`/`handoffPreset`、`relay_phase` 入参 `next_operation`（改用台账 `next`）、`PROTOCOL_TEXT_LONG` 派生文本。`lib/` 加 compat-grep 防回潮（退役标识出现即测试红）。
+- **协议两段式用户门**：首次进 build 强制 `design_gate{path,user_approved:true}`（缺失零副作用拒绝）；`contract_check` 由「每次切 phase 必填」降为 **ship 必填**；ship 新增 `user_gate.verification{tier:minimal|heavy,approved_by_user?,items[]}`，`heavy` 无用户授权即拒；实现↔设计对齐改为与验收并行的新上下文独立审查。
+- **preset 切换口径变更（M-02）**：旧文档「切换需新会话」失效——首轮前/会话中切到 Relay 均会由声明式 reconcile 自动回填 Lead 平面（`agent/created` + 启动回填 + `agent-preset/selected` + 每步惰性兜底），`relay_status.plane` 可自检。
+- **notice 语义变更（C4）**：`[闭环]` 只认 write/edit/apply_patch（只读 bash 不再触发）；只读 `relay_work_items` 不再清 pending；notice 投递成功后才记去重键；正文统一脱敏、闭环 target 只取首行；队友 notice 不再带 Lead 台账行；官方压缩后去重状态复位。
+- **台账语义收紧（C7）**：`relay_phase` 同 phase 传 `items` 显式拒绝（零副作用，补分点用 `relay_work_items` 或下次跨 phase 带）；`phase=null` 条目纳入 strict 关闸；`GET /context-relay/work-items` 纯只读（不再触发旧 workspace 台账惰性迁移写盘）；ship→blocked/cancel 后可恢复回 ship（其余仍只能 verify→ship）。
+- **工具面与文档**：`relay_status` 新增 `plane`/`delegation` 事实；SKILL/README 中英、DESIGN、MIGRATION、ARCHITECTURE 全部对齐 v0.10.0（新增 tracked `docs/design/ARCHITECTURE.md`）。
+
+### P0（阻断核心链路）
+
+- **M-01 handoff 定时任务 seam 迁移 rc.2**：`schedule.list()` 分页对象（`.items`）、迁移用 `edit({action:'update',patch:{target}})` 保留投递史（不再 create/delete）、形状不符降级 N/A+warn 而不再 preflight 拒绝交接；补 rc.2 形状契约测试。
+- **M-02 preset 切换/热重载后既有 root Lead 平面不安装**：新增 `lib/plane/roles.js`（角色→deny/sections/tools/seed 单一真源）+ `lib/plane/ensure.js`（幂等 reconcile / 状态 / 反向卸载），四入口回填；平面状态进 `relay_status.plane{role,installed,degradations}`。
+
+### P1
+
+- **M-03 闭环误报**：只认真正写文件的工具（write/edit/apply_patch）；只读 work_items 不清 pending；notice target 首行 + 凭据脱敏。
+- **M-04 持久化绕过原子写/锁**：新增 `lib/storage.js`（异步退避锁、原子写、journal 恢复、凭据收紧），progress / work-items / team-context / panel / settings / chain / lessons / team 收敛；M-20 `Atomics.wait` 同步睡眠删除。
+- **M-05 freshen/reset 结果静默**：成功/回退/失败都注入结果 notice；`relay_team_status` 汇总 reset 结果。
+- **M-06 collect 回执新鲜度**：dispatchId 落盘 `.scratch/context-relay/dispatch/`，collect 校验回执头 `task==itemId` 与 `revision==dispatchId`；reload 丢内存可观测。
+- **M-07 npm 发布闸门**：release/workflow_dispatch/push tag 三触发全路径校验 tag==version 并失败退出、已发布只 skip 时告警、加 concurrency；新增 `ci.yml`（固定 dsh@0.2.2-rc.2、`DSH_SEAM_REQUIRED=1` 把缺包 skip 变 fail、test+check+`npm pack --dry-run` 断言）。
+
+### P2（含结构性改造）
+
+- **M-08 凭据过滤误杀**：只匹配已知凭据前缀 + 高熵值，错误带命中字段，不再误拒正常文本。
+- **M-09 注入预算扩容**：15 工具逐条 desc/params + 4 角色（lead/teammate/architect/worker）**装配实测**快照断言，防注入面回涨。
+- **M-10 台账静默丢失/闸门绕过**：见上方「台账语义收紧」。
+- **M-11 注入去重生命周期**：notice 拆为规划（纯函数 `planNotices`）+ 投递（`deliverPlan`）；投递成功后才 claim；边界 notice 两段式确认落盘；压缩后复位。
+- **M-12 队友 notice 教用被裁工具**：队友稿删除 Lead 台账行（工具面也没有 `relay_work_items`）。
+- **M-13 面板 dirty 丢失**：正常载入时保留未落盘 dirty 记录并合并重试写。
+- **M-14 指标缺失**：`bandFor` 显式返回 `unavailable` + 一次性保守提示，不静默当 ok。
+- **M-15 CI 保真**：9 个官方 seam 契约测试 + 固定内核 CI；`DSH_SEAM_REQUIRED=1` 使 skip=fail。
+- **M-16 文档真源**：README/README.en/SKILL/DESIGN/MIGRATION/CHANGELOG 与 v0.10.0 对齐；关键架构入 tracked `docs/design/ARCHITECTURE.md`；SKILL 删除 rc.2 不存在的 `spawn_teammate` 等旧引用；统一 preset 切换口径。
+- **M-17 架构重复**：policy 单源（`resolveEffectiveThresholds` / `panelDefaultsOf` / 操作标签/常量下沉），host/agent/client 只消费；client 常量契约测试。
+- **M-18 兼容债删除**：见上方「破坏性变更」。
+- **M-19 PTC 通道披露**：README/README.en 的「安全边界与代价」「已知限制」补「`run_code` 内层是执行软约束，插件不做通道守卫，不承诺硬隔离」。
+- **M-21 notice 持久化片段**：notice target 首行 + 凭据脱敏后才进入会话历史/UI。
+- **C 子域**：handoff seam 契约测试、collect task/revision 校验、reset 结果可见、`relay_team_status` 签名补 deeper（孙代理数）、client 双 4s 轮询合并为单轮询器并行 2 GET、client 常量契约；work-items GET 只读。
+- **D 子域**：策略单源/去重、9 seam 覆盖、CI 发布硬化、层级与依赖清理；只支持 DSH 0.2.2-rc.2。
+
+### 工具面与命令现状
+
+- 共 15 个工具：7 常驻（`relay_status` / `relay_phase` / `relay_organize` / `relay_handoff` / `relay_work_items` / `relay_recommend` / `relay_doc`）+ `doc_lint` + Lead 专属 5（`relay_team_status` / `relay_renew` / `relay_architect` / `relay_dispatch` / `relay_collect`）+ 队友/架构师 2（`relay_checkpoint` / `relay_freshen`）。
+- `npm run check` 补上漏列的 `lib/agent/reset.js`、`lib/lessons.js`；npm 发布包 `files` 增补 `docs/`（README 相对链接可解析）。
+
+### 验证与未验证
+
+- `npm run check` exit 0；`node --test test/*.test.mjs` 全绿（CI 固定内核另跑全量 + pack 断言）；目标模块测试 + 单次独立 diff 审查为本次最小验收口径。
+- 未验证（发布门待办）：M-02 的 preset 切换/插件热重载**真机**路径、M-01 真机小额度 handoff、M-11 依赖宿主自动压缩的压缩复位、M-20 并发锁真机效果——均按两段式门与重型验证授权表在用户授权后执行。
+
+## v0.9.0（历史快照，未发布，内容并入 v0.10.0）
+
+> v0.9.0 未单独发布，批次 1–4 的行为已随 v0.10.0 交付；本节保留当时的验收口径与未验证项供追溯，其中「v0.10.0 将删除」的兼容项现已全部执行。
 
 批次4（注入削减 B 档：P1 高频注入去重 / P2 relay_phase 结果摘要化 / P3 协议文本去重）：
 
