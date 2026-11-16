@@ -13,6 +13,7 @@ import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
+import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const HANDOFF_KEY = Symbol.for('dsh-context-relay.handoffs');
@@ -888,6 +889,44 @@ test('reminders: 模块重建靠持久 notice seed；同模块多实例共享 la
   await preStepListener(applyAgent(servicesB).events)({ agent: agentB }, async () => undefined);
   assert.equal(injectedB.length, 0, 'shared fired map suppresses duplicate warn');
   assert.ok(stateA.pressure.projectedTokens > 0);
+});
+
+test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重新提示（C15/§5）', async () => {
+  resetSharedState();
+  clearPlaneMemory();
+  const cwd = tmpCwd();
+  const log = [];
+  const session = fakeSession({ id: 'session-plane-degraded', cwd, log });
+  const { services } = fakeServices({ session });
+  const listener = preStepListener(applyAgent(services).events);
+  const injected = [];
+  // 平面 reconcile 失败（agent.ctx.inject 抛错）→ installed=false + tools/systemPrompt 降级记录。
+  const agent = {
+    session,
+    ctx: { inject() { throw new Error('agent.ctx unavailable'); } },
+    inject(message) { injected.push(message); },
+  };
+  assert.equal(ensureAgentPlane(agent, {}).installed, false);
+  const step = () => listener({ agent }, async () => undefined);
+  await step();
+  assert.equal(injected.length, 1, '首步注入一条平面降级 notice');
+  const message = injected[0];
+  assert.equal(message.source.form, 'notice');
+  assert.match(message.source.summary, /平面\/seam 降级/);
+  const text = message.content[0].text;
+  assert.match(text, /平面\/seam 降级（插件 notice，非用户发言）/);
+  assert.match(text, /seam tools/, '列 seam 名：tools');
+  assert.match(text, /seam systemPrompt/, '列 seam 名：systemPrompt');
+  assert.match(text, /agent\.ctx unavailable/, '列降级原因');
+  assert.match(text, /relay_status\.plane/, '指向自检通道');
+  await step();
+  assert.equal(injected.length, 1, '同压缩周期只提示一次');
+  // 压缩复位：compactionSeq 上升 → deliver 清 LEDGER_GUARD → 重新提示。
+  log.push({ type: 'compaction/end', seq: 1, data: { compactionId: 'c1', turn: 1 } });
+  await step();
+  assert.equal(injected.length, 2, '压缩后重新提示（guard 已复位）');
+  assert.match(injected[1].content[0].text, /平面\/seam 降级/);
+  clearPlaneMemory();
 });
 
 test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent wording branches', async () => {

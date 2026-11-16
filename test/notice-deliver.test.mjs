@@ -195,6 +195,17 @@ test('压缩复位（A-04/M-11）：compactionSeq 上升 → band 重新武装 +
   clearNoticeMemory();
 });
 
+test('压缩复位清 planeSig：平面降级 guard 被压缩遮蔽 → 下一步重新提示（C15/§5）', () => {
+  resetSharedState();
+  const sessionId = 'session-compaction-plane';
+  LAST_BAND.set(sessionId, { band: 'ok', compactionSeq: -1 });
+  LEDGER_GUARD.set(sessionId, { planeSig: JSON.stringify(['lead', false, [['tools', 'degraded', 'x']]]) });
+  const armed = armedBandOf(sessionId, { lastCompactionSeq: 5 });
+  assert.equal(armed.reset, true);
+  assert.equal(LEDGER_GUARD.has(sessionId), false, '压缩后平面降级 guard 一并复位');
+  clearNoticeMemory();
+});
+
 // ── 采集/编排集成（apply 装配 + 真实 pre/post 监听） ─────────────────────
 
 test('M-03/B-02：只读 bash/pwsh 成功不再触发 [闭环]；write/edit 才记「改动未落账」', async () => {

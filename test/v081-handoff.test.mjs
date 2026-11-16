@@ -96,3 +96,18 @@ test('v081 fix: completed action fsync failure stops later schedule migration',a
  assert.equal(injected,true);assert.equal(r.code,'handoff-cleanup-failed');assert.ok(h.calls.includes('kill'));assert.ok(!h.calls.includes('schedule-edit'));assert.match(JSON.stringify(r.recovery),/post-action fsync injected/);assert.match(JSON.stringify(r.recovery),/killed/);
 });
 
+// ── C15（REVIEW-IMPL 缺口2/3）：可选盘点抛错降级 + schedule_conflict 重读重试 1 次 ──
+test('v081 C15: schedule.list 抛错降级 skipped=N/A+warn，不触发 preflight fail（缺口3）',async()=>{
+ const h=harness();h.services.jobs=undefined;h.services.schedule={async list(){throw new Error('schedule storage boom');},async edit(){throw new Error('must not migrate');}};
+ const r=await h.run();assert.equal(r.ok,true,JSON.stringify(r));assert.ok(r.handover.inventory.skipped.includes('schedule'));assert.deepEqual(r.handover.inventory.errors,[]);assert.deepEqual(r.handover.inventory.schedules,[]);assert.deepEqual(r.handover.cleanup.schedules,[]);assert.match(r.summary,/定时任务 N\/A/);assert.ok(h.calls.includes('create'),'交接仍建新会话');
+});
+test('v081 C15: schedule_conflict → 重读一次带最新 updatedAt 重试 edit，成功记 transferred（缺口2）',async()=>{
+ const h=harness();h.services.jobs=undefined;const edits=[];const views=[];let n=0;
+ h.services.schedule={async list(){return page([task('s','old')]);},async view(q){views.push(q);return task('s','old',{updatedAt:'2026-11-16T01:00:00.000Z'});},async edit(q){edits.push(q);n+=1;if(n===1)return {id:'s',code:'schedule_conflict'};return task('s',q.patch.target.sessionId);}};
+ const r=await h.run();assert.equal(r.ok,true,JSON.stringify(r));assert.deepEqual(views,[{id:'s'}]);assert.equal(edits.length,2);assert.equal(edits[1].expectedUpdatedAt,'2026-11-16T01:00:00.000Z');assert.equal(r.handover.cleanup.schedules[0].action,'transferred');assert.deepEqual(r.handover.cleanup.errors,[]);
+});
+test('v081 C15: schedule_conflict 重试仍冲突 → 清理失败留 recovery，只重试 1 次（缺口2）',async()=>{
+ const h=harness();h.services.jobs=undefined;const edits=[];h.services.schedule={async list(){return page([task('s','old')]);},async view(){return task('s','old',{updatedAt:'2026-11-16T01:00:00.000Z'});},async edit(q){edits.push(q);return {id:'s',code:'schedule_conflict'};}};
+ const r=await h.run();assert.equal(r.code,'handoff-cleanup-failed');assert.equal(edits.length,2,'只重试 1 次（共 2 次 edit）');assert.match(JSON.stringify(r.recovery),/schedule_conflict/);assert.equal(r.handover.cleanup.schedules[0].action,'pending');
+});
+

@@ -70,7 +70,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 - 交接 = 摘要 + 完整文件：新会话注入有界摘要，完整交接单永远完整落盘、首条消息给路径；不因超长拒绝交接。
 - 交接分阶段：①预检（文档/参数齐全）失败零副作用；②写完整交接文档；③建新会话并注入摘要；④新会话确认接管后逐步停旧活（停队友/取消后台任务/迁移定时任务），每步有逆操作与恢复点；孤儿会话必须清理或复用。
 - 交接前先写文档（phase brief、进度、决策、证据），文档没写完不交接。
-- 交接清理与定时任务迁移走官方 seam；rc.2 schedule 形状不符时只降级 N/A + warn，不拒绝交接（不再 preflight 恒拒）。
+- 交接清理与定时任务迁移走官方 seam；rc.2 schedule 形状不符或 `list()` 抛错时只降级 N/A + warn，不拒绝交接（不再 preflight 恒拒）；`schedule_conflict` 重读任务后重试 `edit` 至多 1 次。
 - 面板模式是会话本地状态，不随接力继承：新会话默认「压缩继续」，接力 chip 只决定新会话装配。
 - 新会话先读滚动 progress 与 brief 索引，再按需取正文，不整篇重读历史。
 
@@ -134,7 +134,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 ### 4.12 失败、并发与安全
 
-- 官方 seam 契约层：9 个官方 seam（preset/agents/tools/systemPrompt/compaction/projections/schedule/wipe/team）启动做形状断言；不符 → 降级 N/A + warn 进 `relay_status.plane.degradations`，不静默 fail-open。
+- 官方 seam 契约层：9 个官方 seam（preset/agents/tools/systemPrompt/compaction/projections/schedule/wipe/team）都有测试层形状断言；生产接线现状 4/9——tools/systemPrompt 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice，schedule/team 在调用点降级 N/A + warn；其余 5 个 seam 的生产接线留 v0.11。不符 → 降级并如实报，不静默 fail-open。
 - 单写者与原子写：写盘用 temp+rename 原子替换 + 跨进程异步锁 + journal 恢复；修订冲突检测；崩溃后可恢复，不留半成品。
 - 错误与操作契约：预检/校验失败零副作用；执行阶段失败可部分成功，但必须记录「操作 id、阶段、失败码、已发生效果、恢复点、归属」并给恢复动作。
 - 降级与恢复：底层服务不可用/磁盘失败时降级运行并如实报，进入恢复点，不静默继续。
@@ -143,7 +143,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 ### 4.13 官方 seam 契约（v0.10.0）
 
-只依赖 DSH 0.2.2-rc.2 的官方 seam，启动时逐个做形状断言；服务缺失/形状不符 → 降级 N/A + warn（写入 `relay_status.plane.degradations` 与首步 notice），不静默 fail-open、不拒绝会话。
+只依赖 DSH 0.2.2-rc.2 的官方 seam：已接线的 seam 做形状断言/能力探测（生产接线现状 4/9，其余见 v0.11）；服务缺失/形状不符 → 降级 N/A + warn（tools/systemPrompt 写入 `relay_status.plane.degradations` 并经首步 notice 可见，每压缩周期一次），不静默 fail-open、不拒绝会话。
 
 | seam | 用途（relay 侧） | 形状不符时 |
 |---|---|---|

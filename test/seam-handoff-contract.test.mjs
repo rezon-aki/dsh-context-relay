@@ -199,10 +199,14 @@ test('seam: edit 返回的 target 未指向新会话时清理失败（不假记 
   assert.equal(r.handover.cleanup.schedules[0].action, 'pending');
 });
 
-test('seam: schedule 调用抛错（非形状）仍记 inventory errors 并拒绝 preflight（零副作用）', async () => {
-  const h = harness({ schedule: { async list() { throw new Error('schedule storage boom'); }, async edit() {} } });
+test('seam: 可选盘点 list() 抛错降级 N/A+warn，不记 errors、不拒绝 preflight（C15 缺口3）', async () => {
+  const h = harness({ schedule: { async list() { throw new Error('schedule storage boom'); }, async edit() { throw new Error('must not migrate after skipped inventory'); } } });
   const r = await h.run();
-  assert.equal(r.code, 'handoff-preflight-failed');
-  assert.equal(r.handoffPath, undefined);
-  assert.match(JSON.stringify(r.recovery), /schedule storage boom/);
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.ok(r.handover.inventory.skipped.includes('schedule'));
+  assert.deepEqual(r.handover.inventory.errors, [], '可选盘点抛错不得计入 errors（否则会 preflight fail）');
+  assert.deepEqual(r.handover.inventory.schedules, []);
+  assert.deepEqual(r.handover.cleanup.schedules, []);
+  assert.ok(h.warns.some((message) => /schedule inventory unavailable/i.test(message) && /N\/A/i.test(message)), h.warns.join(' | '));
+  assert.match(r.summary, /定时任务 N\/A/);
 });

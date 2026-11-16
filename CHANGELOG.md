@@ -28,7 +28,7 @@
 - **M-04 持久化绕过原子写/锁**：新增 `lib/storage.js`（异步退避锁、原子写、journal 恢复、凭据收紧），progress / work-items / team-context / panel / settings / chain / lessons / team 收敛；M-20 `Atomics.wait` 同步睡眠删除。
 - **M-05 freshen/reset 结果静默**：成功/回退/失败都注入结果 notice；`relay_team_status` 汇总 reset 结果。
 - **M-06 collect 回执新鲜度**：dispatchId 落盘 `.scratch/context-relay/dispatch/`，collect 校验回执头 `task==itemId` 与 `revision==dispatchId`；reload 丢内存可观测。
-- **M-07 npm 发布闸门**：release/workflow_dispatch/push tag 三触发全路径校验 tag==version 并失败退出、已发布只 skip 时告警、加 concurrency；新增 `ci.yml`（固定 dsh@0.2.2-rc.2、`DSH_SEAM_REQUIRED=1` 把缺包 skip 变 fail、test+check+`npm pack --dry-run` 断言）。
+- **M-07 npm 发布闸门**：release/workflow_dispatch/push tag 三触发全路径校验 tag==version 并失败退出、已发布只 skip 时告警、加 concurrency；新增 `ci.yml`（固定 dsh@0.2.2-rc.2、缺包 skip 由 CI 对 reporter「skipped」汇总断言兜底——`DSH_SEAM_REQUIRED=1` 为语义开关，测试侧未消费；test+check+`npm pack --dry-run` 断言）。
 
 ### P2（含结构性改造）
 
@@ -39,7 +39,7 @@
 - **M-12 队友 notice 教用被裁工具**：队友稿删除 Lead 台账行（工具面也没有 `relay_work_items`）。
 - **M-13 面板 dirty 丢失**：正常载入时保留未落盘 dirty 记录并合并重试写。
 - **M-14 指标缺失**：`bandFor` 显式返回 `unavailable` + 一次性保守提示，不静默当 ok。
-- **M-15 CI 保真**：9 个官方 seam 契约测试 + 固定内核 CI；`DSH_SEAM_REQUIRED=1` 使 skip=fail。
+- **M-15 CI 保真**：9 个官方 seam 契约测试 + 固定内核 CI；缺包 skip 由 CI 对 reporter「skipped」汇总断言兜底（`DSH_SEAM_REQUIRED=1` 为语义开关，测试侧未消费）。
 - **M-16 文档真源**：README/README.en/SKILL/DESIGN/MIGRATION/CHANGELOG 与 v0.10.0 对齐；关键架构入 tracked `docs/design/ARCHITECTURE.md`；SKILL 删除 rc.2 不存在的 `spawn_teammate` 等旧引用；统一 preset 切换口径。
 - **M-17 架构重复**：policy 单源（`resolveEffectiveThresholds` / `panelDefaultsOf` / 操作标签/常量下沉），host/agent/client 只消费；client 常量契约测试。
 - **M-18 兼容债删除**：见上方「破坏性变更」。
@@ -55,7 +55,7 @@
 
 ### 验证与未验证
 
-- `npm run check` exit 0；`node --test test/*.test.mjs` 全绿（CI 固定内核另跑全量 + pack 断言）；目标模块测试 + 单次独立 diff 审查为本次最小验收口径。
+- `npm run check` exit 0；受影响面集成回归 746/746（本地；本轮改动/新增的 40 个测试文件）；全量矩阵与真机验证留发布门（需用户授权，未跑）；目标模块测试 + 单次独立 diff 审查为本次最小验收口径。
 - 未验证（发布门待办）：M-02 的 preset 切换/插件热重载**真机**路径、M-01 真机小额度 handoff、M-11 依赖宿主自动压缩的压缩复位、M-20 并发锁真机效果——均按两段式门与重型验证授权表在用户授权后执行。
 
 ## v0.9.0（历史快照，未发布，内容并入 v0.10.0）

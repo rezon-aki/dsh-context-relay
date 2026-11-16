@@ -38,6 +38,7 @@
 | team | `capabilitiesOf(ctx)`：kind=subagents + 核心能力清单 | 团队面降级、不注册队友工具 |
 
 契约：探测**只读、永不抛错**；服务缺失或形状不符时降级为 N/A + warn，并写入 `relay_status.plane.degradations` 与首步 notice——**不静默 fail-open，也不因此拒绝会话**。
+生产接线现状：`tools`/`systemPrompt` 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice（sentinel 采集 `planeStatusOf`，每压缩周期一次）；`schedule` 在 handoff 内断言方法/分页形状、`team` 经 `capabilitiesOf` 能力探测，二者在调用点降级 N/A + warn（不进 plane 降级通道）；其余 5 个 seam 的生产形状断言留 v0.11（当前只有测试层契约断言）。
 
 ## 3. agent 平面与 preset 切换（M-02）
 
@@ -65,7 +66,8 @@
 ## 6. notice 流水线（C4）
 
 - 采集（sentinel）→ `planNotices(facts)`（纯函数，每 step 0/1 条，正文 ≤900 字符）→ `deliverPlan`（**投递成功后**才 claim 去重键；失败下一步重试）。
-- 去重生命周期：到线档位、容量 used、面板签名、边界 `previous→phase`（出现序号）、闭环签名；`compactionSeq` 上升 → 压缩复位（band 重新武装 + 清 `LEDGER_GUARD` / `BOUNDARY_NOTICES`）。
+- 去重生命周期：到线档位、容量 used、面板签名、边界 `previous→phase`（出现序号）、闭环签名、平面降级签名（`planeSig`）；`compactionSeq` 上升 → 压缩复位（band 重新武装 + 清 `LEDGER_GUARD` / `BOUNDARY_NOTICES`）。
+- 平面/seam 降级（`planeStatusOf` 的 installed=false 或 degradations 非空）→ 每压缩周期一次 notice，列 seam 名与原因并指向 `relay_status.plane`。
 - `[闭环]` 只认 `write`/`edit`/`apply_patch`；只读工具不清 pending；闭环 target 只取首行并过凭据脱敏；队友稿不带 Lead 台账行；band=unavailable 给一次性保守提示。
 
 ## 7. phase、台账与两段式用户门（C7/C9）
@@ -83,7 +85,7 @@
 
 ## 9. 交接与 handoff（M-01）
 
-分段执行：预检（零副作用）→ 写完整交接文档 → 建新会话并注入有界摘要 → 新会话确认接管后逐步停旧活（停队友 / 取消后台任务 / 迁移定时任务），每步有恢复点。rc.2 的 schedule seam 按 Host-wide target 语义：`list()` 取分页 `.items`，迁移用 `edit({action:'update', patch:{target}})` 保留投递史；形状不符只降级 N/A + warn，不拒绝交接。
+分段执行：预检（零副作用）→ 写完整交接文档 → 建新会话并注入有界摘要 → 新会话确认接管后逐步停旧活（停队友 / 取消后台任务 / 迁移定时任务），每步有恢复点。rc.2 的 schedule seam 按 Host-wide target 语义：`list()` 取分页 `.items`，迁移用 `edit({action:'update', patch:{target}})` 保留投递史；形状不符或 `list()` 抛错只降级 N/A + warn，不拒绝交接；`schedule_conflict` 用 rc.2 `view`（退回 catalog/分页 list）重读后带最新 `updatedAt` 重试 `edit` 至多 1 次。
 
 ## 10. 失败、降级与兼容
 
@@ -96,4 +98,4 @@
 
 - `node --test test/*.test.mjs`；`npm run check`（全部入口 `node --check`）。
 - 契约测试：9 个 seam 形状测试 + `compat-grep`（退役标识防回潮）+ client 常量契约 + panel schema 契约。
-- CI：`.github/workflows/ci.yml` 固定 `@deepseek-ai/dsh@0.2.2-rc.2`，`DSH_SEAM_REQUIRED=1` 把缺包 skip 变失败，跑 test + check + `npm pack --dry-run` 断言；发布 workflow 三触发路径都校验 tag == version。
+- CI：`.github/workflows/ci.yml` 固定 `@deepseek-ai/dsh@0.2.2-rc.2`，缺包 skip 由 CI 对 reporter「skipped」汇总断言兜底（`DSH_SEAM_REQUIRED=1` 为语义开关，测试侧未消费），跑 test + check + `npm pack --dry-run` 断言；发布 workflow 三触发路径都校验 tag == version。

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, unavailableNoticeText } from '../lib/agent/notice/plan.js';
+import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, planeIssueOf, unavailableNoticeText } from '../lib/agent/notice/plan.js';
 
 /** C4 notice 规划纯函数：事实 → 本步 0/1 条 notice + track/claims（不碰状态、不注入）。 */
 
@@ -219,4 +219,48 @@ test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条 �
     assert.ok(first.notice === null || first.notice.text.length <= NOTICE_MAX);
     assert.ok(copy !== undefined);
   }
+});
+
+// ── C15/§5：平面降级可见（planeStatusOf → 每压缩周期一次 notice）──────────────
+const DEGRADED_PLANE = { role: 'lead', installed: true, degradations: [{ seam: 'schedule', reason: 'list() did not return the rc.2 page shape', level: 'degraded' }] };
+
+test('planNotices：平面/seam 降级 → 一次性 notice（seam 名+原因+relay_status.plane 指针），claim planeSig', () => {
+  assert.equal(planeIssueOf({ role: 'lead', installed: true, degradations: [] }), null, '健康平面无 issue');
+  const plan = planNotices(facts({ lastBand: 'organize', plane: DEGRADED_PLANE }));
+  assert.equal(plan.notice.kind, 'plane');
+  assert.match(plan.notice.summary, /平面\/seam 降级/);
+  assert.match(plan.notice.text, /平面\/seam 降级/);
+  assert.match(plan.notice.text, /seam schedule（degraded）：list\(\) did not return/);
+  assert.match(plan.notice.text, /relay_status\.plane/);
+  assert.match(plan.notice.text, /每压缩周期提示一次/);
+  assert.equal(typeof plan.claims.guard.planeSig, 'string');
+  assert.ok(plan.notice.text.length <= NOTICE_MAX, 'chars ' + plan.notice.text.length);
+  // installed=false 同样提示（工具裁剪/影子协议段可能未生效）
+  const uninstalled = planNotices(facts({ lastBand: 'organize', plane: { role: 'teammate', installed: false, degradations: [] } }));
+  assert.equal(uninstalled.notice.kind, 'plane');
+  assert.match(uninstalled.notice.text, /平面未装好（role=teammate）/);
+  // 无 plane 事实（未 reconcile/精简句柄）不提示源噪音
+  assert.equal(planNotices(facts({ lastBand: 'organize' })).notice, null);
+});
+
+test('planNotices：平面降级同压缩周期只提示一次；guard 跨台账批次保留，压缩复位（guard 清空）后重新提示', () => {
+  const first = planNotices(facts({ lastBand: 'organize', plane: DEGRADED_PLANE }));
+  const guard = first.claims.guard;
+  const same = planNotices(facts({ lastBand: 'organize', plane: DEGRADED_PLANE, guard }));
+  assert.equal(same.notice, null, '同压缩周期已提示：不重复');
+  assert.equal(same.track.guard.planeSig, guard.planeSig, '台账批次重写 guard 时保留 planeSig（不下一步重发）');
+  const reset = planNotices(facts({ lastBand: 'organize', plane: DEGRADED_PLANE, guard: {} }));
+  assert.equal(reset.notice.kind, 'plane', '压缩复位（deliver 清 LEDGER_GUARD）后重新提示');
+  // 降级事实变化 = 新事件，可再提示一次（签名不同）
+  const changed = planNotices(facts({ lastBand: 'organize', guard, plane: { ...DEGRADED_PLANE, installed: false } }));
+  assert.equal(changed.notice.kind, 'plane');
+});
+
+test('planNotices：更高优先级 notice 同一步不 claim 平面降级（下一步补，不丢事实）', () => {
+  const rising = planNotices(facts({ plane: DEGRADED_PLANE }));
+  assert.equal(rising.notice.kind, 'phase', '到线提醒优先');
+  assert.equal(rising.claims.guard?.planeSig, undefined, '被覆盖时不 claim');
+  const nextGuard = rising.claims.guard ?? rising.track.guard ?? {};
+  const next = planNotices(facts({ plane: DEGRADED_PLANE, lastBand: 'organize', guard: nextGuard }));
+  assert.equal(next.notice.kind, 'plane', '下一步补发平面降级');
 });
