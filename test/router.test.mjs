@@ -287,13 +287,15 @@ test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防�
   // 本条是「文本资产自身」的常量合计预算；C11/A-09 起 root 实际注入量以 apply 装配实测快照为准
   // （test/budget-snapshot.test.mjs 的 ROLE_SNAPSHOT.lead），两者互为交叉校验。
   const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
-  // 批次4 实测 11,324；C9 两段式用户门后 11,331；C10 删退役档协议句后 ≈11,251；预算 11,360/11,000 按设计给定；下限防为预算删过头。
-  assert.ok(resident <= 11360, 'root 常驻合计超预算: ' + resident);
+  // 批次4 实测 11,324；C9 两段式用户门后 11,331；C10 删退役档协议句后 ≈11,251；
+  // v0.10.x 台账完成确认门新增一句后实测 11,452 → 上限按实测+~1% 上调到 11,560；下限 11,000 防删过头。
+  assert.ok(resident <= 11560, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
 
 test('v0.9.0 批次4 P1：WORK_LEDGER 承载注入去重行为说明（P3 新文本）', () => {
-  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.length <= 1690, 'WORK_LEDGER 超预算: ' + WORK_LEDGER_PROTOCOL_TEXT.length);
+  // v0.10.x 台账完成确认门新增一句 → 实测 1,840，预算按实测+~1% 上调到 1,860。
+  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.length <= 1860, 'WORK_LEDGER 超预算: ' + WORK_LEDGER_PROTOCOL_TEXT.length);
   for (const phrase of ['焦点文本变化', 'rev 变化不算', '同一 step 最多一条 notice', '重启后首次汇总一次', '首次派活或档位/状态变化', '后续派活直接放行', '派活判断点（只在首次/状态变化时打断）']) {
     assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺 P1 行为句: ' + phrase);
   }

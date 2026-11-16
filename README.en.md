@@ -167,6 +167,7 @@ Long tasks drift as they run: the agent forgets what it set out to do and how fa
 - At a phase change, unfinished points are closed out or explicitly carried into the next phase.
 - The list travels with compaction and handoff into the new session, so nothing falls through the gap.
 - The chip in the panel shows every item (read-only; editing is done by the agent).
+- **Completion confirmation gate:** before a point moves from not-done to done, the Lead must confirm all three — no drift, nothing missing, no regression — after reviewing the diff, requirements and tests. Missing or incomplete confirmation is refused with `done-gate` (whole-table write, zero side effects); collecting a done receipt via `relay_collect` uses the same rule and returns `confirmation-required` (the item stays not-done, the ledger is unchanged).
 - The ledger is optional: with no ledger file, everything behaves exactly as before. The default cap is 30 items; past that, finished items are archived first.
 
 ## Configuration (optional, advanced)

@@ -167,6 +167,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 - 切阶段时，未完成的项会提醒收口，或明确带到下一阶段；
 - 清单会随压缩/交接带到新会话，不会断档；
 - 面板上的胶囊可以查看全部条目（只读，编辑由 agent 完成）；
+- **完成确认门**：分点从「未完成」改成「已完成」前，Lead 必须确认三项均为 true：无偏移（no_drift）/ 无缺失（no_missing）/ 无回退（no_regression），先复核 diff、需求与测试；缺失或不完整会被 `done-gate` 拒绝（整表零副作用），收口 done 回执走 `relay_collect` 时同口径返回 `confirmation-required`（条目不置 done、台账不变）。
 - 台账是可选的：没有台账时，一切行为和没有它一样。默认上限 30 条，超了先把已完成的归档。
 
 ## 配置（进阶，可选）

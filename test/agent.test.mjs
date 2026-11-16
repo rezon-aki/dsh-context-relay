@@ -158,19 +158,26 @@ function tmpCwd() {
   return mkdtempSync(join(tmpdir(), 'relay-test-'));
 }
 
+/** v0.10.x 完成确认门：新变 done 的条目必须带三项均 true 的 lead_confirm。 */
+const LEAD_CONFIRM = { no_drift: true, no_missing: true, no_regression: true };
+
 /** v0.9.0 批次3：写一份台账（scope=根会话 id；默认 build/done），用于委派闸门/集成测试。 */
 async function seedRelayLedger(cwd, scopeId, items) {
   const result = await writeWorkItems(cwd, {
-    items: items.map((item) => ({
-      id: item.id,
-      title: item.title ?? item.id,
-      status: item.status ?? 'done',
-      owner: item.owner ?? null,
-      next: item.next ?? null,
-      blocked: item.blocked ?? null,
-      evidence: item.evidence ?? [],
-      phase: item.phase ?? 'build',
-    })),
+    items: items.map((item) => {
+      const status = item.status ?? 'done';
+      return {
+        id: item.id,
+        title: item.title ?? item.id,
+        status,
+        owner: item.owner ?? null,
+        next: item.next ?? null,
+        blocked: item.blocked ?? null,
+        evidence: item.evidence ?? [],
+        phase: item.phase ?? 'build',
+        ...(status === 'done' ? { lead_confirm: item.lead_confirm ?? LEAD_CONFIRM } : {}),
+      };
+    }),
     scopeId,
     updatedBy: scopeId,
   });
@@ -2885,7 +2892,7 @@ test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect�
   mkdirSync(dirname(reportAbs), { recursive: true });
   writeFileSync(reportAbs, 'task: wire-metrics\nrevision: ' + dispatched.dispatchId + '\nverdict: done\n\n## 结论\n度量接线完成，测试全绿。\n\n## 证据\ntest/agent.test.mjs:1\n');
   // 4) 收口：只回 digest；台账 done + evidence=reportPath
-  const collected = await call(registered.get('relay_collect'), { itemId: 'wire-metrics', dispatchId: dispatched.dispatchId }, 'relay_collect');
+  const collected = await call(registered.get('relay_collect'), { itemId: 'wire-metrics', dispatchId: dispatched.dispatchId, lead_confirm: LEAD_CONFIRM }, 'relay_collect');
   assert.equal(collected.ok, true, JSON.stringify(collected));
   assert.equal(collected.status, 'collected');
   assert.equal(collected.verdict, 'done');
@@ -4297,7 +4304,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // relay_work_items.officialTaskId）→ 实测 8504，预算按实测+96 上调到 8600（仍逐条受 ≤400/单行约束；#68）。
   // C9/AUDIT §12：relay_phase 新增 design_gate{path,user_approved} + user_gate.verification{tier,approved_by_user,items}，
   // 实测 9970，预算按实测+130 上调到 10100（C11 注入预算快照重定基线；仍逐条受 ≤400/单行约束）。
-  assert.ok(parameterChars <= 10100, '参数 schema 总字符 <=10100（C9 实测 9970+130），实际 ' + parameterChars);
+  // v0.10.x 完成确认门：relay_work_items 条目新增 lead_confirm{no_drift,no_missing,no_regression} 结构化 schema
+  // → 实测 10540，预算按实测+~1.5% 上调到 10700（#68：只调预算，不删语义/约束）。
+  assert.ok(parameterChars <= 10700, '参数 schema 总字符 <=10700（v0.10.x 实测 10540+160），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -4318,8 +4327,10 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
     leadParameterChars += JSON.stringify(definition.parameters).length;
   }
   // A-06 实测 2,141/3,000 → 预算按实测+~3% 定格；15 工具逐条精确快照见 test/budget-snapshot.test.mjs。
-  assert.ok(leadDescriptionChars <= 2200, 'lead-only 5 条描述总字符 <=2200（实测 2141），实际 ' + leadDescriptionChars);
-  assert.ok(leadParameterChars <= 3100, 'lead-only 5 条参数总字符 <=3100（实测 3000），实际 ' + leadParameterChars);
+  // v0.10.x 完成确认门：relay_collect 描述补 lead_confirm 口径 → 实测 2353，预算按实测+~2% 上调到 2400。
+  assert.ok(leadDescriptionChars <= 2400, 'lead-only 5 条描述总字符 <=2400（v0.10.x 实测 2353），实际 ' + leadDescriptionChars);
+  // v0.10.x 完成确认门：relay_collect 新增 lead_confirm 结构化 schema → 实测 3643，预算按实测+~1.5% 上调到 3700。
+  assert.ok(leadParameterChars <= 3700, 'lead-only 5 条参数总字符 <=3700（v0.10.x 实测 3643），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

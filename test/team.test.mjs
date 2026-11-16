@@ -1004,6 +1004,9 @@ const DISPATCH_ARGS = Object.freeze({
   acceptance: 'node --test test/foo.test.mjs',
 });
 
+/** v0.10.x 完成确认门：新变 done 的条目必须带三项均 true 的 lead_confirm。 */
+const LEAD_CONFIRM = { no_drift: true, no_missing: true, no_regression: true };
+
 async function seedLedger(dir, items) {
   const written = await writeWorkItems(dir, { items, updatedBy: LEAD, scopeId: LEAD });
   assert.equal(written.ok, true, '台账 seed 写入成功');
@@ -1164,7 +1167,7 @@ test('relay_dispatch：item 不存在/done/already-dispatched 结构化拒绝；
       pressures: { 'session-w1': 2000 },
     });
     await seedLedger(dir, [
-      { id: 'a2', title: '已关闭', status: 'done', evidence: ['.scratch/context-relay/reports/a2.md'] },
+      { id: 'a2', title: '已关闭', status: 'done', evidence: ['.scratch/context-relay/reports/a2.md'], lead_confirm: LEAD_CONFIRM },
       { id: 'a3', title: '进行中', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a3.md' },
     ]);
     const { dispatch } = delegationToolsOf(ctx);
@@ -1352,7 +1355,7 @@ test('relay_collect：立即读回执头 3 行 + digest（≤600）→ 台账 do
     await seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a1.md' }]);
     writeReceipt(dir, 'a1', { dispatchId: 'd-a1-test', conclusion: '登录修复完成，node --test 全绿' });
     const { collect } = delegationToolsOf(ctx);
-    const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-test' }, { agent: lead });
+    const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-test', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(result.ok, true);
     assert.equal(result.status, 'collected');
     assert.equal(result.verdict, 'done');
@@ -1373,6 +1376,34 @@ test('relay_collect：立即读回执头 3 行 + digest（≤600）→ 台账 do
     assert.equal(again.alreadyCollected, true);
     assert.equal(again.digest, result.digest);
     assert.equal(ledgerRev(dir), revAfter, '幂等路径不写盘');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_collect：verdict=done 缺/不完整 lead_confirm → confirmation-required（条目不置 done、台账不变）；三项 true 才置 done 并写入条目', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({ dir });
+    await seedLedger(dir, [{ id: 'a1', title: '等进行中', status: 'doing', owner: 'worker-1', next: '执行分点并回执 .scratch/context-relay/reports/a1.md' }]);
+    writeReceipt(dir, 'a1', { dispatchId: 'd-a1-confirm', conclusion: '完成，测试全绿' });
+    const { collect } = delegationToolsOf(ctx);
+    const revBefore = ledgerRev(dir);
+    const missing = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-confirm' }, { agent: lead });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.code, 'confirmation-required');
+    assert.match(missing.error, /no_drift/);
+    const incomplete = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-confirm', lead_confirm: { no_drift: true, no_missing: true } }, { agent: lead });
+    assert.equal(incomplete.code, 'confirmation-required');
+    const falseFlag = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-confirm', lead_confirm: { no_drift: true, no_missing: true, no_regression: false } }, { agent: lead });
+    assert.equal(falseFlag.code, 'confirmation-required');
+    assert.equal(ledgerItem(dir, 'a1').status, 'doing', '条目不置 done');
+    assert.equal(ledgerRev(dir), revBefore, '台账不变（不写盘）');
+    const passed = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-confirm', lead_confirm: LEAD_CONFIRM }, { agent: lead });
+    assert.equal(passed.ok, true, JSON.stringify(passed));
+    assert.equal(passed.status, 'collected');
+    const stored = ledgerItem(dir, 'a1');
+    assert.equal(stored.status, 'done');
+    assert.deepEqual(stored.lead_confirm, LEAD_CONFIRM, '三项 true 才置 done 并写入 lead_confirm');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
@@ -1459,7 +1490,7 @@ test('dispatch → fake worker 回执 → collect 全流程：台账 done（evid
     const dispatched = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
     assert.equal(dispatched.ok, true);
     writeReceipt(dir, 'a1', { dispatchId: dispatched.dispatchId, conclusion: '登录修复完成；node --test 全绿' });
-    const collected = await collect.execute({ itemId: 'a1', dispatchId: dispatched.dispatchId }, { agent: lead });
+    const collected = await collect.execute({ itemId: 'a1', dispatchId: dispatched.dispatchId, lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(collected.ok, true);
     assert.equal(collected.status, 'collected');
     assert.equal(collected.verdict, 'done');
@@ -1503,7 +1534,7 @@ test('relay_dispatch：dispatchId 落盘（dispatch/<scope>/<itemId>.json）；r
     clearDelegationMemory();
     assert.equal(delegationMemoryState(dir).cleared, true);
     writeReceipt(dir, 'a1', { dispatchId: dispatched.dispatchId });
-    const collected = await collect.execute({ itemId: 'a1' }, { agent: lead });
+    const collected = await collect.execute({ itemId: 'a1', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(collected.ok, true);
     assert.equal(collected.status, 'collected');
     assert.equal(ledgerItem(dir, 'a1').status, 'done');
@@ -1534,7 +1565,7 @@ test('relay_collect：reload 后旧回执不得假收口（落盘新 dispatchId 
     assert.equal(stale.reason, 'stale-report', '旧回执 revision != 落盘 dispatchId');
     assert.equal(ledgerItem(dir, 'a1').status, 'doing', '旧回执不得假收口');
     writeReceipt(dir, 'a1', { dispatchId: v2.dispatchId, conclusion: '重新派活后完成' });
-    const collected = await collect.execute({ itemId: 'a1' }, { agent: lead });
+    const collected = await collect.execute({ itemId: 'a1', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(collected.status, 'collected');
     assert.equal(collected.verdict, 'done');
     assert.equal(collected.digest, '重新派活后完成');
@@ -1556,7 +1587,7 @@ test('relay_collect：无落盘 dispatch 记录且无内存 → needs-dispatch-i
     assert.match(refused.recovery, /dispatchId/);
     assert.equal(ledgerItem(dir, 'a1').status, 'doing', '拒绝不改台账（不假收口）');
     // 显式传 dispatchId → revision 匹配才收口。
-    const explicit = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-anything' }, { agent: lead });
+    const explicit = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-anything', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(explicit.status, 'collected');
     assert.equal(ledgerItem(dir, 'a1').status, 'done');
   } finally { cleanup(dir); clearDelegationMemory(); }
@@ -1615,7 +1646,7 @@ test('relay_collect：报告超 64KB → reportTruncated 标记 + digest 有界�
     const body = 'task: a1\nrevision: d-a1-big\nverdict: done\n\n## 结论\n大报告完成\n\n## 证据\n' + 'x'.repeat(70000);
     writeReportRaw(dir, 'a1', body);
     const { collect } = delegationToolsOf(ctx);
-    const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-big' }, { agent: lead });
+    const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-big', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(result.ok, true);
     assert.equal(result.status, 'collected');
     assert.equal(result.reportTruncated, true, '超过 64KB 读取上限显式标记');

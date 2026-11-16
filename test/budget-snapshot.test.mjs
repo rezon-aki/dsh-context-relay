@@ -180,19 +180,19 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_organize: [314, 651],
   relay_doc: [305, 823],
   doc_lint: [110, 147],
-  relay_work_items: [335, 1448],
+  relay_work_items: [392, 2166],
   relay_handoff: [384, 1534],
   relay_team_status: [371, 62],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
   relay_dispatch: [248, 1314],
-  relay_collect: [447, 574],
+  relay_collect: [659, 1217],
   relay_checkpoint: [338, 1207],
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（desc 5,219 / params 14,981 / schema 20,200）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5219, params: 14981, schema: 20200 };
+/** 15 工具 schema 合计（v0.10.x 台账完成确认门后：desc 5,488 / params 16,342 / schema 21,830）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5488, params: 16342, schema: 21830 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -236,21 +236,21 @@ const ROLE_SNAPSHOT = {
     sections: [
       ['context-relay:protocol', 6348],
       ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 1633],
+      ['context-relay:work-ledger', 1840],
       ['context-relay:architect', 693],
       ['context-relay:router', 1942],
       ['context-relay:team-lead', 614],
     ],
-    sectionChars: 11245,
+    sectionChars: 11452,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
       'relay_status', 'relay_recommend', 'relay_phase', 'relay_organize', 'relay_doc', 'doc_lint', 'relay_work_items', 'relay_handoff',
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
-    toolDescChars: 4465,
-    toolSchemaChars: 17287,
-    totalChars: 28532,
+    toolDescChars: 4734,
+    toolSchemaChars: 18917,
+    totalChars: 30369,
   },
   teammate: {
     sections: [

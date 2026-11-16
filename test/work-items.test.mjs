@@ -40,6 +40,8 @@ import {
 } from '../lib/agent/work-items.js';
 
 const tempCwd = () => mkdtempSync(join(tmpdir(), 'relay-work-items-'));
+/** v0.10.x 完成确认门：新变 done 的条目必须带三项均 true 的 lead_confirm。 */
+const LEAD_CONFIRM = { no_drift: true, no_missing: true, no_regression: true };
 const ledgerPath = (cwd) => join(cwd, '.scratch', 'context-relay', 'work-items.json');
 const seed = async (cwd, items, options = {}) => {
   const result = await writeWorkItems(cwd, { items, ...options });
@@ -96,7 +98,7 @@ test('readWorkItems：文件不存在 → exists:false、空台账、ok:true、�
 test('writeWorkItems/readWorkItems：合法写入并读回（归一化字段 + rev/updatedBy/version）', async () => {
   const cwd = tempCwd();
   const written = await seed(cwd, [
-    { id: 'schema', title: '定 schema', status: 'done', evidence: ['lib/a.js:1'] },
+    { id: 'schema', title: '定 schema', status: 'done', evidence: ['lib/a.js:1'], lead_confirm: LEAD_CONFIRM },
     { id: 'api-export', title: '导出 API', status: 'doing', owner: 'worker-1', next: '写完 handler', acceptance: '单测全绿', depends: ['schema'], phase: 'build' },
     { id: 'blocked-x', title: '阻塞项', status: 'blocked', blocked: '等接口' },
   ], { updatedBy: 'session-1' });
@@ -268,7 +270,7 @@ test('validateWorkItems：重复 id → duplicate-id；非法 id → invalid-ite
 });
 
 test('validateWorkItems/writeWorkItems：超过 max 时先归档最旧 done 到 -archive.ndjson；done 不足才 ledger-full', async () => {
-  const items = [0, 1, 2].map((index) => ({ id: 'item-' + index, title: 'T' + index, status: 'done', evidence: ['e:1'], updatedAt: '2026-01-0' + (index + 1) + 'T00:00:00.000Z' }));
+  const items = [0, 1, 2].map((index) => ({ id: 'item-' + index, title: 'T' + index, status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM, updatedAt: '2026-01-0' + (index + 1) + 'T00:00:00.000Z' }));
   // 纯校验仍报 ledger-full（超限归档在 writeWorkItems；validate 只给口径）。
   const tooMany = validateWorkItems(items, { max: 2 });
   assert.equal(tooMany.ok, false);
@@ -292,7 +294,7 @@ test('validateWorkItems/writeWorkItems：超过 max 时先归档最旧 done 到 
   assert.equal(readWorkItems(cwd).items.length, 2);
   // done 不足（4 条 > max 2，仅 1 条 done）：拒绝整次写入，台账不变。
   const mixed = [
-    { id: 'done-x', title: 'D', status: 'done', evidence: ['e:1'] },
+    { id: 'done-x', title: 'D', status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM },
     { id: 'open-a', title: 'O', status: 'open' },
     { id: 'open-b', title: 'O', status: 'open' },
     { id: 'open-c', title: 'O', status: 'open' },
@@ -410,9 +412,9 @@ test('officialTaskId（v0.9.0 #35）：可选引用、trim/长度/宽松字符�
 test('archive（v0.9.0 #39）：最旧 done 优先、readArchive 计数/坏行跳过、appendArchive 失败不抛且台账不变', async () => {
   const cwd = tempCwd();
   const items = [
-    { id: 'done-new', title: 'D2', status: 'done', evidence: ['e:1'], updatedAt: '2026-03-01T00:00:00.000Z' },
+    { id: 'done-new', title: 'D2', status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM, updatedAt: '2026-03-01T00:00:00.000Z' },
     { id: 'open-a', title: 'O', status: 'open', updatedAt: '2026-01-01T00:00:00.000Z' },
-    { id: 'done-old', title: 'D1', status: 'done', evidence: ['e:1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'done-old', title: 'D1', status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM, updatedAt: '2026-01-01T00:00:00.000Z' },
   ];
   const written = await writeWorkItems(cwd, { items, max: 2 });
   assert.equal(written.ok, true, JSON.stringify(written));
@@ -439,13 +441,84 @@ test('archive（v0.9.0 #39）：最旧 done 优先、readArchive 计数/坏行�
   assert.equal(seeded.ok, true);
   mkdirSync(archivePathOf(safe), { recursive: true });
   const refused = await writeWorkItems(safe, {
-    items: [...seeded.ledger.items, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'] }, { id: 'done-b', title: 'D2', status: 'done', evidence: ['e:2'] }],
+    items: [...seeded.ledger.items, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM }, { id: 'done-b', title: 'D2', status: 'done', evidence: ['e:2'], lead_confirm: LEAD_CONFIRM }],
     max: 2,
     rev: seeded.ledger.rev,
   });
   assert.equal(refused.ok, false);
   assert.equal(refused.code, 'archive-failed');
   assert.deepEqual(readWorkItems(safe).items.map((item) => item.id), ['keep'], '归档失败台账不变');
+});
+
+test('完成确认门（writeWorkItems）：新变 done 缺/不完整/含 false 的 lead_confirm → done-gate 整表拒绝（零副作用）；三项 true 才落账；已 done 不受影响', async () => {
+  const cwd = tempCwd();
+  await seed(cwd, [{ id: 'doing-a', title: '进行中', status: 'doing', next: 'x' }]);
+  const rev = readWorkItems(cwd).rev;
+  const doneItem = (lead_confirm) => [{ id: 'doing-a', title: '进行中', status: 'done', evidence: ['e:1'], ...(lead_confirm === undefined ? {} : { lead_confirm }) }];
+  // ① 缺失 lead_confirm
+  const missing = await writeWorkItems(cwd, { items: doneItem(undefined), rev });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.code, 'done-gate');
+  assert.deepEqual(missing.ids, ['doing-a']);
+  assert.match(missing.message, /no_drift/);
+  assert.match(missing.message, /diff/);
+  // ② 不完整（缺 no_regression）
+  const partial = await writeWorkItems(cwd, { items: doneItem({ no_drift: true, no_missing: true }), rev });
+  assert.equal(partial.code, 'done-gate');
+  // ③ 任一项非 true
+  const falseFlag = await writeWorkItems(cwd, { items: doneItem({ no_drift: true, no_missing: true, no_regression: false }), rev });
+  assert.equal(falseFlag.code, 'done-gate');
+  assert.equal(readWorkItems(cwd).rev, rev, '三次拒绝零副作用（rev 不变）');
+  assert.equal(readWorkItems(cwd).items[0].status, 'doing', '条目不置 done');
+  // ④ 三项均 true → 通过并落账 lead_confirm
+  const passed = await writeWorkItems(cwd, { items: doneItem(LEAD_CONFIRM), rev });
+  assert.equal(passed.ok, true, JSON.stringify(passed));
+  const done = readWorkItems(cwd).items[0];
+  assert.equal(done.status, 'done');
+  assert.deepEqual(done.lead_confirm, LEAD_CONFIRM);
+  // ⑤ 已 done 条目不受影响：整表重写不带 lead_confirm 仍通过，且保留盘上确认
+  const rewrite = await writeWorkItems(cwd, { items: [{ id: 'doing-a', title: '进行中（改名）', status: 'done', evidence: ['e:2'] }], rev: passed.ledger.rev });
+  assert.equal(rewrite.ok, true, JSON.stringify(rewrite));
+  assert.deepEqual(readWorkItems(cwd).items[0].lead_confirm, LEAD_CONFIRM, '已 done 条目保留既有确认');
+});
+
+test('完成确认门：门先于超限预归档（新 done 不能以归档绕过）；拒绝时归档文件不变；已 done 显式不完整/含 false 不得覆盖', async () => {
+  // ① 超限归档 × 门：无确认的新 done 本会被选作「最旧 done」预归档 → 必须在归档前拒绝
+  const cwd = tempCwd();
+  await seed(cwd, [{ id: 'keep', title: 'K', status: 'open' }]);
+  writeFileSync(archivePathOf(cwd), 'SENTINEL-ARCHIVE\n', 'utf8');
+  const revBefore = readWorkItems(cwd).rev;
+  const overCap = await writeWorkItems(cwd, {
+    items: [
+      { id: 'fresh-done', title: '未确认', status: 'done', evidence: ['e:1'], updatedAt: '2026-01-01T00:00:00.000Z' },
+      { id: 'open-a', title: 'O', status: 'open' },
+      { id: 'open-b', title: 'O', status: 'open' },
+    ],
+    max: 2,
+    rev: revBefore,
+  });
+  assert.equal(overCap.ok, false);
+  assert.equal(overCap.code, 'done-gate');
+  assert.deepEqual(overCap.ids, ['fresh-done']);
+  assert.equal(readFileSync(archivePathOf(cwd), 'utf8'), 'SENTINEL-ARCHIVE\n', '拒绝时归档文件不变（不得先归档无确认 done）');
+  assert.equal(readWorkItems(cwd).rev, revBefore, '拒绝不写台账');
+  // ② 已 done 条目：显式 false / 不完整 → 拒绝且不覆盖盘上完整确认
+  const cwd2 = tempCwd();
+  await seed(cwd2, [{ id: 'closed', title: '已收尾', status: 'done', evidence: ['e:1'], lead_confirm: LEAD_CONFIRM }]);
+  const rev2 = readWorkItems(cwd2).rev;
+  for (const bad of [
+    { no_drift: true, no_missing: true, no_regression: false },
+    { no_drift: true, no_missing: true },
+  ]) {
+    const refused = await writeWorkItems(cwd2, { items: [{ id: 'closed', title: '已收尾', status: 'done', evidence: ['e:1'], lead_confirm: bad }], rev: rev2 });
+    assert.equal(refused.ok, false, JSON.stringify(bad));
+    assert.equal(refused.code, 'done-gate');
+    assert.deepEqual(readWorkItems(cwd2).items[0].lead_confirm, LEAD_CONFIRM, '拒绝不得降级/覆盖既有确认');
+  }
+  // ③ 已 done 条目未显式提供确认 → 允许整表重写并保留盘上既有确认
+  const rewrite = await writeWorkItems(cwd2, { items: [{ id: 'closed', title: '已收尾（改名）', status: 'done', evidence: ['e:2'] }], rev: rev2 });
+  assert.equal(rewrite.ok, true, JSON.stringify(rewrite));
+  assert.deepEqual(readWorkItems(cwd2).items[0].lead_confirm, LEAD_CONFIRM);
 });
 
 test('P3-4 归档顺序：validate 失败先于 append——不留孤儿归档、台账不变', async () => {
@@ -608,7 +681,7 @@ test('ledgerBriefSection/ledgerHandoffSection/ledgerEntryLine：空台账返回�
   await seed(cwd, [
     { id: 'blocked-x', title: '阻塞项', status: 'blocked', blocked: '等接口' },
     { id: 'doing-a', title: '进行中', status: 'doing', next: '写 handler' },
-    { id: 'done-c', title: '完成', status: 'done', evidence: ['x.js:1'] },
+    { id: 'done-c', title: '完成', status: 'done', evidence: ['x.js:1'], lead_confirm: LEAD_CONFIRM },
   ]);
   const read = readSeed(cwd);
 
@@ -634,7 +707,7 @@ test('ledgerBriefSection/ledgerHandoffSection/ledgerEntryLine：空台账返回�
 
 test('ledgerBriefSection：全部 done 时无未闭合段；handoff/entry 仍给台账计数', async () => {
   const cwd = tempCwd();
-  await seed(cwd, [{ id: 'done-a', title: '完成', status: 'done', evidence: ['x.js:1'] }]);
+  await seed(cwd, [{ id: 'done-a', title: '完成', status: 'done', evidence: ['x.js:1'], lead_confirm: LEAD_CONFIRM }]);
   const read = readSeed(cwd);
   assert.equal(ledgerBriefSection(read), '');
   assert.match(ledgerHandoffSection(read), /未闭合 0 \/ 共 1/);
@@ -728,7 +801,7 @@ test('phase 元数据：currentPhase 读写、不传保留、phaseSummary/phaseF
   assert.equal(readWorkItems(cwd).currentPhase, null);
   // 全部 done → 焦点行提示可以关 phase（主链非终点 phase 仍可执行）
   const done = await seed(cwd, [
-    { id: 'gate', title: '实现关账闸门', status: 'done', evidence: ['test/agent.test.mjs'], phase: 'build' },
+    { id: 'gate', title: '实现关账闸门', status: 'done', evidence: ['test/agent.test.mjs'], phase: 'build', lead_confirm: LEAD_CONFIRM },
   ], { currentPhase: { phase: 'build' } });
   assert.equal(done.ok, true);
   assert.match(phaseFocusLine(readWorkItems(cwd)), /分点全闭环 → 可以关 phase（relay_phase）/);

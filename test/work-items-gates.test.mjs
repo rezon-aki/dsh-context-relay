@@ -150,7 +150,7 @@ test('relay_work_items：注册且无参=读（空台账 exists=false）；Lead 
   const replaced = await tool.execute({
     items: [
       { id: 'api-export', title: '导出 API', status: 'doing', owner: 'worker-1', next: '写完 handler', evidence: ['lib/index.js:120'], phase: 'build' },
-      { id: 'schema', title: '定 schema', status: 'done', evidence: ['docs/schema.md:1'] },
+      { id: 'schema', title: '定 schema', status: 'done', evidence: ['docs/schema.md:1'], lead_confirm: { no_drift: true, no_missing: true, no_regression: true } },
     ],
   }, { agent });
   assert.equal(replaced.ok, true, JSON.stringify(replaced));
@@ -247,7 +247,7 @@ test('relay_work_items：officialTaskId 透传/继承；archive 返回与 over-c
   const overSession = fakeSession({ id: 'session-wi-overcap', cwd: overCwd, seq: 0 });
   const overTool = applyAgent(fakeServices({ session: overSession }).services).tools.get('relay_work_items');
   const overAgent = { session: overSession, options: {} };
-  const done = { id: 'done-old', title: '完成', status: 'done', evidence: ['e:1'] };
+  const done = { id: 'done-old', title: '完成', status: 'done', evidence: ['e:1'], lead_confirm: { no_drift: true, no_missing: true, no_regression: true } };
   const opens = Array.from({ length: 29 }, (_, index) => ({ id: 'open-' + index, title: 'O' + index, status: 'open' }));
   const base = await overTool.execute({ items: [done, ...opens] }, { agent: overAgent });
   assert.equal(base.ok, true, JSON.stringify(base));
@@ -262,7 +262,7 @@ test('relay_work_items：officialTaskId 透传/继承；archive 返回与 over-c
   const failSession = fakeSession({ id: 'session-wi-archive-fail', cwd: failCwd, seq: 0 });
   const failTool = applyAgent(fakeServices({ session: failSession }).services).tools.get('relay_work_items');
   const failAgent = { session: failSession, options: {} };
-  const seeded = await failTool.execute({ items: [{ id: 'keep', title: 'K', status: 'open' }, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'] }] }, { agent: failAgent });
+  const seeded = await failTool.execute({ items: [{ id: 'keep', title: 'K', status: 'open' }, { id: 'done-a', title: 'D', status: 'done', evidence: ['e:1'], lead_confirm: { no_drift: true, no_missing: true, no_regression: true } }] }, { agent: failAgent });
   assert.equal(seeded.ok, true);
   mkdirSync(join(failCwd, '.scratch/context-relay/work-items-archive.ndjson'), { recursive: true });
   const refused = await failTool.execute({ items: [{ id: 'keep', title: 'K', status: 'open' }], rev: seeded.rev }, { agent: failAgent });
@@ -350,8 +350,36 @@ test('relay_work_items：v0.7.0 起 Lead-only；队友/子代理读写一律拒�
   const leadRead = await tool.execute({}, { agent: lead });
   assert.equal(leadRead.ok, true);
   assert.equal(leadRead.items.length, 2);
-  const leadReplace = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'] }], rev: 4, drop: ['own-a', 'lead-a'] }, { agent: lead });
+  const leadReplace = await tool.execute({ items: [{ id: 'x1', title: 'x', status: 'done', evidence: ['e:1'], lead_confirm: { no_drift: true, no_missing: true, no_regression: true } }], rev: 4, drop: ['own-a', 'lead-a'] }, { agent: lead });
   assert.equal(leadReplace.ok, true, JSON.stringify(leadReplace));
+});
+
+test('relay_work_items：完成确认门——新变 done 缺/不完整/含 false lead_confirm → done-gate 拒绝（零副作用）；三项 true 通过', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  writeLedger(cwd, [{ id: 'p1', title: '进行中', status: 'doing', next: 'x' }], { rev: 1 });
+  const session = fakeSession({ id: 'session-wi-done-gate', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_work_items');
+  const agent = { session, options: {} };
+  const confirm = { no_drift: true, no_missing: true, no_regression: true };
+  const doneItem = (lead_confirm) => [{ id: 'p1', title: '进行中', status: 'done', evidence: ['e:1'], ...(lead_confirm === undefined ? {} : { lead_confirm }) }];
+  const revBefore = readLedgerFile(cwd).rev;
+  const cases = [
+    ['缺失', undefined],
+    ['不完整', { no_drift: true, no_missing: true }],
+    ['含 false', { no_drift: true, no_missing: true, no_regression: false }],
+  ];
+  for (const [label, leadConfirm] of cases) {
+    const refused = await tool.execute({ items: doneItem(leadConfirm), rev: revBefore }, { agent });
+    assert.equal(refused.ok, false, label);
+    assert.equal(refused.code, 'done-gate', label);
+    assert.equal(readLedgerFile(cwd).rev, revBefore, label + '：整表拒绝零副作用');
+    assert.equal(readLedgerFile(cwd).items[0].status, 'doing', label + '：条目不置 done');
+  }
+  const passed = await tool.execute({ items: doneItem(confirm), rev: revBefore }, { agent });
+  assert.equal(passed.ok, true, JSON.stringify(passed));
+  assert.equal(passed.counts.done, 1);
+  assert.deepEqual(readLedgerFile(cwd).items[0].lead_confirm, confirm, '三项 true 才置 done 并写入条目');
 });
 
 test('relay_work_items：workItems=false 时结构化拒绝且不读写（work-items-disabled）', async () => {
