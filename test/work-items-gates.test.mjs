@@ -756,8 +756,8 @@ test('台账闭环：焦点行事件驱动注入；变更未落账 → 闭环提
   await step();
   assert.equal(injected.length, 2, 'closure prompt is not repeated per step');
 
-  // relay_work_items 成功 = 已落账：清 pending；台账 rev/焦点变化 → 下一步注入新焦点
-  await post({ name: 'relay_work_items', agent, arguments: {} }, { isError: false }, async () => undefined);
+  // relay_work_items 写入成功（items 整表替换）= 已落账：清 pending；只读调用不再清（B-04）
+  await post({ name: 'relay_work_items', agent, arguments: { items: [] } }, { isError: false }, async () => undefined);
   writeLedger(cwd, [
     { id: 'p1', title: '实现闸门', status: 'done', evidence: ['test/x'], phase: 'build' },
     { id: 'p2', title: '补文档', status: 'open', phase: 'build' },
@@ -813,8 +813,9 @@ test('台账闭环：未落账签名去重（同签名不重复；count 不变�
   await step();
   assert.equal(injected.length, 4, '同签名不再重复');
 
-  // relay_work_items 成功 = 已落账：清 pending → 再次同样改动 = 新事件，重新提示一次
-  await post({ name: 'relay_work_items', agent, arguments: {} }, { isError: false }, async () => undefined);
+  // relay_work_items 写入成功（items 整表替换）= 已落账：清 pending → 再次同样改动 = 新事件，重新提示一次
+  // （只读调用不清 pending 是 B-04 的修复点；旧断言把「查一眼台账」也当落账）
+  await post({ name: 'relay_work_items', agent, arguments: { items: [] } }, { isError: false }, async () => undefined);
   await step();
   assert.equal(injected.length, 4, '落账清空本身不注入');
   await mutate('d.js');
@@ -1023,14 +1024,15 @@ test('relay_handoff：台账损坏 fail-open（不拒绝交接）+ workItemsWarn
 
 // ── 到线提醒 ──────────────────────────────────────────────────────────
 
-test('sentinelText：台账非空 pending>0 时正文末尾追加台账行（Lead/队友都加）；空/未传不加', () => {
+test('sentinelText：台账非空 pending>0 时 Lead 正文末尾追加台账行；队友不加（M-12）；空/未传不加', () => {
   const state = { band: 'organize' };
   const ledger = { exists: true, counts: { total: 5, pending: 2, doing: 1, blocked: 1, open: 0, done: 3 } };
   const leadText = sentinelText('build', state, false, undefined, undefined, ledger);
   assert.match(leadText, /\n工作台账：未闭合 2 \/ 共 5（relay_work_items 查看\/更新；phase 边界前收口）$/);
   assert.doesNotMatch(leadText, /更新于 \d+ 分钟前|已停滞/, '不再按时间提示台账新鲜度');
+  // M-12：depth-1 队友工具面没有 relay_work_items，显式传 ledger 也不渲染台账行（不再教用被裁工具/展示 Lead 计数）。
   const subText = sentinelText('build', state, true, undefined, { sent: true }, ledger);
-  assert.match(subText, /工作台账：未闭合 2 \/ 共 5/);
+  assert.doesNotMatch(subText, /工作台账/);
   const empty = { exists: false, counts: { total: 0, pending: 0 } };
   assert.ok(!sentinelText('build', state, false, undefined, undefined, empty).includes('工作台账'));
   assert.ok(!sentinelText('build', state, false, undefined, undefined, undefined).includes('工作台账'));
