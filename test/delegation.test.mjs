@@ -21,6 +21,12 @@ import {
   digestOf,
   reportPathOf,
   dispatchIdOf,
+  nextDispatchId,
+  dispatchRecordPathOf,
+  receiptFreshnessOf,
+  registerDispatchMemoryProbe,
+  dispatchMemoryState,
+  DELEGATION_DISPATCH_DIR,
 } from '../lib/agent/delegation.js';
 
 const SESSION = 'session-lead-1';
@@ -523,3 +529,61 @@ test('闭环：校验通过 → 组装 brief → worker 按头 3 行写回执 �
 });
 
 
+
+// ---------- dispatch 落盘 / 回执新鲜度 / 内存可观测（v0.10 C8）----------
+
+test('dispatchRecordPathOf：dispatch/<scopeId>/<itemId>.json；非法 scope 落 _workspace；非法 itemId 返回 null', () => {
+  assert.equal(DELEGATION_DISPATCH_DIR, '.scratch/context-relay/dispatch');
+  assert.equal(dispatchRecordPathOf('session-lead-1', 'a1'), '.scratch/context-relay/dispatch/session-lead-1/a1.json');
+  assert.equal(dispatchRecordPathOf('session-lead-1', ' a1 '), '.scratch/context-relay/dispatch/session-lead-1/a1.json');
+  for (const scope of [undefined, null, '', 'a/../b', 'bad scope', 42]) {
+    assert.equal(dispatchRecordPathOf(scope, 'a1'), '.scratch/context-relay/dispatch/_workspace/a1.json', 'scope 归一 _workspace：' + String(scope));
+  }
+  for (const bad of [undefined, null, '', 'A1', '../x', 'a', 'x'.repeat(33), 42]) {
+    assert.equal(dispatchRecordPathOf('session-lead-1', bad), null, '非法 itemId → null：' + JSON.stringify(bad));
+  }
+});
+
+test('nextDispatchId：与上次 dispatchId 必不同（同毫秒重派也换 revision）；同项不同时间不同', () => {
+  const first = dispatchIdOf('a1', 1700000000000);
+  assert.notEqual(nextDispatchId('a1', first, 1700000000000), first, '同毫秒重派必须换 id');
+  assert.equal(nextDispatchId('a1', first, 1700000000000), dispatchIdOf('a1', 1700000000001), '冲突时递增 1ms');
+  assert.equal(nextDispatchId('a1', undefined, 1700000000000), first, '无上次 id 用当前时间');
+  assert.match(nextDispatchId('a1', undefined), /^d-a1-[0-9a-z]+$/);
+  assert.notEqual(nextDispatchId('a1', undefined, 1700000000000), nextDispatchId('a1', undefined, 1700000000001));
+});
+
+test('receiptFreshnessOf：task 必须等于 itemId、revision 必须等于本次 dispatchId；缺 dispatchId 拒', () => {
+  const parsed = { ok: true, task: 'a1', revision: 'd-a1-x', verdict: 'done' };
+  assert.deepEqual(receiptFreshnessOf(parsed, 'a1', 'd-a1-x'), { fresh: true });
+  assert.deepEqual(receiptFreshnessOf({ ...parsed, revision: 'd-a1-old' }, 'a1', 'd-a1-x'), { fresh: false, reason: 'stale-report' });
+  assert.deepEqual(receiptFreshnessOf({ ...parsed, task: 'a2' }, 'a1', 'd-a1-x'), { fresh: false, reason: 'report-task-mismatch' }, '错任务回执不得收口');
+  assert.deepEqual(receiptFreshnessOf(parsed, 'a1', undefined), { fresh: false, reason: 'needs-dispatch-id' });
+  assert.deepEqual(receiptFreshnessOf(parsed, 'a1', ''), { fresh: false, reason: 'needs-dispatch-id' });
+  assert.deepEqual(receiptFreshnessOf(undefined, 'a1', 'd-a1-x'), { fresh: false, reason: 'report-invalid' });
+  assert.deepEqual(receiptFreshnessOf({ ok: false, reason: 'head-order' }, 'a1', 'd-a1-x'), { fresh: false, reason: 'report-invalid' });
+});
+
+test('delegationSnapshot：dispatch 记忆被 reload 清空时暴露 dispatchMemory（relay_status 字段）；未清空不加字段', () => {
+  try {
+    registerDispatchMemoryProbe(() => ({ inMemory: 0, cleared: false, clearedAt: null }));
+    assert.equal(delegationSnapshot({ dispatchCount: 0 }).dispatchMemory, undefined, '未清空不加字段（旧输出不变）');
+    assert.equal(dispatchMemoryState().cleared, false);
+    registerDispatchMemoryProbe(() => ({ inMemory: 0, cleared: true, clearedAt: '2026-11-16T00:00:00.000Z' }));
+    const snapshot = delegationSnapshot({ dispatchCount: 1, projectedAvailable: true });
+    assert.equal(snapshot.dispatchMemory.inMemory, 0);
+    assert.equal(snapshot.dispatchMemory.cleared, true);
+    assert.equal(snapshot.dispatchMemory.clearedAt, '2026-11-16T00:00:00.000Z');
+    assert.match(String(snapshot.dispatchMemory.note), /persisted dispatch records under \.scratch\/context-relay\/dispatch/);
+    // 投影不可用时也照常暴露（记忆状态与投影无关）
+    assert.equal(delegationSnapshot({ projectedAvailable: false }).dispatchMemory.cleared, true);
+    // 探针抛错/返回垃圾 → 不加字段（可观测字段绝不影响主流程）
+    registerDispatchMemoryProbe(() => { throw new Error('probe down'); });
+    assert.equal(delegationSnapshot({}).dispatchMemory, undefined);
+    registerDispatchMemoryProbe(() => 'nope');
+    assert.equal(delegationSnapshot({}).dispatchMemory, undefined);
+  } finally {
+    registerDispatchMemoryProbe(null);
+  }
+  assert.equal(dispatchMemoryState(), null, '无探针 → null（旧装配安全）');
+});
