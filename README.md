@@ -1,6 +1,6 @@
 # dsh-context-relay
 
-> 让 agent 在长任务里不走神、不走偏、越干越稳。
+> 以官方子智能体为基础的双层架构 agent套件，leader负责专职对接用户+团队管理，文档治理+链式记忆，维持最小必要上下文+按需调取文档，全团队保持低上下文高效工作，偏移实现、偷懒实现矫正/验证，人机交互优化，测试验证只用最小必要+重型验证测试需用户同意。
 
 [English](README.en.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [变更记录](CHANGELOG.md) · [迁移说明](docs/design/MIGRATION.md) · MIT
 
@@ -212,7 +212,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `inheritOnHandoff` | `true` | 交接后新会话沿用旧会话的模型和权限；`false` 则回部署默认。 |
 | `longPresetId` | `'relay-long'` | 唯一模式 id（未配时由 `presetId` + `-long` 派生；`presetId` 默认 `relay`）。classic 别名与 `legacyPresetCompat` 已删除。 |
 
-侧栏设置（人类可改，热生效）：水位线基准 + 默认模式 / 自动压缩 / 自动交接 / 架构师 / 预算无上限。
+侧栏设置（人类可改，热生效）：水位线基准 / 默认模式 / 默认自动压缩授权 / 默认开新会话授权。「预算无上限」与「架构师」不在侧栏：开关在 composer 里按会话控制（模型选择器右侧小胶囊），默认值分别来自 `settings.unlimitedBudget`（默认 true）与配置 `architect`（默认 true）。
 
 面板状态（按会话保存）：持久模式（本会话不消费，不随接力继承）、当前会话操作授权、预算无上限、模型建议等。
 
