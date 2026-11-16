@@ -4192,9 +4192,9 @@ test('P3：超长 brief 注入时标注截断与完整文件路径（不静默�
   assert.match(text, /\[brief truncated: 完整内容见 /);
   assert.ok(text.includes(result.briefPath), '截断标注包含完整 brief 文件路径');
 });
-test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语义收敛协议；v0.3.3 六条工具）', () => {
+test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；v0.3.3 八条 + A-06 lead-only 五条装配实测）', async () => {
   resetSharedState();
-  const { tools, sections } = applyAgent(fakeServices({ session: fakeSession({ id: 'session-desc-budget', seq: 0 }) }));
+  const { tools, sections, events } = applyAgent(fakeServices({ session: fakeSession({ id: 'session-desc-budget', seq: 0 }) }));
   const definitions = [...tools.values()];
   let descriptionChars = 0;
   let parameterChars = 0;
@@ -4214,6 +4214,28 @@ test('P2-19：工具描述瘦身预算（每条 ≤1 行 / 总字符预算；语
   // C9/AUDIT §12：relay_phase 新增 design_gate{path,user_approved} + user_gate.verification{tier,approved_by_user,items}，
   // 实测 9970，预算按实测+130 上调到 10100（C11 注入预算快照重定基线；仍逐条受 ≤400/单行约束）。
   assert.ok(parameterChars <= 10100, '参数 schema 总字符 <=10100（C9 实测 9970+130），实际 ' + parameterChars);
+  // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
+  // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
+  const created = events.find((entry) => entry.name === 'agent/created');
+  assert.ok(created, 'agent/created 装配入口存在');
+  const { agent: rootAgent, registered } = rootLeadHarness({ sessionId: 'session-desc-budget-root', cwd: tmpCwd() });
+  await created.listener({ agent: rootAgent });
+  const leadOnlyNames = ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'];
+  assert.deepEqual([...registered.keys()], leadOnlyNames, 'root agent-scope 注册的 lead-only 工具面（新增/删除须同步预算）');
+  let leadDescriptionChars = 0;
+  let leadParameterChars = 0;
+  for (const name of leadOnlyNames) {
+    const definition = registered.get(name);
+    assert.equal(typeof definition.description, 'string', name + ' description 存在');
+    assert.ok(!definition.description.includes('\n'), name + ' description 必须单行');
+    // lead-only 描述比常驻工具长（A-06 实测 relay_architect 718 / relay_collect 447），上限 800 只防回涨。
+    assert.ok(definition.description.length <= 800, name + ' description 超预算: ' + definition.description.length);
+    leadDescriptionChars += definition.description.length;
+    leadParameterChars += JSON.stringify(definition.parameters).length;
+  }
+  // A-06 实测 2,141/3,000 → 预算按实测+~3% 定格；15 工具逐条精确快照见 test/budget-snapshot.test.mjs。
+  assert.ok(leadDescriptionChars <= 2200, 'lead-only 5 条描述总字符 <=2200（实测 2141），实际 ' + leadDescriptionChars);
+  assert.ok(leadParameterChars <= 3100, 'lead-only 5 条参数总字符 <=3100（实测 3000），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

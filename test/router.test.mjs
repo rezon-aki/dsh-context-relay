@@ -137,14 +137,17 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '默认 4 人', 'maxActiveSubagents', '容量保全', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / LONG ≤6460 / ROUTER ≤2000', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER ≤2000 / TEAMMATE ≤1300', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
-  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / LONG ≤6,460 / ROUTER ≤2,000；
+  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
   // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
   // 靠删协议内重复句（预算档例外/模式持久/免审重复/全文检索路径等冗余）腾预算，硬约束条款一字不删（HEAD 6,744/6,664/2,639）。
   // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
   assert.ok(PROTOCOL_TEXT.length <= 6560, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
+  // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
+  assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1300, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '四段式', '只提醒不拒绝', '容量保全', '≥85%', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '默认 4 人', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
@@ -280,7 +283,9 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
   }
 });
 
-test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防过度删）', () => {
+test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
+  // 本条是「文本资产自身」的常量合计预算；C11/A-09 起 root 实际注入量以 apply 装配实测快照为准
+  // （test/budget-snapshot.test.mjs 的 ROLE_SNAPSHOT.lead），两者互为交叉校验。
   const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
   // 批次4 实测 11,324；C9 两段式用户门后 11,331；C10 删退役档协议句后 ≈11,251；预算 11,360/11,000 按设计给定；下限防为预算删过头。
   assert.ok(resident <= 11360, 'root 常驻合计超预算: ' + resident);
