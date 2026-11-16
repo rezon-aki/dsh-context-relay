@@ -10,6 +10,8 @@ import { thresholdsFromPercent } from '../lib/policy.js';
 // P3 live stale/缺失时渲染中性降级 chip（不显示旧值）、多 handoff 逐条消费（配合 client-notice 的 dock 提示）。
 // v0.9.0 单一模式：4 档表盘（问/继续/压缩继续/接力新会话）；「下一个接力新会话」滑动开关已删除。
 // v0.5.0：工作台账（RelayWorkLedger 胶囊/分组折叠/隐藏条件 + RelayPanel 底部入口行 + dock slot 注册）。
+// v0.10 C12/C15：panel 与台账共用一条 4s 轮询（单定时器/每 tick 并行 2 GET）；常量契约断言在
+// test/client-constants.test.mjs（C12 单一契约文件，避免把 host-client 漂移断言散落在交互测试里）。
 const source = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8');
 
 const sameDeps = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
@@ -245,7 +247,9 @@ function createEnv(options = {}) {
     const pending = server.pendingPanelGets.splice(0);
     for (const item of pending) item.resolve({ status: 200, json: () => Promise.resolve(payload ?? item.payload) });
   };
-  return { slots, registrations, server, calls, mount: runtime.mount, pollAll, emit, resolvePendingPanelGets };
+  // C15：定时器总数——断言 panel/台账共享同一轮询器（全文件唯一 setInterval）。
+  const timerCount = () => timers.size;
+  return { slots, registrations, server, calls, mount: runtime.mount, pollAll, emit, resolvePendingPanelGets, timerCount };
 }
 
 /** 递归找节点（fake React 树：{type, props, children}）。 */
@@ -414,9 +418,7 @@ test('RelaySettings：生效阈值只消费宿主 GET thresholds（C6/D-07：cli
   assert.match(text, /阈值基准 40%：提醒 27% \/ 二次提醒 32% \/ 硬线 42%/);
   assert.equal(text.includes('提醒 35%'), false, '不得回落到本地公式 threshold-5');
   assert.equal(text.includes('硬线 50%'), false, '不得回落到本地公式 threshold+10');
-  // 公式源码也已删除（防回潮）。
-  assert.equal(source.includes('Number(settings.threshold) - 5'), false);
-  assert.equal(source.includes('Number(settings.threshold) + 10'), false);
+  // 公式源码已删除（防回潮；契约断言集中在 test/client-constants.test.mjs）。
 });
 
 test('RelaySettings：宿主未返回生效阈值时只显示基准（不本地猜）', async () => {
@@ -1086,6 +1088,17 @@ test('v0.4.0 chip 显示当前模式（单一模式 4 档；host 已归一，chi
   assert.equal(textOf(chip2).includes('压缩→新会话'), false, 'chip 不显示已退役档名');
 });
 
+test('C12：autoDecision 死分支已删——旧 host 残留字段不渲染「模型决定」', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, autoDecision: { operation: 'compress', at: Date.now() } }, live: LIVE() };
+  const instance = env.mount(env.slots['conversation.composer.dock'], { sessionId: 'A' });
+  await instance.flush();
+  const chip = byClass(instance.tree, 'relay-v3-chip')[0];
+  assert.ok(chip);
+  assert.equal(String(chip.props.title).includes('模型决定'), false, '旧 autoDecision 字段不再进入 chip title');
+  assert.equal(textOf(instance.tree).includes('模型决定'), false, '退役自决分支不渲染');
+});
+
 test('RelayPanel：单一模式 4 档有效模式（问我/继续/压缩继续/接力新会话）展示正确、轮询不写盘', async () => {
   const env = createEnv();
   env.server.panel.A = longEnv({ defaultOperation: 'compress' });
@@ -1098,16 +1111,19 @@ test('RelayPanel：单一模式 4 档有效模式（问我/继续/压缩继续/�
   assert.equal(dialOrders(instance).length, 4, '单一模式 4 档');
   assert.equal(Math.abs(needleDeg(instance)), 180, '指针停在「压缩继续」档（±180°）');
   // 轮询到其他有效档：展示跟随 host 归一后的值、不写盘（客户端不再特判退役值）。
+  // C12：chip 短标签 = host policy.OPERATION_LABELS（handoff=接力，不再有 client 私货「新会话」）。
   const cases = [
-    { value: 'continue', chip: /继续/, dial: /继续/, deg: 90 },
-    { value: null, chip: /问我/, dial: /问我/, deg: 0 },
-    { value: 'handoff', chip: /新会话/, dial: /接力新会话/, deg: 270 },
+    { value: 'continue', badge: '继续', dial: /继续/, deg: 90 },
+    { value: null, badge: '问我', dial: /问我/, deg: 0 },
+    { value: 'handoff', badge: '接力', dial: /接力新会话/, deg: 270 },
   ];
   for (const item of cases) {
     env.server.panel.A = longEnv({ defaultOperation: item.value });
     env.pollAll();
     await instance.flush();
-    assert.match(textOf(byClass(instance.tree, 'relay-v3-chip')[0]), item.chip, 'chip=' + String(item.value));
+    const modeBadge = byClass(byClass(instance.tree, 'relay-v3-chip')[0], 'relay-v3-next')[0];
+    assert.ok(modeBadge, 'chip 有模式短标签徽标');
+    assert.equal(modeBadge.children[0], item.badge, 'chip 短标签=host OPERATION_LABELS；value=' + String(item.value));
     const checked = dialOrders(instance).filter((node) => node.props['aria-checked'] === true);
     assert.equal(checked.length, 1);
     assert.match(JSON.stringify(checked[0].children), item.dial, '高亮档=' + String(item.value));
@@ -1697,12 +1713,47 @@ test('工作台账：dock 注册（id relay-ledger / order 2，位于 relay-pane
   assert.equal(typeof dock[1].definition.inject, 'function');
   assert.equal(env.slots['conversation.composer.dock'], dock[0].component, '既有 name 键仍解析到 RelayPanel');
   assert.equal(env.slots['relay-ledger'], dock[1].component);
-  assert.ok(source.includes('const WORK_ITEMS_API = "/context-relay/work-items";'), '工作台账只读路由常量');
+  // 路由常量与 host 的契约断言集中在 test/client-constants.test.mjs（D-12：契约单文件）。
   assert.ok(source.includes('id: "relay-ledger"'));
   for (const rule of ['.relay-ledger-panel{', '.relay-ledger-dot{', '.relay-ledger-group-title{', '.relay-ledger-item{', '.relay-ledger-owner{', '.relay-ledger-official{', '.relay-ledger-entry{']) {
     assert.ok(source.includes(rule), '缺样式规则：' + rule);
   }
   assert.ok(source.includes('maxHeight: "60vh"'), '面板 60vh 高度上限');
+});
+
+test('C15：panel 与工作台账共用一条 4s 轮询（单定时器 + 每 tick 并行 2 个只读 GET，刷新语义保留）', async () => {
+  const env = createEnv();
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'compress' }, live: LIVE({ band: 'organize' }) };
+  env.server.workItems = ledgerPayload();
+  const panel = env.mount(env.slots['relay-panel'], { sessionId: 'A' });
+  await panel.flush();
+  assert.equal(env.timerCount(), 1, 'panel 组件只建一条轮询定时器');
+  const ledger = env.mount(env.slots['relay-ledger'], { sessionId: 'A' });
+  await ledger.flush();
+  assert.equal(env.timerCount(), 1, '台账挂载复用同一轮询器，不新增定时器');
+  // 一个 tick = 同一时刻并行取 panel + work-items 各一次
+  const before = env.calls.length;
+  env.pollAll();
+  await panel.flush();
+  await ledger.flush();
+  const tick = env.calls.slice(before).filter((call) => call.method === 'GET');
+  assert.equal(tick.filter((call) => call.url.startsWith('/context-relay/panel?')).length, 1, '每 tick 一次 panel GET');
+  assert.equal(tick.filter((call) => call.url.startsWith('/context-relay/work-items?')).length, 1, '每 tick 一次 work-items GET');
+  // 刷新语义保留：同一 tick 后 panel 通道与台账通道都拿到新快照
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'handoff' }, live: LIVE({ band: 'relay', overBudget: true }) };
+  env.server.workItems = ledgerPayload({ counts: { total: 4, open: 0, doing: 0, blocked: 1, done: 3, pending: 1 } });
+  env.pollAll();
+  await panel.flush();
+  await ledger.flush();
+  assert.match(chipTitleOf(panel), /band relay/, 'panel 通道同一 tick 刷新');
+  assert.match(textOf(byClass(ledger.tree, 'relay-v3-chip')[0]), /台账 1\/4/, '台账通道同一 tick 刷新');
+  // 生命周期：单组件卸载不掐断共享轮询；订阅者全部卸载才停（会话级唯一轮询）
+  panel.render({ sessionId: '' });
+  await panel.flush();
+  assert.equal(env.timerCount(), 1, '仍有台账订阅者时轮询保留');
+  ledger.render({ sessionId: '' });
+  await ledger.flush();
+  assert.equal(env.timerCount(), 0, '无订阅者后停掉唯一轮询');
 });
 test('RelayArchitectToggle：relay 会话（单一模式，含 classic 别名）渲染「架构师」胶囊，点击 PUT architect；非 relay 不渲染', async () => {
   const env = createEnv();
