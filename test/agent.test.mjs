@@ -808,6 +808,7 @@ test('面板变更提醒（v0.5.1）：人类改模式/授权后下一次 pre-st
   assert.match(text, /面板已更新/);
   assert.match(text, /模式=压缩 ·/);
   assert.match(text, /autoCompress=on/);
+  assert.doesNotMatch(text, /autoChoose|autoDecision/, 'C10b：面板变更文案不再拼退役自决字段');
   assert.match(text, /压缩免审=on（autoCompress）/);
   assert.equal(injected[0].source.form, 'notice');
   assert.ok(injected[0].source.summary.length <= 120);
@@ -3776,7 +3777,7 @@ test('v0.9.0 #26/#53：接力成功清空旧会话全部授权（模式/架构�
   });
   const result = await h.handoff();
   assert.equal(result.ok, true, JSON.stringify(result));
-  // 旧会话：接力归档 = 会话本地授权全部失效（autoCompress/autoHandoff/authorizeNext 清零，autoDecision 丢弃）
+  // 旧会话：接力归档 = 会话本地授权全部失效（只清 autoCompress/autoHandoff/authorizeNext；退役自决字段本就不在面板状态里）
   const oldPanel = panelStateOf(h.session.id);
   assert.deepEqual(PERSISTENT_SWITCHES(oldPanel), { autoCompress: false, autoHandoff: false, authorizeNext: false });
   assert.equal(oldPanel.handedOff, true);

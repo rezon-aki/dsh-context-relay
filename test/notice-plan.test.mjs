@@ -116,6 +116,8 @@ test('planNotices：面板变更——首见只记基线；变化注入一次；
   const changed = planNotices(facts({ panel, lastBand: 'organize' }));
   assert.equal(changed.notice.kind, 'panel');
   assert.match(changed.notice.text, /面板已更新/);
+  assert.doesNotMatch(changed.notice.text, /autoChoose|autoDecision/, 'C10b：面板变更文案不再拼退役自决字段');
+  assert.equal(panelSignatureOf({ ...panel, autoChoose: true }), panelSignatureOf(panel), 'C10b：面板签名不计入退役字段');
   assert.equal(changed.claims.panelSig, panelSignatureOf(panel));
 
   const suppressed = planNotices(facts({ panel }));
