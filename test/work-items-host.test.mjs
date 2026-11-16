@@ -83,7 +83,7 @@ function request(route, { method = 'GET', url = WORK_ITEMS_ROUTE } = {}) {
 }
 
 const getWorkItems = (host, sessionId) => request(host.getRoute(), { url: WORK_ITEMS_ROUTE + '?sessionId=' + encodeURIComponent(sessionId) });
-const relaySession = (cwd, id = 'sess-relay') => ({ get: () => sessionOf(id, { agentPreset: 'relay', cwd }) });
+const relaySession = (cwd, id = 'sess-relay') => ({ get: () => sessionOf(id, { agentPreset: 'relay-long', cwd }) });
 
 /** 在 <cwd>/<relative> 写一份台账（默认 = 会话级路径 sess-relay）。 */
 function writeLedger(cwd, ledger = defaultLedger(), relative) {
@@ -179,7 +179,7 @@ test('host: 默认会话级路径（未配置 workItemsPath）→ 读 work-items
   // v0.7.0：台账是 Leader 自己的项目管理队列；队友会话不展示/不读取。
   const mateHost = fakeHost({
     config: { workItemsPath: null },
-    sessions: { get: () => sessionOf('sess-mate', { agentPreset: 'relay', cwd, origin: 'subagent', parentSession: 'sess-relay' }) },
+    sessions: { get: () => sessionOf('sess-mate', { agentPreset: 'relay-long', cwd, origin: 'subagent', parentSession: 'sess-relay' }) },
   });
   const mateGot = await getWorkItems(mateHost, 'sess-mate');
   assert.equal(mateGot.out.statusCode, 200);
@@ -188,7 +188,7 @@ test('host: 默认会话级路径（未配置 workItemsPath）→ 读 work-items
 });
 
 test('host: work-items relay 会话 cwd 不可得 → 200 + workItems:null（不 500）', async () => {
-  const host = fakeHost({ sessions: { get: () => sessionOf('sess-relay', { agentPreset: 'relay' }) } });
+  const host = fakeHost({ sessions: { get: () => sessionOf('sess-relay', { agentPreset: 'relay-long' }) } });
   const got = await getWorkItems(host, 'sess-relay');
   assert.equal(got.out.statusCode, 200);
   assert.equal(got.json.relay, true);
@@ -275,7 +275,7 @@ test('host: work-items 非 GET → 405（既有文案不变）', async () => {
 test('host: 四个 workItems 配置键原样透传到 relay-agent 行 config（缺省不污染）', async () => {
   const host = fakeHost({ config: { workItems: false, workItemsGate: 'warn', workItemsPath: '/tmp/custom-ledger.json', workItemsMax: 50 } });
   await tick(); // 异步 register 落定
-  assert.equal(host.registrations.length, 2);
+  assert.equal(host.registrations.length, 1);
   const agentRow = host.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
   assert.equal(agentRow.id, 'relay-agent');
   assert.equal(agentRow.config.workItems, false);
