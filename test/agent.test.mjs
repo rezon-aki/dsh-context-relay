@@ -1050,8 +1050,14 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   const session = fakeSession({ id: 'session-caller', cwd, seq: 0 });
   const created = [];
   const followed = [];
-  const cleanupCalls = { killedJobs: [], createdSchedules: [], deletedSchedules: [], teammateInterrupts: [], subagentInterrupts: [], drained: [], drainedDescendants: [], order: [] };
+  const cleanupCalls = { killedJobs: [], retargetedSchedules: [], scheduleListRequests: [], createCalls: [], deleteCalls: [], teammateInterrupts: [], subagentInterrupts: [], drained: [], drainedDescendants: [], order: [] };
   const liveSession = { id: 'session-new', header: { cwd }, requestHeader: () => undefined };
+  // rc.2 ScheduleCatalogEntry 形状：record + target/involvedSessionIds/status（dsh-schedule types.d.ts:394-417）。
+  const scheduleTasks = () => [
+    { id: 'sched-old', kind: 'every', title: 'check build', prompt: 'check the build', everySeconds: 300, scheduledAt: '2026-11-01T15:00:00.000Z', target: { kind: 'session', sessionId: 'session-caller' }, involvedSessionIds: ['session-caller'], status: 'active' },
+    { id: 'sched-once', kind: 'at', title: 'review PR', prompt: 'review the pr', scheduledAt: '2026-11-01T15:30:00.000Z', target: { kind: 'session', sessionId: 'session-caller' }, involvedSessionIds: ['session-caller'], status: 'active' },
+    { id: 'sched-mate', kind: 'cron', title: 'mate cron', prompt: 'mate cron prompt', expression: '*/5 * * * *', timeZone: 'UTC', scheduledAt: '2026-11-01T16:00:00.000Z', target: { kind: 'session', sessionId: 'teammate-1' }, involvedSessionIds: ['teammate-1'], status: 'active' },
+  ];
   const { services } = fakeServices({
     session,
     extra: {
@@ -1072,16 +1078,21 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
         kill: (...args) => { cleanupCalls.killedJobs.push(args); cleanupCalls.order.push('job-kill'); },
       },
       schedule: {
-        // 按 owner session 枚举（队友名下也可能有定时任务记录）
-        list: async ({ sessionId }) => ({
-          'session-caller': [
-            { id: 'sched-old', kind: 'every', title: 'check build', prompt: 'check the build', everySeconds: 300 },
-            { id: 'sched-once', kind: 'after', title: 'review PR', prompt: 'review the pr', afterSeconds: 600, scheduledAt: '2026-11-01T15:00:00.000Z' },
-          ],
-          'teammate-1': [{ id: 'sched-mate', kind: 'cron', title: 'mate cron', prompt: 'mate cron prompt', expression: '*/5 * * * *', timeZone: 'UTC', scheduledAt: '2026-11-01T16:00:00.000Z' }],
-        }[sessionId] ?? []),
-        create: async (sessionId, request) => { cleanupCalls.createdSchedules.push([sessionId, request]); cleanupCalls.order.push('schedule-transfer'); return { id: 'sched-new' }; },
-        delete: async (request) => { cleanupCalls.deletedSchedules.push(request); return { deleted: true }; },
+        // rc.2 Host-wide API：list() 返回分页对象；归属看 entry.target.sessionId（队友名下也按会话 id 归属）。
+        list: async (request = {}) => {
+          cleanupCalls.scheduleListRequests.push({ ...request });
+          const items = scheduleTasks();
+          return { items, shown: items.length, total: items.length, limit: request.limit ?? 100, offset: request.offset ?? 0 };
+        },
+        // 迁移 = edit 改投递目标（保留规则与投递史）；不 create/delete 新副本。
+        edit: async (request) => {
+          cleanupCalls.retargetedSchedules.push(request);
+          cleanupCalls.order.push('schedule-transfer');
+          const task = scheduleTasks().find((entry) => entry.id === request.id);
+          return { ...task, target: { kind: 'session', sessionId: request.patch.target.sessionId } };
+        },
+        create: async (...args) => { cleanupCalls.createCalls.push(args); throw new Error('rc.2 cleanup must not recreate schedules'); },
+        delete: async (...args) => { cleanupCalls.deleteCalls.push(args); throw new Error('rc.2 cleanup must not delete schedules'); },
       },
       subagents: {
         rootOf: () => ({ session: { id: 'session-caller' } }),
@@ -1151,16 +1162,17 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   // unowned job 对任何 caller 可见：不得被当作旧会话残留误杀/误记（P1）
   assert.ok(cleanupCalls.killedJobs.every(([id]) => id !== 'job-global'), 'unowned job 不能杀');
   assert.ok(!result.handover.inventory.jobs.some((job) => job.id === 'job-global'), 'unowned job 不进盘点');
-  // 定时任务按 owner session 枚举（含队友名下），after 用绝对 scheduledAt 迁移（不重新计时）
-  assert.equal(cleanupCalls.createdSchedules.length, 3, '定时任务迁移到新会话（Lead 2 + 队友 1）');
-  assert.deepEqual(cleanupCalls.createdSchedules[0], ['session-new', { title: 'check build', prompt: 'check the build', every_seconds: 300 }]);
-  assert.deepEqual(cleanupCalls.createdSchedules[1], ['session-new', { title: 'review PR', prompt: 'review the pr', at: '2026-11-01T15:00:00.000Z' }]);
-  assert.deepEqual(cleanupCalls.createdSchedules[2], ['session-new', { title: 'mate cron', prompt: 'mate cron prompt', cron: { expression: '*/5 * * * *', time_zone: 'UTC' } }]);
-  assert.deepEqual(cleanupCalls.deletedSchedules, [
-    { sessionId: 'session-caller', id: 'sched-old' },
-    { sessionId: 'session-caller', id: 'sched-once' },
-    { sessionId: 'teammate-1', id: 'sched-mate' },
-  ], '迁移成功后按 owner 删除旧定时任务');
+  // rc.2 定时任务是 Host-wide：list 分页取全量，按 target.sessionId 归属旧会话树（含队友名下），
+  // cleanup 用 edit 改投递目标（规则/投递史保留）——不重建、不删除源任务。
+  assert.deepEqual(cleanupCalls.scheduleListRequests, [{ limit: 500, offset: 0 }], 'rc.2 list 显式分页参数（一次取全量）');
+  assert.equal(cleanupCalls.retargetedSchedules.length, 3, '定时任务迁移到新会话（Lead 2 + 队友 1）');
+  assert.deepEqual(cleanupCalls.retargetedSchedules, [
+    { id: 'sched-old', action: 'update', patch: { target: { kind: 'session', sessionId: 'session-new' } } },
+    { id: 'sched-once', action: 'update', patch: { target: { kind: 'session', sessionId: 'session-new' } } },
+    { id: 'sched-mate', action: 'update', patch: { target: { kind: 'session', sessionId: 'session-new' } } },
+  ], 'cleanup 只把投递目标改到新会话（同一 id，保留规则与投递史）');
+  assert.deepEqual(cleanupCalls.createCalls, [], 'rc.2 cleanup 不重建定时任务');
+  assert.deepEqual(cleanupCalls.deleteCalls, [], 'rc.2 cleanup 不删除源定时任务');
   assert.deepEqual(cleanupCalls.subagentInterrupts.map((entry) => entry.id), ['teammate-1', 'child-1'], '先中断队友、再中断驻留子智能体（队友不重复中断）');
   assert.equal(cleanupCalls.subagentInterrupts[0].authority.kind, 'ancestor', 'DSH 契约：interrupt authority 必须是 {kind:"ancestor",agent}');
   assert.equal(cleanupCalls.subagentInterrupts[0].authority.agent.session.id, 'session-caller');
