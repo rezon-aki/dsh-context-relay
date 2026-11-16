@@ -4,7 +4,13 @@ name: Publish to npm (trusted publishing)
 # 前置（一次性，在 npm 网页做）：Package → Settings → Trusted Publishing 里添加
 #   GitHub repo: rezon-aki/dsh-context-relay
 #   Workflow:    publish-npm.yml
-# 触发：创建/发布 GitHub Release 时自动发；推送 v* tag 时自动发（tag 必须等于 package.json 版本，只认 SSH/无 API token 的发布路径）；或在 Actions 页面手动 Run workflow。
+#
+# 触发（三条路径共用同一套 tag↔version 校验，不一致直接 fail；不再只有 push tag 校验）：
+#   1) 发布 GitHub Release  → tag = github.event.release.tag_name
+#   2) push v* tag          → tag = github.ref_name
+#   3) Actions 手动 Run     → tag = 必填输入 inputs.tag（不填即失败，不退回分支 ref）
+# 校验口径：tag 必须严格等于 "v" + package.json version（如 v0.10.0）。
+# 已发布版本不再静默跳过：warning annotation + Job Summary 留痕，暴露 tag/文档/registry 漂移。
 
 on:
   release:
@@ -12,54 +18,126 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 git tag：必须等于 v<package.json version>，例如 v0.10.0'
+        required: true
+        type: string
 
-permissions:
-  contents: read
-  id-token: write
+# 同一版本可能被 release 与 tag push 各触发一次（手动触发也可能撞上），同一 group 串行；
+# cancel-in-progress=false 保证不打断进行中的 publish，后到的会在 registry 检查处 warning + skip。
+# release.tag_name / inputs.tag / ref_name 对同一版本解析为同一 tag，故三个触发共用 group。
+concurrency:
+  group: "publish-npm-${{ github.event.release.tag_name || inputs.tag || github.ref_name }}"
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # 删除 tag 也会触发 push 事件（github.event.deleted=true）：没有可发布内容，直接跳过避免假红。
+    if: ${{ !github.event.deleted }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - name: Checkout
+      - name: Checkout release tag
+        # 官方 tag（本机无法联网核对 SHA，不要写未经核对的 commit SHA；能联网时再 pin SHA）
         uses: actions/checkout@v4
+        with:
+          # push/release 的默认 ref 本来就是 tag；manual 必须显式检出输入的 tag，
+          # 否则会把分支头内容当成 tag 内容发布（版本校验通过但产物错）。
+          ref: "${{ github.event.release.tag_name || inputs.tag || github.ref }}"
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4 # 官方 tag（SHA 待联网核对后再 pin）
         with:
           node-version: 22
           # 注意：不要设置 registry-url——它会生成依赖 NODE_AUTH_TOKEN 的 .npmrc，干扰 npm CLI 的 OIDC trusted publishing 自动检测。
 
-      - name: Use npm >= 11.5.1 (trusted publishing)
-        run: npm install -g npm@latest
+      - name: Verify tag matches package.json version (all triggers)
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          case "$EVENT_NAME" in
+            push) TAG="$REF_NAME" ;;
+            release) TAG="$RELEASE_TAG" ;;
+            workflow_dispatch) TAG="$INPUT_TAG" ;;
+            *) echo "::error title=unsupported-trigger::unexpected event '$EVENT_NAME'"; exit 1 ;;
+          esac
+          if [ -z "$TAG" ]; then
+            echo "::error title=missing-tag::workflow_dispatch requires the 'tag' input (must equal v<package.json version>)"
+            exit 1
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error title=tag-version-mismatch::tag '$TAG' does not match package.json version 'v$VERSION'; refusing to publish"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing tag $TAG (package.json version $VERSION)"
 
-      - name: Test
-        run: npm test
+      - name: Use pinned npm >= 11.5.1 (trusted publishing)
+        run: npm install --global npm@11.5.1
+
+      - name: Install fixed DSH kernel (publish runs the same full test env as CI)
+        run: |
+          npm install --global @deepseek-ai/dsh@0.2.2-rc.2
+          npm ls --global --depth=0 @deepseek-ai/dsh
+
+      - name: Test (full suite, fixed DSH; skipped tests are failures)
+        env:
+          DSH_SEAM_REQUIRED: '1'
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/npm-test.log"
+          # 测试侧暂未读取 DSH_SEAM_REQUIRED（全仓无消费者），由这里按 reporter 汇总兜底：
+          # spec reporter 输出 "ℹ skipped N"，tap reporter 输出 "# skipped N"，有 skip 即红。
+          if ! grep -qE '^(#|ℹ) skipped [0-9]+$' "$RUNNER_TEMP/npm-test.log"; then
+            echo "::error title=no-test-summary::could not find 'skipped N' summary in test output (reporter output changed?)"
+            exit 1
+          fi
+          if grep -qE '^(#|ℹ) skipped [1-9][0-9]*$' "$RUNNER_TEMP/npm-test.log"; then
+            echo "::error title=skipped-tests::DSH_SEAM_REQUIRED=1 forbids skipped tests (fixed DSH kernel missing or moved?)"
+            grep -E '^(﹣|# SKIP)' "$RUNNER_TEMP/npm-test.log" | head -n 20 || true
+            exit 1
+          fi
 
       - name: Syntax check
         run: npm run check
 
-      - name: Verify tag matches package version (tag push)
-        if: github.event_name == 'push'
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
-            echo "tag $GITHUB_REF_NAME does not match package version v$VERSION"; exit 1
-          fi
-
       - name: Check if this version is already on npm
         id: published
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          VERSION=$(node -p "require('./package.json').version")
           if npm view "dsh-context-relay@$VERSION" version >/dev/null 2>&1; then
             echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "dsh-context-relay@$VERSION is already published; skipping publish."
+            echo "::warning title=already-published::dsh-context-relay@$VERSION is already on npm; publish skipped (tag/version drift? bump package.json and re-tag for new content)"
+            {
+              echo "## ⚠️ Already published — publish skipped"
+              echo ""
+              echo "\`dsh-context-relay@$VERSION\` already exists on npm; this workflow published nothing."
+              echo ""
+              echo "If tag v$VERSION is supposed to contain different content, bump \`package.json\` version and create a new tag."
+            } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=publish-pending::dsh-context-relay@$VERSION is not on npm yet; publishing"
           fi
 
       - name: Publish to npm with provenance
         if: steps.published.outputs.already != 'true'
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
           # 失败时把 npm 日志尾部转成公开 annotation：没有 admin token 也能排障（日志正文本身仍需权限）。
           set +e
@@ -77,3 +155,8 @@ jobs:
             done
             exit "$code"
           fi
+          {
+            echo "## ✅ Published dsh-context-relay@$VERSION"
+            echo ""
+            echo "Tag \`$TAG\` published to npm with provenance (trusted publishing / OIDC)."
+          } >> "$GITHUB_STEP_SUMMARY"

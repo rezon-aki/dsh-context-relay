@@ -1,0 +1,106 @@
+name: CI
+
+# seam / 集成测试在「找不到官方 DSH 包」时会 skip（M-15/D-05：本地全绿 ≠ CI 覆盖）。
+# 这里固定安装 @deepseek-ai/dsh@0.2.2-rc.2，并断言 skipped=0：
+#   装上了 → 相关用例真跑；包缺失或安装布局变了 → 用例 skip，job 直接红。
+# 本地 npm test 默认仍允许 skip（没装 dsh 的开发机不受影响）。
+# DSH_SEAM_REQUIRED=1 为语义开关（测试侧后续接入时生效），当前由下面的 TAP/spec 汇总断言兜底。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "ci-${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DSH_SEAM_REQUIRED: '1'
+    steps:
+      - name: Checkout
+        # 官方 tag（本机无法联网核对 SHA，不要写未经核对的 commit SHA；能联网时再 pin SHA）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4 # 官方 tag（SHA 待联网核对后再 pin）
+        with:
+          node-version: 22
+
+      - name: Install plugin dependencies
+        # 本包零运行时依赖且当前无 package-lock.json：无 lock 时 npm ci 会直接报错，退回 npm install；
+        # 一旦仓库补了 lockfile，就自动切回严格按锁安装。
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Install fixed DSH kernel (0.2.2-rc.2)
+        run: |
+          npm install --global @deepseek-ai/dsh@0.2.2-rc.2
+          npm ls --global --depth=0 @deepseek-ai/dsh
+
+      - name: Test (DSH_SEAM_REQUIRED=1 — skipped tests fail the job)
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/npm-test.log"
+          # spec reporter 输出 "ℹ skipped N"，tap reporter 输出 "# skipped N"；两种都兼容。
+          if ! grep -qE '^(#|ℹ) skipped [0-9]+$' "$RUNNER_TEMP/npm-test.log"; then
+            echo "::error title=no-test-summary::could not find 'skipped N' summary in test output (reporter output changed?)"
+            exit 1
+          fi
+          if grep -qE '^(#|ℹ) skipped [1-9][0-9]*$' "$RUNNER_TEMP/npm-test.log"; then
+            echo "::error title=skipped-tests::DSH_SEAM_REQUIRED=1 forbids skipped tests (fixed DSH kernel missing or moved?)"
+            grep -E '^(﹣|# SKIP)' "$RUNNER_TEMP/npm-test.log" | head -n 20 || true
+            exit 1
+          fi
+
+      - name: Syntax check
+        run: npm run check
+
+      - name: 'Syntax check every lib module (D-11: npm run check list can drift)'
+        run: |
+          find lib -type f -name '*.js' -print0 | xargs -0 -n1 -P4 node --check
+          echo "all lib/**/*.js files parse"
+
+      - name: 'Assert npm package contents (D-11: files list / pack not empty)'
+        run: |
+          cat > "$RUNNER_TEMP/assert-pack.mjs" <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+
+          const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+          const [meta] = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json'], { encoding: 'utf8' }));
+          const packed = new Set(meta.files.map((file) => file.path));
+          const unmatched = pkg.files.filter(
+            (entry) => ![...packed].some((path) => path === entry || path.startsWith(entry.replace(/\/+$/, '') + '/')),
+          );
+          const required = [
+            'lib/index.js',
+            'lib/seams.js',
+            'cordis.patch.yml',
+            'README.md',
+            'README.en.md',
+            'CHANGELOG.md',
+            'skills/context-relay/SKILL.md',
+          ];
+          const missing = required.filter((path) => !packed.has(path));
+          if (packed.size === 0 || meta.unpackedSize <= 0) throw new Error('npm pack produced an empty package');
+          if (unmatched.length > 0) throw new Error('package.json files entries packed nothing: ' + unmatched.join(', '));
+          if (missing.length > 0) throw new Error('required files missing from package: ' + missing.join(', '));
+          console.log(`pack ok: ${packed.size} files, ${meta.unpackedSize} bytes unpacked`);
+          NODE
+          node "$RUNNER_TEMP/assert-pack.mjs"
