@@ -211,27 +211,29 @@ test('压缩复位清 planeSig：平面降级 guard 被压缩遮蔽 → 下一�
 test('M-03/B-02：只读 bash/pwsh 成功不再触发 [闭环]；write/edit 才记「改动未落账」', async () => {
   resetSharedState();
   const cwd = tmpCwd();
+  // [闭环] 只在台账有未闭合分点时提示（用户 2026-11-16 反馈）→ 先建一条 doing 分点再测可执行场景。
+  writeLedger(cwd, [{ id: 'p1', title: '修闸门', status: 'doing', next: '写测试', phase: 'build' }], { currentPhase: { phase: 'build', since: 1 } });
   const session = fakeSession({ id: 'session-m03', cwd, seq: 0 });
-  const bundle = applyAgent(fakeServices({ session }).services);
+  const bundle = applyAgent(fakeServices({ session }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
   const pre = preStepOf(bundle);
   const post = postExecuteOf(bundle);
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
   const step = () => pre({ agent }, async () => undefined);
-  await step();
-  assert.equal(injected.length, 0);
+  await step(); // 首步：焦点行（台账已有未闭合分点）
+  assert.equal(injected.length, 1);
 
   await post({ name: 'bash', agent, arguments: { command: 'grep -rn foo . && cat x' } }, { isError: false }, async () => undefined);
   await post({ name: 'pwsh', agent, arguments: { command: 'Get-ChildItem -Recurse' } }, { isError: false }, async () => undefined);
   await step();
-  assert.equal(injected.length, 0, '只读侦察不再每步叠加 ~233 字符闭环误报');
+  assert.equal(injected.length, 1, '只读侦察不再每步叠加 ~233 字符闭环误报');
   assert.equal(PENDING_CLOSURE.has(session.id), false);
 
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/dir/x.js' } }, { isError: false }, async () => undefined);
   await post({ name: 'edit', agent, arguments: { file_path: 'lib/y.js' } }, { isError: false }, async () => undefined);
   await step();
-  assert.equal(injected.length, 1);
-  assert.match(injected[0].content[0].text, /\[闭环\] 上一步改动未落账：write\(x\.js\) \/ edit\(y\.js\)/);
+  assert.equal(injected.length, 2);
+  assert.match(injected[1].content[0].text, /\[闭环\] 上一步改动未落账：write\(x\.js\) \/ edit\(y\.js\)/);
 
   // apply_patch：target 取 patch 头目标文件（不把补丁正文带进历史）
   await post({
@@ -240,27 +242,32 @@ test('M-03/B-02：只读 bash/pwsh 成功不再触发 [闭环]；write/edit 才�
     arguments: { input: '*** Begin Patch\n*** Update File: src/z.js\n@@\n-a\n+b\n*** End Patch' },
   }, { isError: false }, async () => undefined);
   await step();
-  assert.match(injected[1].content[0].text, /apply_patch\(z\.js\)/);
+  assert.match(injected[2].content[0].text, /apply_patch\(z\.js\)/);
 });
 
 test('M-21：闭环 target 只取首行 + 凭据脱敏（命令/路径片段不原样进会话历史）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
+  // [闭环] 只在台账有未闭合分点时提示（用户 2026-11-16 反馈）→ 先建一条 doing 分点。
+  writeLedger(cwd, [{ id: 'p1', title: '修', status: 'doing', next: 'x', phase: 'build' }], { currentPhase: { phase: 'build', since: 1 } });
   const session = fakeSession({ id: 'session-m21', cwd, seq: 0 });
-  const bundle = applyAgent(fakeServices({ session }).services);
+  const bundle = applyAgent(fakeServices({ session }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
   const pre = preStepOf(bundle);
   const post = postExecuteOf(bundle);
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  const step = () => pre({ agent }, async () => undefined);
+  await step(); // 首步：焦点行
+  assert.equal(injected.length, 1);
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/secret\nsecond-line-should-not-leak.js' } }, { isError: false }, async () => undefined);
-  await pre({ agent }, async () => undefined);
-  const text = injected[0].content[0].text;
+  await step();
+  const text = injected[1].content[0].text;
   assert.match(text, /write\(secret\)/, 'target 只留首行');
   assert.doesNotMatch(text, /second-line-should-not-leak/);
 
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/sk-abcdefghijklmnopqrstuvwx.js' } }, { isError: false }, async () => undefined);
-  await pre({ agent }, async () => undefined);
-  const redacted = injected[1].content[0].text;
+  await step();
+  const redacted = injected[2].content[0].text;
   assert.match(redacted, /\[REDACTED\]/);
   assert.doesNotMatch(redacted, /sk-abcdefghijklmnopqrstuvwx/, '凭据片段不进入 notice/历史');
 });
@@ -268,33 +275,42 @@ test('M-21：闭环 target 只取首行 + 凭据脱敏（命令/路径片段不�
 test('B-04：只读 relay_work_items 不再清 pending；写入型（items / mode=replace）才清并停发闭环', async () => {
   resetSharedState();
   const cwd = tmpCwd();
+  // 先建一条未闭合分点：否则「无台账/全 done」时 [闭环] 本就抑制（用户 2026-11-16 反馈），测不到 B-04 差异。
+  writeLedger(cwd, [{ id: 'p1', title: '修', status: 'doing', next: 'x', phase: 'build' }], { currentPhase: { phase: 'build', since: 1 } });
   const session = fakeSession({ id: 'session-b04', cwd, seq: 0 });
-  const bundle = applyAgent(fakeServices({ session }).services);
+  const bundle = applyAgent(fakeServices({ session }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
   const pre = preStepOf(bundle);
   const post = postExecuteOf(bundle);
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
   const step = () => pre({ agent }, async () => undefined);
 
+  await step(); // 首步：焦点行
+  assert.equal(injected.length, 1);
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/a.js' } }, { isError: false }, async () => undefined);
   await step();
-  assert.equal(injected.length, 1);
+  assert.equal(injected.length, 2);
+  assert.match(injected[1].content[0].text, /\[闭环\] 上一步改动未落账：write\(a\.js\)/);
   // 只读台账（无参）：不清 pending
   await post({ name: 'relay_work_items', agent, arguments: {} }, { isError: false, mode: 'read' }, async () => undefined);
   assert.notEqual(PENDING_CLOSURE.has(session.id), false, '只读不再清 pending');
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/b.js' } }, { isError: false }, async () => undefined);
   await step();
-  assert.match(injected[1].content[0].text, /write\(a\.js\) \/ write\(b\.js\)/, '未落账签名累积（只读没有清）');
+  assert.match(injected[2].content[0].text, /write\(a\.js\) \/ write\(b\.js\)/, '未落账签名累积（只读没有清）');
 
-  // 写入型调用（items 整表替换）：清 pending → 下一次只提示新改动
+  // 写入型调用（items 整表替换）：清 pending → 下一次只提示新改动。
+  // 用真实写盘模拟「落账 + 开下一条 doing 分点」：闭环提示依赖台账仍有未闭合分点（用户 2026-11-16 反馈），
+  // 只清内存不落盘的假台账会掩盖「落账后没有分点可落账」的真实路径。
   await post({ name: 'relay_work_items', agent, arguments: { items: [] } }, { isError: false, mode: 'replace' }, async () => undefined);
+  writeLedger(cwd, [{ id: 'p2', title: '新活', status: 'doing', next: 'y', phase: 'build' }], { rev: 2, currentPhase: { phase: 'build', since: 2 } });
   assert.equal(PENDING_CLOSURE.has(session.id), false);
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/c.js' } }, { isError: false }, async () => undefined);
   await step();
-  assert.match(injected[2].content[0].text, /\[闭环\] 上一步改动未落账：write\(c\.js\)/);
+  assert.match(injected[3].content[0].text, /\[台账·build 0\/1\] doing「新活」next「y」/);
+  assert.match(injected[3].content[0].text, /\[闭环\] 上一步改动未落账：write\(c\.js\)/);
 });
 
-test('闭环抑制：台账存在且全部 done → 写文件不再催落账；出现 doing 分点后恢复提醒', async () => {
+test('闭环抑制：台账全部 done（ship）→ 焦点行/[闭环] 都不再出现；出现 doing 分点后恢复提醒', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-closure-done', cwd, seq: 0 });
@@ -307,14 +323,40 @@ test('闭环抑制：台账存在且全部 done → 写文件不再催落账；�
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/done.js' } }, { isError: false }, async () => undefined);
   await pre({ agent }, async () => undefined);
   const first = injected.map((message) => message.content[0].text).join('\n');
+  assert.equal(injected.length, 0, 'ship 全闭环 + 无可落账分点：没有任何可执行提醒');
   assert.doesNotMatch(first, /\[闭环\]/, '全部 done → 不再催闭环');
+  assert.doesNotMatch(first, /可以关 phase（relay_phase）/, 'ship 已收尾，不再催 relay_phase');
   assert.equal(PENDING_CLOSURE.has(session.id), false, 'pre-step 清掉「无分点可落账」的待落账标记');
-  // 重新开一个 doing 分点后：写入照常提醒
+  // 重新开一个 doing 分点后：焦点/闭环恢复提醒（可执行）
   writeLedger(cwd, [{ id: 'p2', title: '新活', status: 'doing', next: 'x', phase: 'build' }], { currentPhase: { phase: 'build', since: 2 } });
   await post({ name: 'write', agent, arguments: { file_path: '/tmp/open.js' } }, { isError: false }, async () => undefined);
   await pre({ agent }, async () => undefined);
-  const second = injected.map((message) => message.content[0].text).join('\n');
-  assert.match(second, /\[闭环\] 上一步改动未落账：write\(open\.js\)/);
+  assert.equal(injected.length, 1);
+  assert.match(injected[0].content[0].text, /\[台账·build 0\/1\] doing「新活」next「x」/);
+  assert.match(injected[0].content[0].text, /\[闭环\] 上一步改动未落账：write\(open\.js\)/);
+});
+
+test('闭环抑制：无台账文件 → 写文件不再催落账（无处落账）；先建 open 分点后照常提醒', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-closure-no-ledger', cwd, seq: 0 });
+  const bundle = applyAgent(fakeServices({ session }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
+  const pre = preStepOf(bundle);
+  const post = postExecuteOf(bundle);
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  await post({ name: 'write', agent, arguments: { file_path: '/tmp/x.js' } }, { isError: false }, async () => undefined);
+  await pre({ agent }, async () => undefined);
+  assert.equal(injected.length, 0, '无台账：没有分点可落账 → 不提示');
+  assert.equal(PENDING_CLOSURE.has(session.id), false, 'pre-step 清掉「无处落账」的待落账标记（防陈年改动重提）');
+  // 真实场景：先建一条 open 分点，闭环提醒才可执行
+  writeLedger(cwd, [{ id: 'p1', title: '新活', status: 'open', phase: 'build' }], { currentPhase: { phase: 'build', since: 1 } });
+  await post({ name: 'write', agent, arguments: { file_path: '/tmp/open.js' } }, { isError: false }, async () => undefined);
+  await pre({ agent }, async () => undefined);
+  assert.equal(injected.length, 1);
+  const text = injected[0].content[0].text;
+  assert.match(text, /\[台账·build 0\/1\] 未领取：open「新活」/);
+  assert.match(text, /\[闭环\] 上一步改动未落账：write\(open\.js\)/);
 });
 
 test('M-12：队友到线 notice 不含 Lead 台账行/计数，也不教用被裁的 relay_work_items', async () => {

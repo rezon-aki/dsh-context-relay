@@ -726,12 +726,15 @@ test('phase 元数据：currentPhase 读写、不传保留、phaseSummary/phaseF
   const cleared = await writeWorkItems(cwd, { items: readKept.items, rev: readKept.rev, currentPhase: null });
   assert.equal(cleared.ok, true);
   assert.equal(readWorkItems(cwd).currentPhase, null);
-  // 全部 done → 焦点行提示可以关 phase
+  // 全部 done → 焦点行提示可以关 phase（主链非终点 phase 仍可执行）
   const done = await seed(cwd, [
     { id: 'gate', title: '实现关账闸门', status: 'done', evidence: ['test/agent.test.mjs'], phase: 'build' },
   ], { currentPhase: { phase: 'build' } });
   assert.equal(done.ok, true);
-  assert.match(phaseFocusLine(readWorkItems(cwd)), /分点全闭环/);
+  assert.match(phaseFocusLine(readWorkItems(cwd)), /分点全闭环 → 可以关 phase（relay_phase）/);
+  // ship 是主链终点：全 done 后没有「关 phase」下一步，焦点行不再出现（用户 2026-11-16 反馈）
+  const shipLedger = { currentPhase: { phase: 'ship' }, items: [{ id: 'gate', title: '收尾', status: 'done', evidence: ['e'], phase: 'ship' }] };
+  assert.equal(phaseFocusLine(shipLedger), '', 'ship 全闭环不再催 relay_phase');
 });
 
 test('checkPhaseGate：strict 拒绝未收口；carry 显式带走；warn 放行；空台账放行', async () => {

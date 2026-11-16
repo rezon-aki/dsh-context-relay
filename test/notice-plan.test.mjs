@@ -221,16 +221,32 @@ test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条 �
   }
 });
 
-test('planNotices：台账没有未闭合分点时不发 [闭环]（没有分点可落账）', () => {
-  const closedLedger = { exists: true, currentPhase: { phase: 'ship' }, items: [{ id: 'p1', title: '收尾', status: 'done', phase: 'ship' }], counts: { total: 1, pending: 0, doing: 0, blocked: 0, open: 0, done: 1 } };
-  const suppressed = planNotices(facts({ lastBand: 'organize', ledger: closedLedger, pendingClosure: [{ tool: 'write', target: 'README.md' }] }));
-  // 全 done 的台账仍会有「可以关 phase」焦点行（另一种提醒），本用例只断言 [闭环] 被抑制。
+test('planNotices：[闭环] 只在台账有未闭合分点时提示——无台账/全 done 不发，有 doing 分点照常', () => {
+  const closure = [{ tool: 'write', target: 'README.md' }];
+  // 无台账文件：没有分点可落账 → 不发 [闭环]（旧行为会提示，用户 2026-11-16 反馈）
+  const noLedger = planNotices(facts({ lastBand: 'organize', ledger: undefined, pendingClosure: closure }));
+  assert.equal(noLedger.notice, null, '无台账 → 不生成台账批次 notice');
+  assert.equal(noLedger.claims?.guard?.closureSig ?? '', '', '不留下闭环去重签名');
+  // 台账存在且全部 done：同样没有地方落账 → 不发 [闭环]
+  const closedLedger = { exists: true, currentPhase: { phase: 'build' }, items: [{ id: 'p1', title: '收尾', status: 'done', phase: 'build' }], counts: { total: 1, pending: 0, doing: 0, blocked: 0, open: 0, done: 1 } };
+  const suppressed = planNotices(facts({ lastBand: 'organize', ledger: closedLedger, pendingClosure: closure }));
   assert.ok(suppressed.notice === null || !suppressed.notice.text.includes('[闭环]'), '无未闭合分点 → 不发闭环行');
   assert.equal(suppressed.claims?.guard?.closureSig ?? '', '', '不留下闭环去重签名，之后开新分点也不会重提旧改动');
-  // 有未闭合分点时行为不变（同场景对照）
+  // 台账有未闭合分点（doing）：闭环可执行 → 照常提示
   const openLedger = { exists: true, currentPhase: { phase: 'build' }, items: [{ id: 'p1', title: '修', status: 'doing', next: '写测试', phase: 'build' }], counts: { total: 1, pending: 1 } };
-  const shown = planNotices(facts({ lastBand: 'organize', ledger: openLedger, pendingClosure: [{ tool: 'write', target: 'README.md' }] }));
+  const shown = planNotices(facts({ lastBand: 'organize', ledger: openLedger, pendingClosure: closure }));
   assert.match(shown.notice.text, /\[闭环\] 上一步改动未落账：write\(README\.md\)/);
+});
+
+test('planNotices：phase=ship 且分点全闭环 → 不再生成「可以关 phase」焦点行（ship 已收尾）', () => {
+  const shipDone = { exists: true, currentPhase: { phase: 'ship', since: 1 }, items: [{ id: 'p1', title: '收尾', status: 'done', phase: 'ship' }], counts: { total: 1, pending: 0, doing: 0, blocked: 0, open: 0, done: 1 } };
+  const plan = planNotices(facts({ lastBand: 'organize', ledger: shipDone, pendingClosure: [{ tool: 'write', target: 'README.md' }] }));
+  assert.equal(plan.notice, null, 'ship 全闭环：焦点行与闭环都不可执行 → 无 notice');
+  assert.equal(plan.track.guard.focus, '', 'focus 去重键清空');
+  // 其他 phase 全闭环仍提示「可以关 phase」（行为不变）
+  const buildDone = { exists: true, currentPhase: { phase: 'build', since: 1 }, items: [{ id: 'p1', title: '实现', status: 'done', phase: 'build' }], counts: { total: 1, pending: 0, doing: 0, blocked: 0, open: 0, done: 1 } };
+  const buildPlan = planNotices(facts({ lastBand: 'organize', ledger: buildDone, pendingClosure: [] }));
+  assert.match(buildPlan.notice.text, /\[台账·build 1\/1\] 分点全闭环 → 可以关 phase（relay_phase）/);
 });
 
 // ── C15/§5：平面降级可见（planeStatusOf → 每压缩周期一次 notice）──────────────

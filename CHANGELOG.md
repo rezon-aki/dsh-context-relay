@@ -49,6 +49,7 @@
 - **D 子域**：策略单源/去重、9 seam 覆盖、CI 发布硬化、层级与依赖清理；只支持 DSH 0.2.2-rc.2。
 
 - **预算开关团队继承**：Lead 的「预算无上限」值在 spawn 队友 / 架构师 / dispatch worker 时继承（spawn 前登记、`agent/created` 写子会话面板并 force 落库，隔离成子会话后不再随全局默认翻转）；已存在的队友在下次 `relay_freshen` 复用同会话时同步到 Lead 当前值（架构师 `relay_architect` continue 复用同样同步）；`relay_handoff` 的 `handoffUnlimitedBudget` 语义不变。
+- **notice 可执行性（2026-11-16 用户反馈，接 M-03）**：`[闭环]` 只在台账存在未闭合分点（open/doing/blocked）时提示——无台账文件或未闭合分点为 0 时都不提示（无处落账；pre-step 同时清掉待落账标记，防止之后建账重提陈年改动）；`phase=ship` 且当前 phase 分点全 done 时焦点行「分点全闭环 → 可以关 phase（relay_phase）」不再出现（含 `[台账·ship N/N]` 计数行消失，`relay_status.workItems.focus` 同步为空）。
 
 ### 工具面与命令现状
 
