@@ -396,9 +396,9 @@ test('RelaySettings：保存发送五字段（unlimitedBudget 已迁到 composer
   const put = env.calls.find((call) => call.url === '/context-relay/settings' && call.method === 'PUT');
   assert.ok(put);
   const body = JSON.parse(String(put.body));
-  assert.deepEqual(Object.keys(body).sort(), ['autoChoose', 'autoCompress', 'autoHandoff', 'defaultOperation', 'threshold']);
+  assert.deepEqual(Object.keys(body).sort(), ['autoCompress', 'autoHandoff', 'defaultOperation', 'threshold']);
   assert.equal(body.threshold, 40);
-  assert.deepEqual(body, { threshold: 40, defaultOperation: 'handoff', autoChoose: false, autoCompress: true, autoHandoff: false });
+  assert.deepEqual(body, { threshold: 40, defaultOperation: 'handoff', autoCompress: true, autoHandoff: false });
   // 写盘失败（host 500 JSON）→ UI 显示错误而不是「已保存」
   env.server.settingsPutResponse = { ok: false, code: 'settings-persist-failed', persisted: false, message: 'settings.json write failed' };
   save.props.onClick();
@@ -802,7 +802,7 @@ test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 
   }
 });
 
-test('RelayPanel：点档位写旧字段（defaultOperation 与 autoChoose 互斥，同档不重复写）', async () => {
+test('RelayPanel：点档位写 defaultOperation（同档不重复写）', async () => {
   const env = createEnv();
   env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: null }, live: LIVE() };
   const RelayPanel = env.slots['conversation.composer.dock'];
@@ -813,13 +813,13 @@ test('RelayPanel：点档位写旧字段（defaultOperation 与 autoChoose 互�
   // 点「接力新会话」→ defaultOperation=handoff + 关 auto
   orderWithText(instance, '接力新会话').props.onClick();
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff' });
   assert.equal(wrapDeg(needleDeg(instance)), 270, 'handoff = 第 4 档 270°');
   assert.equal(needleDeg(instance), -90, '初始角取 (-180,180] 的等价角（入场摆动也只走短弧）');
   // 点「继续」→ continue（90°）
   orderWithText(instance, '继续').props.onClick();
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue' });
   assert.equal(needleTransform(instance), 'rotate(90deg)');
   // 同档再点不重复写
   const before = env.calls.filter((call) => call.method === 'PUT').length;
@@ -829,7 +829,7 @@ test('RelayPanel：点档位写旧字段（defaultOperation 与 autoChoose 互�
   // 键盘 ← 回到「问我」（null）
   dialOf(instance).props.onKeyDown({ key: 'ArrowLeft', preventDefault() {} });
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: null, autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: null });
   assert.equal(needleTransform(instance), 'rotate(0deg)');
 });
 
@@ -854,7 +854,7 @@ test('RelayPanel：拖动指针 >5px 才拖动/松手吸附并提交；点击扇
   dialProps().onPointerDown(pointer(150 + 60, 132));
   dialProps().onPointerUp(pointer(150 + 60, 132));
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue' });
   assert.equal(needleDeg(instance), 90, '指针按最短弧转到 90°');
   // 同一扇区再点：不重复写
   const putsAfterClick = env.calls.filter((call) => call.method === 'PUT').length;
@@ -874,7 +874,7 @@ test('RelayPanel：拖动指针 >5px 才拖动/松手吸附并提交；点击扇
   await instance.flush();
   dialProps().onPointerUp(pointer(150, 132 + 60));
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress' });
   assert.equal(needleDeg(instance), 180, '松手后指针吸附 180°（第 3 档，从拖动角 90° 走最短弧）');
   // 从档位铭牌按下不启动拖动（避免点选变拖拽）
   const before = env.calls.filter((call) => call.method === 'PUT').length;
@@ -903,11 +903,11 @@ test('RelayPanel：4 个扇区整盘平分——点任意 90° 扇区选中该�
   const pointer = (x, y) => ({ clientX: x, clientY: y, pointerId: 9, target: { closest: () => null }, currentTarget: dialProps().ref.current });
   // 依次点各扇区中心（半径 80）：写入档位与指针角都对，且每次增量 |Δ| ≤ 90°。
   const cases = [
-    { angle: 90, put: { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, deg: 90 },
-    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress', autoChoose: false }, deg: 180 },
-    { angle: 270, put: { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, deg: 270 },
+    { angle: 90, put: { sessionId: 'A', defaultOperation: 'continue' }, deg: 90 },
+    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress' }, deg: 180 },
+    { angle: 270, put: { sessionId: 'A', defaultOperation: 'handoff' }, deg: 270 },
     // 接力新会话(270°) → 问我(0°)：走 +90° 到 360°，而不是 −270° 绕整圈
-    { angle: 0, put: { sessionId: 'A', defaultOperation: null, autoChoose: false }, deg: 360 },
+    { angle: 0, put: { sessionId: 'A', defaultOperation: null }, deg: 360 },
   ];
   let previous = 0;
   for (const item of cases) {
@@ -998,7 +998,7 @@ test('RelayPanel：扇区按 30° 边界平分 / 中心轮毂死区 / 非主键�
   await click(44.9, 80);
   assert.equal(putCount(), 0, '44.9° 仍在「问我」扇区（当前档不重复写）');
   await click(45.1, 80);
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, '45.1° 越过边界落「继续」扇区');
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'continue' }, '45.1° 越过边界落「继续」扇区');
   // 中心轮毂死区（半径 18px 内）：点正中心不选档、不写 PUT（否则 atan2(0,0) 会固定写「压缩继续」）
   const beforeHub = putCount();
   await click(0, 0);
@@ -1065,7 +1065,7 @@ test('RelayPanel：relay-long 表盘只 4 档（问我/继续/压缩继续/接�
   assert.match(String(handoffSeat.props.title), /模式只决定做什么/);
   orderWithText(instance, '接力新会话').props.onClick();
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, '团队重启档写入 handoff');
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff' }, '团队重启档写入 handoff');
   assert.match(textOf(instance.tree), /团队重启/, '读出行 hint 标注团队重启');
 });
 
@@ -1133,7 +1133,7 @@ test('RelayPanel：单一模式 4 档有效模式（问我/继续/压缩继续/�
   // 点「压缩继续」→ 写真实字段；指针走到 180°
   orderWithText(instance, '压缩继续').props.onClick();
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'compress' });
   assert.equal(Math.abs(needleDeg(instance)), 180, '指针停在「压缩继续」档（±180°）');
 });
 
@@ -1161,11 +1161,11 @@ test('RelayPanel：单一模式键盘/点击/拖动都按 4 档换挡，指针�
   const putCount = () => env.calls.filter((call) => call.method === 'PUT').length;
   // 扇区点击：90°→继续，180°→压缩继续，270°→接力新会话，0°→问我；每步只走 90° 最短弧
   const cases = [
-    { angle: 90, put: { sessionId: 'A', defaultOperation: 'continue', autoChoose: false }, deg: 90 },
-    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress', autoChoose: false }, deg: 180 },
-    { angle: 270, put: { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, deg: 270 },
+    { angle: 90, put: { sessionId: 'A', defaultOperation: 'continue' }, deg: 90 },
+    { angle: 180, put: { sessionId: 'A', defaultOperation: 'compress' }, deg: 180 },
+    { angle: 270, put: { sessionId: 'A', defaultOperation: 'handoff' }, deg: 270 },
     // 270° → 0°：走 +90° 到 360°，不绕 −270° 整圈
-    { angle: 0, put: { sessionId: 'A', defaultOperation: null, autoChoose: false }, deg: 360 },
+    { angle: 0, put: { sessionId: 'A', defaultOperation: null }, deg: 360 },
   ];
   let previous = 0;
   for (const item of cases) {
@@ -1178,15 +1178,15 @@ test('RelayPanel：单一模式键盘/点击/拖动都按 4 档换挡，指针�
   // 键盘：Home→问我(0)，End→接力新会话(3=270°)，ArrowLeft 从问我回绕到 3（−90°）
   dialProps().onKeyDown({ key: 'End', preventDefault() {} });
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff' });
   assert.equal(wrapDeg(needleDeg(instance)), 270);
   dialProps().onKeyDown({ key: 'Home', preventDefault() {} });
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: null, autoChoose: false });
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: null });
   assert.equal(needleDeg(instance), 360, 'Home 从 270° 走 +90° 到 360°（等价 0°）');
   dialProps().onKeyDown({ key: 'ArrowLeft', preventDefault() {} });
   await instance.flush();
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, 'ArrowLeft 回绕到第 4 档');
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff' }, 'ArrowLeft 回绕到第 4 档');
   assert.equal(needleDeg(instance), 270, '从 360° 走 −90° 到 270°');
   // 连按右方向键两次：继续 → 压缩继续（同步意图档位，不重复提交）
   dialProps().onKeyDown({ key: 'Home', preventDefault() {} });
@@ -1211,7 +1211,7 @@ test('RelayPanel：单一模式键盘/点击/拖动都按 4 档换挡，指针�
   dialProps().onPointerUp(pointer(150 - 60, 132));
   await instance.flush();
   assert.equal(wrapDeg(needleDeg(instance)), 270, '松手吸附到 270°（接力新会话）');
-  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff', autoChoose: false }, '拖动松手提交档位');
+  assert.deepEqual(lastDialPut(env), { sessionId: 'A', defaultOperation: 'handoff' }, '拖动松手提交档位');
 });
 
 test('CSS：冷峻哥特「石肋星盘」表盘契约（多边形肋拱/山花冠/飞扶壁/照准仪/冷色线稿/无彩窗暖金/reduced-motion）', () => {

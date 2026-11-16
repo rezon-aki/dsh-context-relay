@@ -12,7 +12,10 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { DEFAULT_THRESHOLDS, budgetGate, formatStatus, normalizeBudgetPlan, phaseBudget } from '../lib/policy.js';
+import { budgetGate, formatStatus, normalizeBudgetPlan, normalizeThresholds, phaseBudget } from '../lib/policy.js';
+
+/** v0.10.0 C10 删 legacy 阈值导出后，测试用等价固定阈值对象（35/40/50 + token 兜底）。 */
+const DEFAULT_THRESHOLDS = normalizeThresholds({ warnRatio: 0.35, organizeRatio: 0.4, relayRatio: 0.5 });
 import { apply } from '../lib/agent.js';
 import { clearDeriveMemory } from '../lib/agent/derive.js';
 import { clearSharedMemory } from '../lib/agent/shared.js';
@@ -43,7 +46,7 @@ function resetSharedState() {
   delete globalThis[Symbol.for('dsh-context-relay.handoffs')];
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   // 测试夹具：budget 用例按显式基准 40%（35/40/50）编写；默认基准 35% 由 policy/index 测试覆盖。
-  globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true };
+  globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true };
   delete globalThis[Symbol.for('dsh-context-relay.handoff.routes')];
 }
 
@@ -311,13 +314,13 @@ test('relay_phase warn 档缺 budget_plan：拒绝且零副作用（phase/面板
   assert.equal(panelStateOf(h.session.id).defaultOperation, 'continue', '拒绝路径不消费/改写面板一次性预设');
   assert.equal(existsSync(join(h.cwd, '.scratch', 'context-relay', 'lessons.md')), false, '拒绝路径不写 lessons');
 
-  // 拒绝路径在 next_operation 写盘之前：不得写入任何自决（v0.9.0 D8=A：autoChoose/autoDecision 已退役，恒 false/null）。
+  // 拒绝路径零写入：退役自决字段（autoChoose/autoDecision）不得出现，next_operation 死路径不再写面板。
   const h2 = harness({ id: 'session-budget-missing-auto', pressure: { contextWindow: 1_000_000, projectedTokens: 370_000 } });
   updatePanelState(h2.session.id, { autoDecision: { operation: 'compress', at: 1_234 } });
   await rejectionOf(h2.phase({ phase: 'build', contract_check: CONTRACT_CHECK, next_operation: 'handoff' }));
   const panel = panelStateOf(h2.session.id);
-  assert.equal(panel.autoChoose, false, 'autoChoose 退役（归一 false）');
-  assert.equal(panel.autoDecision, null, '拒绝路径不写 autoDecision');
+  assert.equal(Object.prototype.hasOwnProperty.call(panel, 'autoChoose'), false, '退役 autoChoose 不得出现');
+  assert.equal(Object.prototype.hasOwnProperty.call(panel, 'autoDecision'), false, '拒绝路径不写 autoDecision');
 });
 
 test('relay_phase 出口不参与预算闸门：warn 档 build→blocked 无需 budget_plan，恢复也不要求 budget_plan', async () => {

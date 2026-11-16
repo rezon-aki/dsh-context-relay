@@ -56,13 +56,14 @@ test('C12 契约区：client 常量可独立求值（纯字面量镜像，不 im
   assert.equal(typeof client.operationLongLabelOf, 'function');
 });
 
-// v0.9.0 单一模式退役档：client 不提供、不映射；host 随 v0.10.0(C10) 从 PANEL_OPERATIONS 删除。
+// v0.10.0 C10：退役档已从 host PANEL_OPERATIONS 删除 —— 两平面直接全集一致，不再有「去退役档」过滤。
 const RETIRED_OPERATIONS = Object.freeze(['compress-then-handoff']);
 
-test('C12 契约：client 操作档 = host PANEL_OPERATIONS 去退役档（集合与顺序）', () => {
-  const expected = PANEL_OPERATIONS.filter((operation) => RETIRED_OPERATIONS.includes(operation) === false);
-  assert.deepEqual([...client.OPERATION_VALUES], [...expected], '操作档必须与 host PANEL_OPERATIONS 一致（退役档除外）');
+test('C12/C10 契约：client 操作档 = host PANEL_OPERATIONS（集合与顺序逐字一致）', () => {
+  assert.deepEqual([...PANEL_OPERATIONS], ['compress', 'handoff', 'continue'], 'host 单一模式三档');
+  assert.deepEqual([...client.OPERATION_VALUES], [...PANEL_OPERATIONS], '操作档必须与 host PANEL_OPERATIONS 一致');
   for (const retired of RETIRED_OPERATIONS) {
+    assert.equal(PANEL_OPERATIONS.includes(retired), false, '退役档不得留在 host enum：' + retired);
     assert.equal(client.OPERATION_VALUES.includes(retired), false, '退役档不得出现在 client 操作档：' + retired);
     assert.equal(client.OPERATION_LABELS[retired], undefined, '退役档不得有 client 标签：' + retired);
   }
@@ -117,9 +118,10 @@ test('C12 契约：client API 路由 = host 路由常量（设置/面板/台账/
   assert.equal(client.ARCHITECT_MODELS_API, hostRoute('ARCHITECT_MODELS_ROUTE'));
 });
 
-test('C12/D-12：client 退役死分支与本地派生公式已删除（契约判断集中本文件）', () => {
-  // 自决（autoChoose/autoDecision）v0.9.0 起退役：client 不得再读 autoDecision（host 随 C10 删字段）。
+test('C12/C10/D-12：client 退役死分支（autoChoose/autoDecision/cth）与本地派生公式已删除', () => {
+  // 自决（autoChoose/autoDecision）v0.10.0 C10 从 host 面板删净：client 不得再读/写这两个字段。
   assert.equal(clientSource.includes('autoDecision'), false, 'autoDecision 死分支已删');
+  assert.equal(clientSource.includes('autoChoose'), false, 'autoChoose 兼容写字段已删（PUT 不再写、也不读）');
   // 标签/推荐映射只保留契约区一套（不再有 CHIP_LABELS / RECOMMEND_OPERATIONS 第二套映射）。
   assert.equal(clientSource.includes('CHIP_LABELS'), false, 'CHIP_LABELS 重复映射已删');
   assert.equal(clientSource.includes('RECOMMEND_OPERATIONS'), false, 'RECOMMEND_OPERATIONS 重复映射已删');

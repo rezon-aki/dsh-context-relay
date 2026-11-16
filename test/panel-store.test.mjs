@@ -27,15 +27,13 @@ const DEFAULT = normalizePanelState({});
 /** 侧栏设置发布位（host 平面写入；panel-store 读作按会话面板的默认值）。 */
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 
-/** v0.9.0 D8=A：cth 已退役（旧值归一为 null），测试默认用合法档位。 */
+/** 测试默认侧栏设置（单模式合法档；已退役字段不再发布）。 */
 const publishSidebarDefaults = (overrides = {}) => {
   globalThis[SETTINGS_KEY] = {
     threshold: 50,
     defaultOperation: 'compress',
-    autoChoose: false,
     autoCompress: true,
     autoHandoff: true,
-    explicit: true,
     ...overrides,
   };
 };
@@ -59,26 +57,26 @@ test('isValidSessionId: 拒绝 __proto__/NUL/超长/空白/伪 id，接受真实
   }
 });
 
-test('resolvePanelState: 合并默认/记录/补丁，并固化不变量（D8=A：autoChoose/autoDecision 退役，不变量不变）', () => {
-  const defaults = { defaultOperation: 'compress', autoChoose: false, autoCompress: true, autoHandoff: false };
+test('resolvePanelState: 合并默认/记录/补丁，退役/未知字段一律由白名单丢弃', () => {
+  const defaults = { defaultOperation: 'compress', autoCompress: true, autoHandoff: false };
   assert.deepEqual(resolvePanelState({ defaults }), { ...DEFAULT, defaultOperation: 'compress', autoCompress: true });
-  // v0.9.0 D8=A：autoChoose 退役（恒 false）；旧「自动」档数据按显式默认操作读回、autoDecision 丢弃
-  assert.deepEqual(
-    resolvePanelState({ defaults: { autoChoose: true, defaultOperation: 'handoff' }, patch: { autoDecision: { operation: 'compress', at: 5 } } }),
-    { ...DEFAULT, defaultOperation: 'handoff' },
-  );
   // record / patch 覆盖默认值；未知键丢弃
   const merged = resolvePanelState({ defaults, record: { autoCompress: false, unrelated: 'drop' }, patch: { autoHandoff: true } });
   assert.equal(merged.autoCompress, false);
   assert.equal(merged.autoHandoff, true);
   assert.equal(Object.prototype.hasOwnProperty.call(merged, 'unrelated'), false);
-  // autoDecision 已退役：任何输入都不保留
-  assert.equal(resolvePanelState({ defaults: { autoChoose: true }, patch: { autoDecision: { operation: 'compress', at: 1 } } }).autoDecision, null);
-  assert.equal(resolvePanelState({ defaults: { autoChoose: true } }).autoChoose, false);
-  // 字段白名单：handoffPreAuthorized 已删除（旧数据/旧调用方传入都不得出现在状态里）
-  assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT, 'handoffPreAuthorized'), false);
-  // MIG4（D8=A）：v0.10.0 前 enum 仍含 cth（归一为 null），故白名单数组不变
-  assert.deepEqual(PANEL_OPERATIONS, ['compress', 'handoff', 'continue', 'compress-then-handoff']);
+  // 退役字段（自动选择档/模型自决/交接目标 preset/handoffPreAuthorized）不进状态
+  const retired = resolvePanelState({
+    defaults: { autoChoose: true, defaultOperation: 'handoff' },
+    record: { handoffPreset: 'relay' },
+    patch: { autoDecision: { operation: 'compress', at: 1 }, handoffPreAuthorized: true },
+  });
+  assert.deepEqual(retired, { ...DEFAULT, defaultOperation: 'handoff' });
+  for (const key of ['autoChoose', 'autoDecision', 'handoffPreset', 'handoffPreAuthorized']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(retired, key), false, '退役字段不得出现：' + key);
+  }
+  // 单一模式三档
+  assert.deepEqual(PANEL_OPERATIONS, ['compress', 'handoff', 'continue']);
 });
 
 test('panelStateOf: 无记录返回侧栏默认值且不落盘；非法 sessionId 同样安全', () => {
@@ -110,29 +108,30 @@ test('unlimitedBudget（v0.2.7）：settings 默认值合并成面板生效值�
   assert.equal(panelStateOf('sess-budget-2').handoffUnlimitedBudget, false);
 });
 
-test('handoffPreset（v0.2.14；v0.9.0 D8=A/MIG7 退役）：写入/旧值均不生效（恒 null），兼容接受不报错', () => {
+test('退役字段（自动选择/自决/交接目标 preset）：写入被丢弃不落盘，旧 panel.json 脏值不报错', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-hp').handoffPreset, null, '字段退役：恒 null（目标 preset 由单一模式决定）');
-  // 旧调用方/旧面板写入兼容接受但不生效：归一为 null → 与当前相同 → no-op 不落盘
-  updatePanelState('sess-hp', { handoffPreset: 'relay-long' });
-  assert.equal(panelStateOf('sess-hp').handoffPreset, null);
+  // 退役字段写入 = 归一丢弃 → 与当前生效值相同 → no-op 不落盘
+  updatePanelState('sess-hp', { handoffPreset: 'relay-long', autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
+  for (const key of ['handoffPreset', 'autoChoose', 'autoDecision']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf('sess-hp'), key), false, '退役字段不得出现在状态：' + key);
+  }
   assert.equal(existsSync(panelPath), false, '退役字段写入是 no-op，不创建会话记录');
-  // 旧 panel.json：缺字段 → null；脏值（非法字符/非字符串/旧 id）→ null；同记录授权按 schema 迁移失效
+  // 旧 panel.json：退役/脏字段按白名单丢弃；同记录授权按 schema 迁移失效
   writeFileSync(panelPath, JSON.stringify({
     sessions: {
-      'sess-hp-old': { handoffPreset: 'not a preset id!' },
+      'sess-hp-old': { handoffPreset: 'not a preset id!', autoChoose: true },
       'sess-hp-missing': { autoCompress: true },
-      'sess-hp-number': { handoffPreset: 42 },
+      'sess-hp-number': { handoffPreset: 42, autoDecision: { operation: 'compress', at: 1 } },
     },
   }), 'utf8');
   clearPanelMemory();
   loadPanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-hp-old').handoffPreset, null);
-  assert.equal(panelStateOf('sess-hp-old').autoCompress, false, '同记录其它字段不受脏值影响');
-  assert.equal(panelStateOf('sess-hp-missing').handoffPreset, null);
+  assert.deepEqual(panelStateOf('sess-hp-old'), DEFAULT);
+  assert.equal(panelStateOf('sess-hp-old').autoCompress, false, '同记录其它字段不受脏值影响，旧授权已失效');
+  assert.deepEqual(panelStateOf('sess-hp-missing'), DEFAULT);
   assert.equal(panelStateOf('sess-hp-missing').autoCompress, false, '无版本旧文件：授权字段一次性失效');
-  assert.equal(panelStateOf('sess-hp-number').handoffPreset, null);
+  assert.deepEqual(panelStateOf('sess-hp-number'), DEFAULT);
 });
 
 test('loadPanelStore: 文件缺失空载；正常文件归一化，非法 sessionId 与非对象值跳过、旧死字段丢弃', () => {
@@ -257,10 +256,10 @@ test('updatePanelState(agent): 只落 patch 显式字段、不 materialize 侧�
   // agent 内部写 4 个授权字段：只落这 4 个显式键（不写 defaultOperation/autoDecision 默认值）。
   // 先把侧栏默认改为不同的值，验证 agent 稀疏写入钉住显式授权、未写字段继续跟随默认。
   publishSidebarDefaults({ autoCompress: false, autoHandoff: false });
-  updatePanelState('sess-child', { autoChoose: false, autoCompress: true, autoHandoff: true, authorizeNext: false }, { source: 'agent' });
-  assert.deepEqual(readPanelFile(panelPath).sessions['sess-child'], { autoChoose: false, autoCompress: true, autoHandoff: true, authorizeNext: false });
+  updatePanelState('sess-child', { autoCompress: true, autoHandoff: true, authorizeNext: false }, { source: 'agent' });
+  assert.deepEqual(readPanelFile(panelPath).sessions['sess-child'], { autoCompress: true, autoHandoff: true, authorizeNext: false });
   // 侧栏默认改变：子会话未被固化的字段跟随新默认，显式继承的授权保留
-  publishSidebarDefaults({ defaultOperation: 'continue', autoChoose: false, autoCompress: false, autoHandoff: false });
+  publishSidebarDefaults({ defaultOperation: 'continue', autoCompress: false, autoHandoff: false });
   const child = panelStateOf('sess-child');
   assert.equal(child.defaultOperation, 'continue');
   assert.equal(child.autoCompress, true);
@@ -276,16 +275,15 @@ test('updatePanelState(agent): 只落 patch 显式字段、不 materialize 侧�
   assert.equal(Object.prototype.hasOwnProperty.call(readPanelFile(panelPath).sessions['sess-agent'], 'handoffPreAuthorized'), false);
 });
 
-test('updatePanelState(agent): D8=A autoChoose/autoDecision 退役 → 相关写入是 no-op 不落盘', () => {
+test('updatePanelState(agent): 退役自决字段写入是 no-op 不落盘', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
-  publishSidebarDefaults({ autoChoose: false, defaultOperation: 'compress' });
-  // 自决字段退役：归一化丢弃 → 与当前相同 → 不落盘（B-P2-8 根因）
+  publishSidebarDefaults({ defaultOperation: 'compress' });
+  // 退役字段归一化丢弃 → 与当前相同 → 不落盘
   updatePanelState('sess-dec', { autoDecision: { operation: 'compress', at: 1 } }, { source: 'agent' });
   assert.equal(existsSync(panelPath), false);
-  // 旧「自动」档开关同样退役：写入 autoChoose=true 归一为 false → no-op
   const retired = updatePanelState('sess-dec2', { autoChoose: true }, { source: 'agent' });
-  assert.equal(retired.autoChoose, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(retired, 'autoChoose'), false);
   assert.equal(existsSync(panelPath), false, '退役字段不得创建会话记录');
 });
 
@@ -510,12 +508,13 @@ test('architect（v0.6.4）：settings 默认值合并成面板生效值；会�
   assert.equal(panelStateOf('sess-arch').architect, true, '面板写入后不再跟随默认');
 });
 
-// ── v0.9.0 #53/D3=A：panel.json schemaVersion 迁移（授权一次性失效）────────────
-test('v0.9.0 schema 迁移：无 schemaVersion 旧文件首次载入清授权字段、保留模式/架构师；写盘落 v2（幂等）', () => {
+// ── panel.json schemaVersion 迁移（授权一次性失效；v0.10.0=3）────────────
+test('schema 迁移 v2→v3：旧授权一次性失效并显式 warn，保留模式/架构师；写盘落 v3（幂等）', () => {
   const panelPath = tmpPanelPath();
   const warnings = [];
   configurePanelStore({ panelPath }, { warn: (message) => warnings.push(String(message)) });
   writeFileSync(panelPath, JSON.stringify({
+    schemaVersion: 2,
     sessions: {
       'sess-mig': {
         defaultOperation: 'compress', autoChoose: true, autoCompress: true, autoHandoff: true,
@@ -529,46 +528,51 @@ test('v0.9.0 schema 迁移：无 schemaVersion 旧文件首次载入清授权字
   const loaded = loadPanelStore({ panelPath });
   assert.equal(loaded.size, 2);
   const migrated = panelStateOf('sess-mig');
-  // 授权/自决字段全部失效（只清授权，不清模式/架构师）
+  // 授权失效（只清授权，不清模式/架构师）；退役自决字段按白名单丢弃
   assert.equal(migrated.autoCompress, false, '旧授权 autoCompress 失效');
   assert.equal(migrated.autoHandoff, false, '旧授权 autoHandoff 失效');
   assert.equal(migrated.authorizeNext, false, '旧授权 authorizeNext 失效');
-  assert.equal(migrated.autoChoose, false);
-  assert.equal(migrated.autoDecision, null);
+  for (const key of ['autoChoose', 'autoDecision']) assert.equal(Object.prototype.hasOwnProperty.call(migrated, key), false);
   assert.equal(migrated.defaultOperation, 'compress', '模式不是授权：保留');
   assert.equal(migrated.architect, true, '架构师不是授权：保留');
   assert.deepEqual(migrated.architectModel, { provider: 'geekai', model: 'gpt-6.1-sol' });
   assert.equal(migrated.unlimitedBudget, true);
   assert.equal(migrated.handoffUnlimitedBudget, false);
   assert.deepEqual(panelStateOf('sess-clean'), { ...DEFAULT, defaultOperation: 'continue' });
-  assert.equal(warnings.filter((line) => /authorization schema/.test(line)).length, 1, '迁移 warn 一次');
+  assert.equal(warnings.filter((line) => /authorization schema 2 != v3/.test(line)).length, 1, '版本失效必须显式 warn 一次');
   // 标脏 + 写盘落 schemaVersion（只失效授权字段，模式/架构师写回原值）
   assert.equal(savePanelStore(), true);
   const saved = readPanelFile(panelPath);
   assert.equal(saved.schemaVersion, PANEL_SCHEMA_VERSION);
   assert.equal(saved.sessions['sess-mig'].autoCompress, false);
-  assert.equal(saved.sessions['sess-mig'].autoChoose, false);
   assert.equal(saved.sessions['sess-mig'].authorizeNext, false);
   assert.equal(saved.sessions['sess-mig'].defaultOperation, 'compress');
   assert.equal(saved.sessions['sess-mig'].architect, true);
-  // 二次载入（v2）：不重复清——迁移后重新开的授权保持
+  assert.equal(Object.prototype.hasOwnProperty.call(saved.sessions['sess-mig'], 'autoChoose'), false, '退役字段不写回磁盘');
+  // 二次载入（v3）：不重复清——迁移后重新开的授权保持
   updatePanelState('sess-mig', { autoCompress: true });
   clearPanelMemory();
   loadPanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-mig').autoCompress, true, 'v2 文件不得再次失效授权');
-  assert.equal(warnings.filter((line) => /authorization schema/.test(line)).length, 1, 'v2 载入不再 migrate/warn');
+  assert.equal(panelStateOf('sess-mig').autoCompress, true, 'v3 文件不得再次失效授权');
+  assert.equal(warnings.filter((line) => /authorization schema/.test(line)).length, 1, 'v3 载入不再 migrate/warn');
 });
 
-test('v0.9.0 schema 迁移：版本不符同样失效；无记录旧文件写盘补 schemaVersion', () => {
+test('schema 迁移：任意旧版本（含无版本）都失效授权；无记录旧文件写盘补 schemaVersion', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
   writeFileSync(panelPath, JSON.stringify({ schemaVersion: 1, sessions: { 'sess-v1': { autoCompress: true, autoHandoff: true } } }), 'utf8');
   loadPanelStore({ panelPath });
-  assert.equal(panelStateOf('sess-v1').autoCompress, false, 'schemaVersion 1 != 2 → 授权失效');
+  assert.equal(panelStateOf('sess-v1').autoCompress, false, 'schemaVersion 1 != 3 → 授权失效');
   assert.equal(panelStateOf('sess-v1').autoHandoff, false);
   assert.equal(savePanelStore(), true);
   assert.equal(readPanelFile(panelPath).schemaVersion, PANEL_SCHEMA_VERSION);
-  // 空旧文件（无版本、无记录可清）：载入后 save 仍写 v2，避免永久停留在无版本形态
+  // 无版本（v1 前形态）同样失效
+  const noVersionPath = tmpPanelPath();
+  configurePanelStore({ panelPath: noVersionPath });
+  writeFileSync(noVersionPath, JSON.stringify({ sessions: { 'sess-nv': { autoCompress: true } } }), 'utf8');
+  loadPanelStore({ panelPath: noVersionPath });
+  assert.equal(panelStateOf('sess-nv').autoCompress, false, '无版本旧文件：授权失效');
+  // 空旧文件（无版本、无记录可清）：载入后 save 仍写当前版本，避免永久停留在无版本形态
   const emptyPath = tmpPanelPath();
   configurePanelStore({ panelPath: emptyPath });
   writeFileSync(emptyPath, JSON.stringify({ sessions: {} }), 'utf8');
@@ -577,7 +581,7 @@ test('v0.9.0 schema 迁移：版本不符同样失效；无记录旧文件写盘
   assert.equal(readPanelFile(emptyPath).schemaVersion, PANEL_SCHEMA_VERSION);
 });
 
-test('v0.9.0 schema 迁移：v2 文件载入不失效授权（新版本内授权仍按会话有效）', () => {
+test('schema：当前版本（v3）文件载入不失效授权（同版本内授权仍按会话有效）', () => {
   const panelPath = tmpPanelPath();
   configurePanelStore({ panelPath });
   writeFileSync(panelPath, JSON.stringify({

@@ -1718,14 +1718,14 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   const architect = makeAgent({ sessionId: 'session-arch', header: { origin: 'subagent', delegationDepth: 1, parentSession: LEAD }, calls: architectCalls, sections: [] });
   await g.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: architect });
   assert.deepEqual(architectCalls, ['relay_checkpoint'], '架构师只拿 checkpoint（不拿 dispatch/collect）');
-  // 旧配置 routerMode:false 仅告警忽略（单一模式生产不可关）→ 仍按单一模式装配。
+  // v0.10.0：退役 config.routerMode 被静默忽略（无 warn）→ 仍按单一模式装配。
   const c = fakeCtx();
   apply(c.ctx, { routerMode: false });
-  assert.ok(c.warns.some((line) => /routerMode=false ignored/.test(line)), '旧 routerMode 配置应 warn 一次');
+  assert.equal(c.warns.some((line) => /routerMode/.test(line)), false, '退役配置不再有专用 warn');
   const legacyCalls = [];
   const legacySections = [];
   await c.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: makeAgent({ calls: legacyCalls, sections: legacySections }) });
-  assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], 'routerMode:false 不再回到 classic：仍装配单一模式');
+  assert.deepEqual(legacyCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], '退役配置不影响装配：仍为单一模式');
 });
 
 test('装配：delegationGate config（off/非法/strict 归一）不崩；strict 归一 warn 并打一次日志', async () => {

@@ -395,7 +395,8 @@ test('relay_status：台账存在附 workItems 摘要 + text 末行；空台账 
   // v0.5.1：面板授权事实进 relay_status（模型唯一可靠的面板视图）+ 台账新鲜度后缀。
   assert.equal(report.panel.defaultOperation, null);
   assert.equal(report.panel.autoCompress, false);
-  assert.match(report.text, /panel: 模式=问我 · autoChoose=off · autoCompress=off · autoHandoff=off · authorizeNext=off/);
+  assert.match(report.text, /panel: 模式=问我 · autoCompress=off · autoHandoff=off · authorizeNext=off/);
+  assert.doesNotMatch(report.text, /autoChoose|autoDecision/, 'C10：退役面板字段不得出现在 text');
   assert.doesNotMatch(report.text, /更新于 \d+ 分钟前/, 'v0.6.0：不再用时间判定台账新鲜度');
   // v0.6.0：currentPhase 进 workItems 摘要与 text（phase 行 + 焦点行）
   writeFileSync(join(cwd, WORK_ITEMS_REL), JSON.stringify({
@@ -559,7 +560,7 @@ test('relay_phase → ship：台账未闭合 strict 拒绝（user_gate 校验之
     /relay_phase refused \(work items\): .*work ledger is not closed/,
     '未闭合项拒绝 ship',
   );
-  assert.equal(panelStateOf(session.id).autoDecision, null, '拒绝路径零副作用：未写面板自决策');
+  assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf(session.id), 'autoDecision'), false, '拒绝路径零副作用：不写退役自决字段');
   const afterReject = await tools.get('relay_status').execute({}, { agent });
   assert.equal(afterReject.phase, 'verify', '拒绝后 phase 未切换');
 

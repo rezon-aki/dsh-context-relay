@@ -263,13 +263,8 @@ test('host: 无 connection 服务时放行（headless/测试）', () => {
   assert.equal(call(fakeHost({ connection: { requestRejection: () => undefined } }).getRoute()).out.statusCode, 200);
 });
 
-const THRESHOLDS = Object.freeze({
-  warnRatio: 0.35, organizeRatio: 0.4, relayRatio: 0.5,
-  warnTokens: 100000, organizeTokens: 130000, relayTokens: 160000,
-});
-
 test('preset：官方 ptc 行数据 + relay agent 行插入 compaction 隔离组', () => {
-  const definition = relayPresetDefinition({ presetId: 'relay-long', thresholds: THRESHOLDS });
+  const definition = relayPresetDefinition({ presetId: 'relay-long' });
   assert.equal(definition.id, 'relay-long');
   // v0.9.0 单一模式（D9=B）：显示名保留双名，id 仍 relay-long。
   assert.equal(definition.name, '接力模式（Relay）· 超长任务');
@@ -284,7 +279,7 @@ test('preset：官方 ptc 行数据 + relay agent 行插入 compaction 隔离组
   const agentRow = compaction.config.at(-1);
   assert.equal(agentRow.id, 'relay-agent');
   assert.equal(agentRow.config.presetId, 'relay-long');
-  assert.deepEqual(agentRow.config.thresholds, THRESHOLDS);
+  assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'thresholds'), false, 'v0.10.0：legacy thresholds 不再进 preset 行 config');
   assert.match(agentRow.name, /\/lib\/agent\.js(\?relay=\d+)?$/);
   // 缺省不传 agent 选项：不写入行 config（不污染 preset 定义）。
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'injectBrief'), false);
@@ -298,7 +293,7 @@ test('preset：官方 ptc 行数据 + relay agent 行插入 compaction 隔离组
 });
 
 test('preset：ask_user_question 行叠加官方 timed 配置 + timeout:60（v0.2.11：提问只用于简单问题、超时 pending 后继续）', () => {
-  const flat = flattenPresetRows(relayPresetDefinition({ presetId: 'relay', thresholds: THRESHOLDS }).plugins);
+  const flat = flattenPresetRows(relayPresetDefinition({ presetId: 'relay' }).plugins);
   const askRow = flat.find((row) => row.id === 'tool-ask-user');
   assert.deepEqual(askRow.config, { mode: 'timed', timeout: 60 });
   // 官方行数据资产保持原样：timed 配置只叠加在组合结果上（漂移测试仍与官方 patch 行级一致）。
@@ -308,92 +303,66 @@ test('preset：ask_user_question 行叠加官方 timed 配置 + timeout:60（v0.
 test('preset：官方 base 缺 tool-ask-user 行时 fail loud（relay 协议依赖提问工具）', () => {
   const base = PTC_BASE_PLUGINS.filter((row) => row.id !== 'tool-ask-user');
   assert.throws(
-    () => relayPresetDefinition({ presetId: 'relay', thresholds: THRESHOLDS, basePlugins: base }),
+    () => relayPresetDefinition({ presetId: 'relay', basePlugins: base }),
     /tool-ask-user row/,
   );
 });
 
 test('preset：叠加 timed 配置是合并而非覆盖（保留官方行已有 config）', () => {
   const base = PTC_BASE_PLUGINS.map((row) => (row.id === 'tool-ask-user' ? { ...row, config: { extra: true } } : row));
-  const flat = flattenPresetRows(relayPresetDefinition({ presetId: 'relay', thresholds: THRESHOLDS, basePlugins: base }).plugins);
+  const flat = flattenPresetRows(relayPresetDefinition({ presetId: 'relay', basePlugins: base }).plugins);
   assert.deepEqual(flat.find((row) => row.id === 'tool-ask-user').config, { extra: true, mode: 'timed', timeout: 60 });
 });
 
-test('preset：apply 注册唯一模式（+迁移期 classic 别名）；agent 行强制 routerMode:true、选项白名单透传', async () => {
+test('preset：apply 只注册唯一模式；agent 行选项白名单透传（退役 routerMode/classic 别名已删）', async () => {
   const host = fakeHost({
-    config: { presetId: 'relay', thresholds: THRESHOLDS, injectBrief: false, handoffApproval: 'prompt', delegationGate: 'off', unrelated: 'drop-me' },
+    config: { presetId: 'relay', injectBrief: false, handoffApproval: 'prompt', delegationGate: 'off', unrelated: 'drop-me' },
   });
   await tick(); // 异步 register 落定
-  assert.equal(host.registrations.length, 2, 'v0.9.0 单一模式 + 迁移期 classic 同行为别名（v0.10.0 删）');
-  // ① 唯一生产模式：id 仍 relay-long，显示名双名（D9=B），agent 行强制 routerMode:true。
+  assert.equal(host.registrations.length, 1, 'v0.10.0 只剩唯一生产模式（classic 别名已删）');
   const single = host.registrations[0];
   assert.equal(single.id, 'relay-long');
   assert.equal(single.name, '接力模式（Relay）· 超长任务');
   assert.equal(single.order, 5);
+  assert.doesNotMatch(single.description, /旧会话兼容/);
   const agentRow = single.plugins.find((row) => row.id === 'compaction').config.at(-1);
   assert.equal(agentRow.id, 'relay-agent');
   assert.equal(agentRow.config.presetId, 'relay-long');
-  assert.deepEqual(agentRow.config.thresholds, THRESHOLDS);
-  assert.equal(agentRow.config.routerMode, true, '单一模式恒 routerMode（生产不可关）');
-  // 白名单透传给 agent 面（handoff 校验 + 迁移期别名识别）：唯一 id 在前、classic 别名在后。
-  assert.deepEqual(agentRow.config.relayPresetIds, ['relay-long', 'relay']);
+  assert.deepEqual(agentRow.config.relayPresetIds, ['relay-long'], 'agent 面白名单只有唯一模式 id');
   // 白名单透传：只带 agent 选项，不把整份 host config 漏进 preset 行。
   assert.equal(agentRow.config.injectBrief, false);
   assert.equal(agentRow.config.handoffApproval, 'prompt');
   assert.equal(agentRow.config.delegationGate, 'off', 'v0.9.0 批次3：delegationGate 白名单透传到 agent 行');
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'unrelated'), false);
-  // ② 迁移期别名（D2=A）：classic 旧 id 同行为注册，description 标旧会话兼容。
-  const legacy = host.registrations[1];
-  assert.equal(legacy.id, 'relay');
-  assert.equal(legacy.name, '接力模式（Relay）· 超长任务');
-  assert.match(legacy.description, /旧会话兼容（v0.9.0 迁移期，v0.10.0 移除）/);
-  const legacyRow = legacy.plugins.find((row) => row.id === 'compaction').config.at(-1);
-  assert.equal(legacyRow.config.presetId, 'relay');
-  assert.equal(legacyRow.config.routerMode, true, '别名同行为（同样 Lead 只调度）');
-  assert.deepEqual(legacyRow.config.relayPresetIds, ['relay-long', 'relay']);
-  // ③ 缺省（不传 agent 选项）：行 config 只有 presetId + relayPresetIds + routerMode + 测试隔离注入的 panelPath。
-  // v0.2.4：fresh deploy 不再把 legacy thresholds（normalizeThresholds({}) 默认 35/40/50）塞进行 config。
+  // 退役字段不再出现在行 config（thresholds/routerMode/legacyPresetCompat 均删）。
+  for (const key of ['thresholds', 'routerMode', 'legacyPresetCompat']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, key), false, '退役 key 不得进 preset 行：' + key);
+  }
+  // 缺省（不传 agent 选项）：行 config 只有 presetId + relayPresetIds + 测试隔离注入的 panelPath。
   const plain = fakeHost();
   await tick();
   for (const definition of plain.registrations) {
     const row = definition.plugins.find((item) => item.id === 'compaction').config.at(-1);
-    assert.deepEqual(Object.keys(row.config).sort(), ['panelPath', 'presetId', 'relayPresetIds', 'routerMode']);
+    assert.deepEqual(Object.keys(row.config).sort(), ['panelPath', 'presetId', 'relayPresetIds']);
     assert.equal(Object.prototype.hasOwnProperty.call(row.config, 'thresholds'), false);
   }
-  // ④ 显式 legacy config.thresholds → 仍原样透传到行 config（legacy 部署行为不变），并 warn 一次。
-  delete globalThis[Symbol.for('dsh-context-relay.warned')]; // 前一个 host 已触发同 key 限频，重置以验证首载 warn
-  const legacyHost = fakeHost({ config: { presetId: 'relay', thresholds: THRESHOLDS } });
+  // 退役 host config（thresholds/routerMode/legacyPresetCompat）只被忽略：不再 warn、不影响注册/行 config。
+  const retiredConfig = fakeHost({ config: { presetId: 'relay', thresholds: {}, routerMode: false, legacyPresetCompat: false } });
   await tick();
-  const legacyThresholdRow = legacyHost.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
-  assert.deepEqual(legacyThresholdRow.config.thresholds, THRESHOLDS);
-  assert.equal(legacyHost.warnings.some((line) => /legacy config\.thresholds is deprecated/.test(line)), true, 'MIG8：legacy thresholds 载入 warn 一次');
-  // ⑤ legacyPresetCompat:false → 只注册唯一模式（D2=A 的迁移期开关）。
-  const noAlias = fakeHost({ config: { legacyPresetCompat: false } });
-  await tick();
-  assert.deepEqual(noAlias.registrations.map((definition) => definition.id), ['relay-long']);
-  const noAliasRow = noAlias.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
-  assert.deepEqual(noAliasRow.config.relayPresetIds, ['relay-long'], '关闭别名后白名单只有唯一 id');
-  // ⑥ custom presetId/longPresetId 语义（D2=A）：唯一 id 取 longPresetId ?? presetId+'-long'，classic 别名取 presetId。
+  assert.equal(retiredConfig.registrations.length, 1);
+  assert.equal(retiredConfig.warnings.some((line) => /legacy|routerMode|thresholds/i.test(line)), false, '退役配置不再有专用 warn');
+  // custom presetId/longPresetId 语义：唯一 id 取 longPresetId ?? presetId+'-long'。
   const custom = fakeHost({ config: { presetId: 'myrelay', longPresetId: 'myrelay-long' } });
   await tick();
-  assert.deepEqual(custom.registrations.map((definition) => definition.id), ['myrelay-long', 'myrelay']);
+  assert.deepEqual(custom.registrations.map((definition) => definition.id), ['myrelay-long']);
   const customRow = custom.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
-  assert.deepEqual(customRow.config.relayPresetIds, ['myrelay-long', 'myrelay']);
-  // ⑦ 旧 config.routerMode 读到时忽略 + warn（MIG3）。
-  const oldRouter = fakeHost({ config: { routerMode: true } });
-  await tick();
-  assert.equal(oldRouter.warnings.some((line) => /config\.routerMode is deprecated and ignored/.test(line)), true);
-  // ⑧ 旧 config.routerMode=false 也不再回到 classic：agent 行仍强制 true。
-  const offRouter = fakeHost({ config: { routerMode: false } });
-  await tick();
-  const offRow = offRouter.registrations[0].plugins.find((row) => row.id === 'compaction').config.at(-1);
-  assert.equal(offRow.config.routerMode, true);
+  assert.deepEqual(customRow.config.relayPresetIds, ['myrelay-long']);
 });
 
 test('preset：delegationGate 非法值不崩（注册照常；归一为 warn 在 agent 面，strict 原样透传留 v0.10.0）', async () => {
   const host = fakeHost({ config: { delegationGate: 'banana' } });
   await tick();
-  assert.equal(host.registrations.length, 2, '非法 delegationGate 不阻断 preset 注册');
+  assert.equal(host.registrations.length, 1, '非法 delegationGate 不阻断 preset 注册');
   const row = host.registrations[0].plugins.find((item) => item.id === 'compaction').config.at(-1);
   assert.equal(row.config.delegationGate, 'banana', 'host 层只透传；非法值由 agent 面 normalizeDelegationConfig 归一为 warn');
   const strictHost = fakeHost({ config: { delegationGate: 'strict' } });
@@ -435,16 +404,16 @@ test('package.json：engines 下限与 client.inject 条目真实存在（找不
 test('卸载：注册已完成时 teardown 返回 Promise 并注销 preset', async () => {
   const host = fakeHost({ config: { presetId: 'relay' } });
   await tick(); // 让异步 register 落定
-  assert.equal(host.stats.registerCalls, 2);
-  assert.deepEqual(host.registrations.map((definition) => definition.id), ['relay-long', 'relay']);
+  assert.equal(host.stats.registerCalls, 1);
+  assert.deepEqual(host.registrations.map((definition) => definition.id), ['relay-long']);
   assert.equal(host.cleanups.length, 1);
   const teardown = host.cleanups[0]();
   assert.ok(teardown instanceof Promise, 'teardown 必须返回 Promise，cordis 才会 await');
   await teardown;
-  assert.equal(host.stats.disposeCalls, 2);
+  assert.equal(host.stats.disposeCalls, 1);
 });
 
-test('卸载竞态：register 未完成即 teardown，落定后两个 preset 都只注销一次（不残留/不重复注册）', async () => {
+test('卸载竞态：register 未完成即 teardown，落定后 preset 只注销一次（不残留/不重复注册）', async () => {
   const stats = { registerCalls: 0, disposeCalls: 0 };
   const pending = [];
   const agentPresets = {
@@ -458,18 +427,15 @@ test('卸载竞态：register 未完成即 teardown，落定后两个 preset 都
   const teardown = host.cleanups[0]();
   assert.ok(teardown instanceof Promise);
   pending[0]();
-  await tick();
-  assert.equal(stats.disposeCalls, 1, '卸载后落定的第一个 preset 立刻撤销');
-  pending[1]();
   await teardown;
-  assert.equal(stats.registerCalls, 2);
-  assert.equal(stats.disposeCalls, 2);
+  assert.equal(stats.registerCalls, 1);
+  assert.equal(stats.disposeCalls, 1);
   await tick(); // 之后的微任务不得再注册/重复注销
-  assert.equal(stats.registerCalls, 2);
-  assert.equal(stats.disposeCalls, 2);
+  assert.equal(stats.registerCalls, 1);
+  assert.equal(stats.disposeCalls, 1);
 });
 
-test('preset：唯一模式注册失败隔离——迁移期别名仍注册（只 warn）', async () => {
+test('preset：唯一模式注册失败 → 只 warn，不阻断插件其余注册', async () => {
   const registered = [];
   const agentPresets = {
     register: async (definition) => {
@@ -480,21 +446,9 @@ test('preset：唯一模式注册失败隔离——迁移期别名仍注册（�
   };
   const host = fakeHost({ agentPresets });
   await tick();
-  assert.deepEqual(registered, ['relay'], '唯一模式失败不连坐迁移期别名（旧 classic 会话仍可打开）');
+  assert.deepEqual(registered, [], '唯一模式注册失败后没有其它 preset 可注册');
   assert.equal(host.warnings.some((line) => /preset "relay-long" registration failed/.test(line)), true);
-  // 反向：别名注册失败不影响唯一模式。
-  const registered2 = [];
-  const agentPresets2 = {
-    register: async (definition) => {
-      if (definition.id === 'relay') throw new Error('alias mount failed');
-      registered2.push(definition.id);
-      return () => {};
-    },
-  };
-  const host2 = fakeHost({ agentPresets: agentPresets2 });
-  await tick();
-  assert.deepEqual(registered2, ['relay-long']);
-  assert.equal(host2.warnings.some((line) => /preset "relay" registration failed/.test(line)), true);
+  assert.notEqual(host.getRoute('/context-relay/settings'), undefined, 'preset 失败不影响 HTTP 面');
 });
 
 /** 最小 sessionProjections 服务 fake：捕获 definition 与 disposer 调用。 */
@@ -541,46 +495,44 @@ test('host: sessionProjections 缺失时安全跳过并 warn，路由/preset 不
   const host = fakeHost();
   assert.equal(host.warnings.some((line) => /sessionProjections unavailable/.test(line)), true);
   assert.notEqual(host.getRoute(), null);
-  await tick(); // 第二个 preset 在微任务里注册（第一个 register 同步 push）
-  assert.equal(host.registrations.length, 2); // preset 注册路径照常（唯一模式 + 迁移期别名）
+  await tick();
+  assert.equal(host.registrations.length, 1); // preset 注册路径照常（唯一模式）
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
-  threshold: 35, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
+  threshold: 35, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
 });
 
-test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，旧字段忽略', async () => {
+test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，退役/旧字段忽略', async () => {
   const settingsPath = tmpPath('relay-settings-');
-  const host = fakeHost({ config: { presetId: 'relay', thresholds: undefined, settingsPath } });
+  const host = fakeHost({ config: { presetId: 'relay', settingsPath } });
   const route = host.getRoute('/context-relay/settings');
   assert.ok(route && typeof route.handler === 'function');
   assert.equal(route.kind, 'exact');
   const got = await callAsync(route);
   assert.equal(got.out.statusCode, 200);
-  // 2026-10-25 v2 口径：侧栏设置 = 阈值基准 + 面板默认值（默认操作 / 三个自动授权），形状固定六字段。
+  // 2026-10-25 v2 口径（v0.10 C10 删 autoChoose）：侧栏设置 = 阈值基准 + 面板默认值，形状固定五字段。
   assert.deepEqual(got.json.settings, DEFAULT_SETTINGS);
   assert.deepEqual(got.json.thresholds, thresholdsFromPercent(DEFAULT_SETTINGS.threshold));
   assert.equal(got.json.path, settingsPath);
-  assert.equal(got.json.explicit, false, '无 settings 来源时 explicit=false（agent 走 live settings 默认基准 35% → 30/35/45；legacy thresholds 只在部署显式配置时生效）');
-  // apply 时把六个字段一起发布到 globalThis（panel-store 据此得到按会话面板的默认值）
-  assert.deepEqual(globalThis[SETTINGS_KEY], { ...DEFAULT_SETTINGS, explicit: false });
+  assert.equal(Object.prototype.hasOwnProperty.call(got.json, 'explicit'), false, 'explicit 双口径随 legacy thresholds 一并删除');
+  // apply 时把五字段一起发布到 globalThis（panel-store 据此得到按会话面板的默认值）
+  assert.deepEqual(globalThis[SETTINGS_KEY], DEFAULT_SETTINGS);
   const putBody = { threshold: 60, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
-  // v0.9.0（D8=A）：autoChoose 退役恒归一 false；cth 档退役恒归一 null（host 仍按 body 做旧互斥清预设）。
-  const putExpected = { ...putBody, defaultOperation: null, autoChoose: false };
+  // 退役 autoChoose / 未知 cth 值一律丢弃/归一 null（不 400）。
+  const putExpected = { threshold: 60, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   const put = await callAsync(route, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(putBody) });
   assert.equal(put.out.statusCode, 200);
   assert.equal(put.json.persisted, true);
   assert.deepEqual(put.json.settings, putExpected);
   assert.deepEqual(put.json.thresholds, thresholdsFromPercent(60));
-  assert.equal(put.json.explicit, true);
-  // 往返：GET 回读同样六字段（文件 → 内存）
+  // 往返：GET 回读同样五字段（文件 → 内存）
   assert.deepEqual((await callAsync(route)).json.settings, putExpected);
-  // 文件六字段落盘
+  // 文件五字段落盘
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), putExpected);
   // 发布到 globalThis：含全部字段（panel-store 读作默认值）
   const live = globalThis[SETTINGS_KEY];
   for (const [key, value] of Object.entries(putExpected)) assert.deepEqual(live[key], value, 'published ' + key);
-  assert.equal(live.explicit, true);
   // 旧字段忽略；非法默认操作归一化 null（不 400）；autoHandoff 现在是合法默认值。
   // 2026-10-25 v2：PUT 是**部分更新合并**——未提供的字段保留当前值（旧缓存 client 只传 threshold 不会清掉默认值）。
   const legacy = await callAsync(route, {
@@ -589,8 +541,8 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
     body: JSON.stringify({ threshold: 65, defaultOperation: 'bogus', autoPhase: true, autoContinue: true, autoApprove: true, autoHandoff: true }),
   });
   assert.equal(legacy.out.statusCode, 200);
-  // body 显式给 defaultOperation（非法值归一为 null，语义=「问我」预设模式）→ 新语义：关自动（以 body 为准）。
-  assert.deepEqual(legacy.json.settings, { threshold: 65, defaultOperation: null, autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
+  // body 显式给 defaultOperation（非法值归一为 null，语义=「问我」预设模式）
+  assert.deepEqual(legacy.json.settings, { threshold: 65, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), legacy.json.settings);
   assert.equal(globalThis[SETTINGS_KEY].autoPhase, undefined);
   assert.equal(globalThis[SETTINGS_KEY].autoContinue, undefined);
@@ -598,12 +550,13 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   const clipped = await callAsync(route, { method: 'PUT', body: JSON.stringify({ threshold: 99 }) });
   assert.equal(clipped.json.settings.threshold, 85);
   assert.equal(clipped.json.settings.autoHandoff, true);
-  assert.equal(clipped.json.settings.autoChoose, false);
-  // 显式预设 → 生效（autoChoose 恒 false）；旧客户端再发 autoChoose:true → 兼容接受但归一 false 并清预设。
+  // 显式预设 → 生效；退役 autoChoose 即使旧客户端传也不生效、不 400。
   const modePreset = await callAsync(route, { method: 'PUT', body: JSON.stringify({ defaultOperation: 'handoff', autoChoose: false }) });
-  assert.deepEqual(modePreset.json.settings, { threshold: 85, defaultOperation: 'handoff', autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
-  const modeAuto = await callAsync(route, { method: 'PUT', body: JSON.stringify({ autoChoose: true }) });
-  assert.deepEqual(modeAuto.json.settings, { threshold: 85, defaultOperation: null, autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
+  assert.deepEqual(modePreset.json.settings, { threshold: 85, defaultOperation: 'handoff', autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
+  const retired = await callAsync(route, { method: 'PUT', body: JSON.stringify({ autoChoose: true }) });
+  assert.equal(retired.out.statusCode, 200);
+  assert.deepEqual(retired.json.settings, modePreset.json.settings);
+  assert.equal(Object.prototype.hasOwnProperty.call(retired.json.settings, 'autoChoose'), false);
   assert.equal((await callAsync(route, { method: 'PUT', body: JSON.stringify({ threshold: 1 }) })).json.settings.threshold, 20);
   // 非法请求：body 不是 JSON / threshold 非数字 → 400；方法不支持 → 405
   assert.equal((await callAsync(route, { method: 'PUT', body: 'not-json' })).out.statusCode, 400);
@@ -619,24 +572,23 @@ test('host: settings 路由 GET/PUT 六字段、持久化、发布 globalThis，
   assert.equal((await callAsync(route, { method: 'POST' })).out.statusCode, 405);
 });
 
-test('host: settings 部分更新——autoChoose 退役后旧客户端 PUT 仍兼容（恒归一 false，不 400）', async () => {
+test('host: settings 部分更新——退役 autoChoose 旧客户端 PUT 被忽略（不 400、不影响预设）', async () => {
   const host = fakeHost();
-  // 旧客户端只发 autoChoose:true → 兼容接受但归一 false，旧 auto 预设语义被清。
+  // 旧客户端只发 autoChoose:true → 兼容接受（200）但字段被丢弃、不产生任何模式变化。
   const openAuto = await putSettings(host, { autoChoose: true });
-  assert.equal(openAuto.json.settings.autoChoose, false);
+  assert.equal(openAuto.out.statusCode, 200);
+  assert.equal(Object.prototype.hasOwnProperty.call(openAuto.json.settings, 'autoChoose'), false);
   assert.equal(openAuto.json.settings.defaultOperation, null);
-  // 只给 defaultOperation → 生效（autoChoose 恒 false）。
+  // 只给 defaultOperation → 生效。
   const preset = await putSettings(host, { defaultOperation: 'handoff' });
-  assert.equal(preset.json.settings.autoChoose, false);
   assert.equal(preset.json.settings.defaultOperation, 'handoff');
-  // 再只开自动 → 仍归一 false 且预设被清（旧互斥语义保留）。
+  // 再只发退役字段 → 预设保持（不再有旧互斥逻辑清预设）。
   const back = await putSettings(host, { autoChoose: true });
-  assert.equal(back.json.settings.autoChoose, false);
-  assert.equal(back.json.settings.defaultOperation, null);
-  // 显式同时给两者 → 预设仍被旧互斥逻辑清空，autoChoose 仍 false。
+  assert.equal(back.json.settings.defaultOperation, 'handoff');
+  // 显式同时给两者 → 只认 defaultOperation（白名单字段），autoChoose 被忽略。
   const both = await putSettings(host, { defaultOperation: 'compress', autoChoose: true });
-  assert.equal(both.json.settings.autoChoose, false);
-  assert.equal(both.json.settings.defaultOperation, null);
+  assert.equal(both.json.settings.defaultOperation, 'compress');
+  assert.equal(Object.prototype.hasOwnProperty.call(both.json.settings, 'autoChoose'), false);
 });
 
 test('host: settings.json 损坏（语法/语义）→ rename 备份 + warn + 降级默认，不阻断插件注册（B-P2-11）', async () => {
@@ -645,7 +597,7 @@ test('host: settings.json 损坏（语法/语义）→ rename 备份 + warn + �
     writeFileSync(settingsPath, corrupt, 'utf8');
     const host = fakeHost({ config: { settingsPath } }); // apply 不得抛错
     await tick();
-    assert.equal(host.registrations.length, 2, '损坏 settings 不得阻断 preset 注册（唯一模式 + 迁移期别名）');
+    assert.equal(host.registrations.length, 1, '损坏 settings 不得阻断 preset 注册（唯一模式）');
     assert.notEqual(host.getRoute('/context-relay/settings'), undefined);
     const backups = readdirSync(dirname(settingsPath)).filter((name) => name.includes('.corrupt-'));
     assert.equal(backups.length, 1, '损坏文件必须隔离备份');
@@ -654,7 +606,6 @@ test('host: settings.json 损坏（语法/语义）→ rename 备份 + warn + �
     // 降级默认，不半覆盖原文件
     const got = await callAsync(host.getRoute('/context-relay/settings'));
     assert.deepEqual(got.json.settings, DEFAULT_SETTINGS);
-    assert.equal(got.json.explicit, false);
   }
 });
 
@@ -770,7 +721,7 @@ test('host: settings 跨进程冲突（mtime CAS+warn）：其它进程改过文
   assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).threshold, 60);
 });
 
-test('host: 阈值双轨（B-P2-16）：仅 config.thresholds 时 GET 返回生效值，侧栏保存后切到 settings', async () => {
+test('host: legacy config.thresholds 已删（C10）——忽略且不再 warn；阈值只认 settings 口径', async () => {
   const legacy = Object.freeze({
     warnRatio: 0.45, organizeRatio: 0.5, relayRatio: 0.6,
     warnTokens: 100000, organizeTokens: 130000, relayTokens: 160000,
@@ -779,72 +730,64 @@ test('host: 阈值双轨（B-P2-16）：仅 config.thresholds 时 GET 返回生�
   const settingsPath = join(dir, 'settings.json');
   const host = fakeHost({ config: { thresholds: legacy, settingsPath } });
   const settings = await callAsync(host.getRoute('/context-relay/settings'));
-  // 生效阈值 = config.thresholds；人类可见基准反推自 organizeRatio（50%，不是默认 40%）。
-  assert.deepEqual(settings.json.thresholds, legacy);
-  assert.equal(settings.json.settings.threshold, 50);
-  assert.equal(settings.json.explicit, false);
+  // 生效阈值 = 默认基准 35% 派生（legacy 配置被忽略，不再反推可见基准）。
+  assert.deepEqual(settings.json.thresholds, thresholdsFromPercent(35));
+  assert.equal(settings.json.settings.threshold, 35);
+  assert.equal(host.warnings.some((line) => /thresholds/.test(line)), false, 'legacy thresholds 不再有专用 warn');
   const panel = await getPanel(host, 'sess-thresholds');
-  assert.deepEqual(panel.json.thresholds, legacy);
-  assert.deepEqual(panel.json.settings, { threshold: 50 });
-  // 侧栏保存一次 → settings 来源生效（explicit=true），不再用 legacy
+  assert.deepEqual(panel.json.thresholds, thresholdsFromPercent(35));
+  assert.deepEqual(panel.json.settings, { threshold: 35 });
+  // settings 路由保存 → 生效阈值来自 settings.threshold
   const put = await putSettings(host, { threshold: 60 });
-  assert.equal(put.json.explicit, true);
   assert.deepEqual(put.json.thresholds, thresholdsFromPercent(60));
   assert.deepEqual((await getPanel(host, 'sess-thresholds')).json.thresholds, thresholdsFromPercent(60));
   assert.equal(JSON.parse(readFileSync(settingsPath, 'utf8')).threshold, 60);
 });
 
-test('host: settings 来源优先级 file > config.settings > config.threshold（explicit 语义）', async () => {
+test('host: settings 来源优先级 file > config.settings > config.threshold', async () => {
   // file 存在 → 以 file 为准（config.settings/config.threshold 被覆盖）
   const settingsPath = tmpPath('relay-settings-priority-');
   writeFileSync(settingsPath, JSON.stringify({ threshold: 70 }), 'utf8');
   const fromFile = fakeHost({ config: { settingsPath, settings: { threshold: 50 }, threshold: 30 } });
   const fileSettings = await callAsync(fromFile.getRoute('/context-relay/settings'));
   assert.equal(fileSettings.json.settings.threshold, 70);
-  assert.equal(fileSettings.json.explicit, true);
   clearPanelMemory(); delete globalThis[SETTINGS_KEY];
   // 无文件、有 config.settings → config.settings（阈值取自其中，缺省默认 35）
   const fromConfig = fakeHost({ config: { threshold: 30, settings: { autoCompress: true } } });
   const configSettings = await callAsync(fromConfig.getRoute('/context-relay/settings'));
   assert.equal(configSettings.json.settings.autoCompress, true);
   assert.equal(configSettings.json.settings.threshold, 35);
-  assert.equal(configSettings.json.explicit, true);
   clearPanelMemory(); delete globalThis[SETTINGS_KEY];
   // 无文件、只有 config.threshold → 生效
   const shorthand = fakeHost({ config: { threshold: 30 } });
   const shorthandSettings = await callAsync(shorthand.getRoute('/context-relay/settings'));
   assert.equal(shorthandSettings.json.settings.threshold, 30);
   assert.deepEqual(shorthandSettings.json.thresholds, thresholdsFromPercent(30));
-  assert.equal(shorthandSettings.json.explicit, true);
 });
 
 test('host: 阈值/面板默认值单一解析入口（C6/M-17/D-07）——settings、panel 路由与 policy 同口径', async () => {
   const host = fakeHost();
   const settingsRoute = host.getRoute('/context-relay/settings');
-  // settings 路由的 thresholds 必须就是 policy.resolveEffectiveThresholds 对同一三元事实的结果。
+  // settings 路由的 thresholds 必须就是 policy.resolveEffectiveThresholds 对同一 settings 的结果。
   const got = await callAsync(settingsRoute);
-  assert.deepEqual(got.json.thresholds, resolveEffectiveThresholds({ settings: got.json.settings, explicit: got.json.explicit }));
+  assert.deepEqual(got.json.thresholds, resolveEffectiveThresholds({ settings: got.json.settings }));
   const put = await callAsync(settingsRoute, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify({ threshold: 60 }) });
-  assert.deepEqual(put.json.thresholds, resolveEffectiveThresholds({ settings: put.json.settings, explicit: put.json.explicit }));
+  assert.deepEqual(put.json.thresholds, resolveEffectiveThresholds({ settings: put.json.settings }));
   // 面板 GET 与 settings 路由同一份生效阈值（不再各自派生）。
   const panel = await getPanel(host, 'sess-single-source');
   assert.deepEqual(panel.json.thresholds, put.json.thresholds);
   assert.deepEqual(panel.json.thresholds, thresholdsFromPercent(60));
-  // host 发布的面板默认值经 policy.panelDefaultsOf 唯一映射（六字段）。
+  // host 发布的面板默认值经 policy.panelDefaultsOf 唯一映射（五字段）。
   assert.deepEqual(panelDefaultsOf(), {
-    defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
+    defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
   });
-  // legacy config.thresholds 部署：settings/panel 同样返回 policy 解析的 legacy 阈值，且人类可见基准反推 organize。
+  // legacy config.thresholds 已删：传入也被忽略，settings/panel 仍走默认基准派生。
   const legacy = Object.freeze({ warnRatio: 0.45, organizeRatio: 0.5, relayRatio: 0.6, warnTokens: 100000, organizeTokens: 130000, relayTokens: 160000 });
   const legacyHost = fakeHost({ config: { thresholds: legacy } });
   const legacySettings = await callAsync(legacyHost.getRoute('/context-relay/settings'));
-  assert.deepEqual(legacySettings.json.thresholds, resolveEffectiveThresholds({
-    settings: legacySettings.json.settings,
-    explicit: legacySettings.json.explicit,
-    legacyThresholds: legacy,
-  }));
-  assert.deepEqual(legacySettings.json.thresholds, legacy);
-  assert.deepEqual((await getPanel(legacyHost, 'sess-single-source-legacy')).json.thresholds, legacy);
+  assert.deepEqual(legacySettings.json.thresholds, resolveEffectiveThresholds({ settings: legacySettings.json.settings }));
+  assert.deepEqual(legacySettings.json.thresholds, thresholdsFromPercent(35));
+  assert.deepEqual((await getPanel(legacyHost, 'sess-single-source-legacy')).json.thresholds, thresholdsFromPercent(35));
 });
 
 test('host: PUT settings >8KB 返回 413 JSON（真实 http server，旧单测 fake destroy 假绿 B-P2-12）', async () => {
@@ -907,7 +850,6 @@ test('host: GET /context-relay/panel 默认面板 + live null + 生效阈值，�
     sessionId: 'sess-panel-a',
     relay: false, // 无 sessions 服务 → 按非 relay（客户端隐藏 composer 小胶囊）
     preset: null, // 无 sessions 服务 → 当前 preset 不可得
-    modes: { relay: 'relay-long', long: 'relay-long' }, // v0.9.0 单一模式：wire 兼容保留，值同为唯一模式 id
     panel: PANEL_DEFAULT,
     architectDefault: null,
     live: null,
@@ -936,18 +878,16 @@ test('host: GET /context-relay/panel 默认面板 + live null + 生效阈值，�
 
 test('host v0.2.7: GET /panel 的 relay 标记 + unlimitedBudget 生效值（settings 默认 → 会话快照）', async () => {
   const relayHost = fakeHost({
-    sessions: { get: (id) => ({ id, header: { agentPreset: id === 'sess-relay' ? 'relay' : id === 'sess-long' ? 'relay-long' : 'ptc' } }) },
+    sessions: { get: (id) => ({ id, header: { agentPreset: id === 'sess-relay-old' ? 'relay' : id === 'sess-relay' ? 'relay-long' : 'ptc' } }) },
   });
   const route = relayHost.getRoute('/context-relay/panel');
   assert.equal((await getPanel(relayHost, 'sess-relay')).json.relay, true, 'relay preset 会话 → 客户端显示 composer 小胶囊');
-  assert.equal((await getPanel(relayHost, 'sess-long')).json.relay, true, '超长任务模式会话同样显示 composer 小胶囊');
+  assert.equal((await getPanel(relayHost, 'sess-relay-old')).json.relay, false, 'v0.10.0：旧 classic id 已删 → 不再识别为 relay');
   assert.equal((await getPanel(relayHost, 'sess-ptc')).json.relay, false, '其它 preset → 不显示');
-  // v0.2.14：GET 同时下发当前 preset（投影缺失时回退 creation header）与两个模式 id（滑动开关两端）
-  assert.equal((await getPanel(relayHost, 'sess-relay')).json.preset, 'relay');
-  assert.equal((await getPanel(relayHost, 'sess-long')).json.preset, 'relay-long');
+  // GET 同时下发当前 preset（投影缺失时回退 creation header）；modes 兼容字段已删。
+  assert.equal((await getPanel(relayHost, 'sess-relay')).json.preset, 'relay-long');
   assert.equal((await getPanel(relayHost, 'sess-ptc')).json.preset, 'ptc');
-  // v0.9.0：modes 值同为唯一模式 id（旧 client 不会渲染出有意义开关；新 client 不渲染该开关）。
-  assert.deepEqual((await getPanel(relayHost, 'sess-relay')).json.modes, { relay: 'relay-long', long: 'relay-long' });
+  assert.equal(Object.prototype.hasOwnProperty.call((await getPanel(relayHost, 'sess-relay')).json, 'modes'), false, '退役 wire 字段 modes 已删');
   // 未改过面板的会话：unlimitedBudget 跟随 settings 默认（默认 true）；handoffUnlimitedBudget 缺省 null（交接跟随）
   const fresh = await getPanel(relayHost, 'sess-relay');
   assert.equal(fresh.json.panel.unlimitedBudget, true);
@@ -979,31 +919,27 @@ test('host v0.2.7: relay 标记以当前 preset 投影为准（header 是创建�
     snapshot: () => ({ values: {} }),
     stateOf: (_session, key) => (key === 'agentPreset' ? currentPreset : undefined),
   };
-  // 主流程回归：新建会话先以默认 ptc 创建（header=ptc），再在模式选择器选 Relay（投影=relay）→ 必须显示胶囊
+  // 主流程回归：新建会话先以默认 ptc 创建（header=ptc），再在模式选择器选 Relay（投影=relay-long）→ 必须显示胶囊
   const host = fakeHost({ sessionProjections, sessions: { get: (id) => makeSession(id, 'ptc') } });
-  currentPreset = 'relay';
-  assert.equal((await getPanel(host, 'sess-switched-in')).json.relay, true, 'header=ptc + 当前 preset 投影=relay → 显示');
-  assert.equal((await getPanel(host, 'sess-switched-in')).json.preset, 'relay', 'GET preset 以投影为准（不是 creation header）');
   currentPreset = 'relay-long';
-  assert.equal((await getPanel(host, 'sess-switched-long')).json.relay, true, '投影=relay-long → 同样显示');
-  assert.equal((await getPanel(host, 'sess-switched-long')).json.preset, 'relay-long');
-  currentPreset = 'relay';
-  // 反向：header 还是 relay 但已经切走 → 不显示
-  const host2 = fakeHost({ sessionProjections, sessions: { get: (id) => makeSession(id, 'relay') } });
+  assert.equal((await getPanel(host, 'sess-switched-in')).json.relay, true, 'header=ptc + 当前 preset 投影=relay-long → 显示');
+  assert.equal((await getPanel(host, 'sess-switched-in')).json.preset, 'relay-long', 'GET preset 以投影为准（不是 creation header）');
+  // 反向：header 还是 relay-long 但已经切走 → 不显示
+  const host2 = fakeHost({ sessionProjections, sessions: { get: (id) => makeSession(id, 'relay-long') } });
   currentPreset = 'ptc';
-  assert.equal((await getPanel(host2, 'sess-switched-away')).json.relay, false, 'header=relay + 当前 preset 投影=ptc → 不显示');
+  assert.equal((await getPanel(host2, 'sess-switched-away')).json.relay, false, 'header=relay-long + 当前 preset 投影=ptc → 不显示');
   // 投影服务抛错/无值 → 回退 creation header（不因投影异常把已 attach 的 relay 会话判成 false）
   const throwingProjections = {
     register: () => () => {},
     snapshot: () => ({ values: {} }),
     stateOf: () => { throw new Error('projection boom'); },
   };
-  const host3 = fakeHost({ sessionProjections: throwingProjections, sessions: { get: (id) => makeSession(id, 'relay') } });
+  const host3 = fakeHost({ sessionProjections: throwingProjections, sessions: { get: (id) => makeSession(id, 'relay-long') } });
   assert.equal((await getPanel(host3, 'sess-projection-throw')).json.relay, true, '投影异常回退 header');
-  assert.equal((await getPanel(host3, 'sess-projection-throw')).json.preset, 'relay', 'preset 同样回退 header');
+  assert.equal((await getPanel(host3, 'sess-projection-throw')).json.preset, 'relay-long', 'preset 同样回退 header');
   // 投影为 null（header 无 agentPreset）→ 回退 header（null → 非 relay）
   const nullProjections = { ...sessionProjections, stateOf: () => null };
-  const host4 = fakeHost({ sessionProjections: nullProjections, sessions: { get: (id) => makeSession(id, 'relay') } });
+  const host4 = fakeHost({ sessionProjections: nullProjections, sessions: { get: (id) => makeSession(id, 'relay-long') } });
   assert.equal((await getPanel(host4, 'sess-projection-null')).json.relay, true, '投影 null 回退 header');
 });
 
@@ -1136,8 +1072,8 @@ test('host: PUT /context-relay/panel 持久化到 panel.json 并 GET 回读，�
   const put = await putPanel(host, { sessionId: 'sess-panel-b', defaultOperation: 'handoff', autoChoose: true, autoCompress: true, autoHandoff: true, handoffPreAuthorized: true, unrelated: 'drop' });
   assert.equal(put.out.statusCode, 200);
   assert.equal(put.json.persisted, true);
-  // handoffPreAuthorized 已删除、未知键丢弃；rev5.2 互斥：同一次 PUT 里 autoChoose=true 优先 → defaultOperation 被清。
-  const expected = resolvePanelState({ defaults: { unlimitedBudget: true, architect: true }, patch: { defaultOperation: null, autoChoose: true, autoCompress: true, autoHandoff: true } });
+  // 退役/内部/未知键全部忽略（不落面板）；白名单字段照常写入。
+  const expected = resolvePanelState({ defaults: { unlimitedBudget: true, architect: true }, patch: { defaultOperation: 'handoff', autoCompress: true, autoHandoff: true } });
   assert.deepEqual(put.json.panel, expected);
   // 持久化：panel.json 形如 { sessions: { <sessionId>: 面板状态 } }
   const file = JSON.parse(readFileSync(panelPath, 'utf8'));
@@ -1150,15 +1086,15 @@ test('host: PUT /context-relay/panel 持久化到 panel.json 并 GET 回读，�
   assert.equal(JSON.parse(readFileSync(panelPath, 'utf8')).sessions['sess-panel-b'].architect, false);
   const archOn = await putPanel(host, { sessionId: 'sess-panel-b', architect: true });
   assert.equal(archOn.json.panel.architect, true);
-  // 增量 PUT：只改传入键，其余保持
+  // 增量 PUT：只改传入键，其余保持（退役 autoChoose 不参与）
   const patch = await putPanel(host, { sessionId: 'sess-panel-b', defaultOperation: null, autoChoose: false });
-  assert.deepEqual(patch.json.panel, { ...archOn.json.panel, defaultOperation: null, autoChoose: false });
+  assert.deepEqual(patch.json.panel, { ...archOn.json.panel, defaultOperation: null });
   // 非法默认操作归 null（归一化，不 400）
   const bogus = await putPanel(host, { sessionId: 'sess-panel-c', defaultOperation: 'bogus' });
   assert.equal(bogus.json.panel.defaultOperation, null);
   // 非法请求：body 非 JSON / 缺 sessionId / 空 / 超长 / 伪 id → 400
   assert.equal((await callAsync(host.getRoute('/context-relay/panel'), { method: 'PUT', url: '/context-relay/panel', body: 'not-json' })).out.statusCode, 400);
-  assert.equal((await putPanel(host, { autoChoose: true })).out.statusCode, 400);
+  assert.equal((await putPanel(host, { autoCompress: true })).out.statusCode, 400);
   for (const badId of ['', 'x'.repeat(201), '__proto__', 'a\u0000b']) {
     assert.equal((await putPanel(host, { sessionId: badId })).out.statusCode, 400, 'PUT 应拒绝非法 sessionId: ' + JSON.stringify(badId));
   }
@@ -1184,12 +1120,12 @@ test('v0.3.4 P2-1: 人类 PUT 显式 defaultOperation/autoChoose 清空模型推
   assert.deepEqual(recommendOf(preset.json.panel), [null, '', null], 'defaultOperation 清推荐三字段');
   assert.equal(preset.json.panel.defaultOperation, 'compress');
 
-  // ② 旧客户端显式给 autoChoose（已退役）→ 仍按人类决策清推荐；字段恒归一 false
+  // ② 退役 autoChoose 不参与决策：不再清推荐（字段被忽略）
   seed('sess-rec-put-auto');
   const auto = await putPanel(host, { sessionId: 'sess-rec-put-auto', autoChoose: true });
   assert.equal(auto.out.statusCode, 200);
-  assert.deepEqual(recommendOf(auto.json.panel), [null, '', null], 'autoChoose 清推荐三字段');
-  assert.equal(auto.json.panel.autoChoose, false, 'autoChoose 退役恒 false（D8=A）');
+  assert.deepEqual(recommendOf(auto.json.panel), ['handoff', '干净上下文更适合下一阶段', 1762460000999], '退役字段不清推荐');
+  assert.equal(Object.prototype.hasOwnProperty.call(auto.json.panel, 'autoChoose'), false);
 
   // ③ 只写 autoCompress（未做继续方式决定）→ 推荐保留
   seed('sess-rec-put-keep');
@@ -1199,42 +1135,29 @@ test('v0.3.4 P2-1: 人类 PUT 显式 defaultOperation/autoChoose 清空模型推
   assert.equal(keep.json.panel.autoCompress, true);
 });
 
-test('host v0.9.0 MIG7: panel PUT handoffPreset 退役——合法旧值兼容接受但不生效（deprecated），非法仍 400', async () => {
+test('host v0.10 C10: panel PUT 退役/未知键（handoffPreset/autoChoose/autoDecision）一律忽略——200 不落面板', async () => {
   const host = fakeHost();
-  // 缺省：null；modes wire 兼容保留但值同为唯一模式 id。
   const initial = await getPanel(host, 'sess-hp-put');
-  assert.equal(initial.json.panel.handoffPreset, null);
-  assert.deepEqual(initial.json.modes, { relay: 'relay-long', long: 'relay-long' });
-  // 合法旧值（唯一 id / classic 别名 / null）→ 200，不 400，但不再写面板、不影响行为。
-  for (const value of ['relay', 'relay-long', null]) {
+  for (const key of ['handoffPreset', 'autoChoose', 'autoDecision']) {
+    assert.equal(Object.prototype.hasOwnProperty.call(initial.json.panel, key), false, '退役字段不得出现：' + key);
+  }
+  // 任意旧值（合法/脏/非字符串）→ 200，不写面板、不返回 deprecated 标记（语义已整体删除）。
+  for (const value of ['relay', 'relay-long', 'bad preset', '', 42, true, {}, null]) {
     const put = await putPanel(host, { sessionId: 'sess-hp-put', handoffPreset: value });
-    assert.equal(put.out.statusCode, 200, '合法值应 200: ' + String(value));
-    assert.equal(put.json.panel.handoffPreset, null, '旧值不再落面板（目标恒唯一模式）');
-    assert.equal(put.json.deprecated, value === null ? undefined : true, '非 null 旧值返回 deprecated:true');
-    assert.equal((await getPanel(host, 'sess-hp-put')).json.panel.handoffPreset, null);
+    assert.equal(put.out.statusCode, 200, '退役字段不再校验/拒绝: ' + String(value));
+    assert.equal(Object.prototype.hasOwnProperty.call(put.json.panel, 'handoffPreset'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(put.json, 'deprecated'), false);
   }
-  // 非法值（其它 preset id / 脏字符串 / 非字符串）→ 400 code=invalid-handoff-preset。
-  for (const bad of ['ptc', 'bad preset', '', 42, true, {}]) {
-    const res = await putPanel(host, { sessionId: 'sess-hp-put', handoffPreset: bad });
-    assert.equal(res.out.statusCode, 400, '非法值应 400: ' + JSON.stringify(bad));
-    assert.equal(res.json.code, 'invalid-handoff-preset');
-  }
-  // 同批其它合法字段照常写入（handoffPreset 被忽略）。
+  // 同批其它合法字段照常写入（退役字段被忽略）。
   const both = await putPanel(host, { sessionId: 'sess-hp-put', handoffPreset: 'relay', autoCompress: true });
-  assert.equal(both.json.panel.handoffPreset, null);
   assert.equal(both.json.panel.autoCompress, true);
-  assert.equal(both.json.deprecated, true);
-  // presetId/longPresetId 可配置：唯一 id 取 longPresetId ?? presetId+'-long'，classic 别名取 presetId；
-  // GET modes 与 PUT 白名单都跟随配置（不是硬编码 'relay-long'）。
-  const custom = fakeHost({ config: { presetId: 'myrelay', longPresetId: 'myrelay-long' } });
-  assert.deepEqual((await getPanel(custom, 'sess-custom')).json.modes, { relay: 'myrelay-long', long: 'myrelay-long' });
+  assert.equal(Object.prototype.hasOwnProperty.call(both.json.panel, 'handoffPreset'), false);
+  // presetId/longPresetId 可配置：唯一 id 取 longPresetId ?? presetId+'-long'；GET 只回 preset，不知道的 classic id 不再识别。
+  const custom = fakeHost({ config: { presetId: 'myrelay', longPresetId: 'myrelay-long' }, sessions: { get: (id) => ({ id, header: { agentPreset: id === 'sess-custom' ? 'myrelay-long' : 'myrelay' } }) } });
+  assert.equal(Object.prototype.hasOwnProperty.call((await getPanel(custom, 'sess-custom')).json, 'modes'), false, '退役 wire 字段 modes 已删');
+  assert.equal((await getPanel(custom, 'sess-custom')).json.relay, true);
+  assert.equal((await getPanel(custom, 'sess-custom-old')).json.relay, false, '旧 classic id 不再识别');
   assert.equal((await putPanel(custom, { sessionId: 'sess-custom', handoffPreset: 'myrelay-long' })).out.statusCode, 200);
-  assert.equal((await putPanel(custom, { sessionId: 'sess-custom', handoffPreset: 'myrelay' })).out.statusCode, 200, '迁移期别名仍在白名单');
-  assert.equal((await putPanel(custom, { sessionId: 'sess-custom', handoffPreset: 'relay' })).out.statusCode, 400, '默认 id 不在自定义白名单');
-  // legacyPresetCompat:false → 别名不在白名单（v0.10.0 形态）。
-  const noAlias = fakeHost({ config: { legacyPresetCompat: false } });
-  assert.equal((await putPanel(noAlias, { sessionId: 'sess-noalias', handoffPreset: 'relay' })).out.statusCode, 400);
-  assert.equal((await putPanel(noAlias, { sessionId: 'sess-noalias', handoffPreset: 'relay-long' })).out.statusCode, 200);
 });
 
 test('host: PUT /context-relay/panel 写盘失败 → 200 + persisted:false + message，内存仍生效（B-P2-10）', async () => {
@@ -1252,47 +1175,44 @@ test('host: PUT /context-relay/panel 写盘失败 → 200 + persisted:false + me
   assert.equal(host.warnings.some((line) => /panel\.json write failed/.test(line)), true);
 });
 
-test('host v3: panel PUT 旧 autoChoose 兼容——退役恒 false，预设按旧互斥语义处理', async () => {
+test('host: panel PUT 退役 autoChoose 忽略——不再有旧互斥语义，白名单字段独立生效', async () => {
   const host = fakeHost();
-  // 旧客户端同时发 autoChoose:true + 预设 → 兼容接受：autoChoose 恒 false，旧互斥逻辑仍清预设。
+  // 旧客户端同时发 autoChoose:true + 预设 → 只认 defaultOperation；autoChoose 被丢弃。
   const auto = await putPanel(host, { sessionId: 'sess-exclusive', autoChoose: true, defaultOperation: 'handoff' });
-  assert.equal(auto.json.panel.autoChoose, false, 'autoChoose 退役恒 false（D8=A）');
-  assert.equal(auto.json.panel.defaultOperation, null);
+  assert.equal(Object.prototype.hasOwnProperty.call(auto.json.panel, 'autoChoose'), false);
+  assert.equal(auto.json.panel.defaultOperation, 'handoff');
   // 显式给预设 → 生效。
   const preset = await putPanel(host, { sessionId: 'sess-exclusive', defaultOperation: 'compress' });
-  assert.equal(preset.json.panel.autoChoose, false);
   assert.equal(preset.json.panel.defaultOperation, 'compress');
-  // 旧客户端再发 autoChoose:true → 预设仍被旧互斥逻辑清空，字段恒 false。
+  // 旧客户端再发 autoChoose:true → 无副作用，预设保持。
   const back = await putPanel(host, { sessionId: 'sess-exclusive', autoChoose: true });
-  assert.equal(back.json.panel.autoChoose, false);
-  assert.equal(back.json.panel.defaultOperation, null);
+  assert.equal(back.json.panel.defaultOperation, 'compress');
   // 只改其它白名单字段：不影响预设模式既有值
   await putPanel(host, { sessionId: 'sess-exclusive-2', defaultOperation: 'continue' });
   const other = await putPanel(host, { sessionId: 'sess-exclusive-2', autoCompress: true });
   assert.equal(other.json.panel.defaultOperation, 'continue');
-  assert.equal(other.json.panel.autoChoose, false);
   assert.equal(other.json.panel.autoCompress, true);
 });
 
 test('host: 未改面板的会话 GET panel 返回侧栏默认；改过面板后快照不再跟随默认', async () => {
   const host = fakeHost();
   const panelPath = host.config.panelPath;
-  // 侧栏保存默认值（阈值 + 默认操作 + 授权）→ 发布到 globalThis（autoChoose 退役恒 false、cth 已无）
-  const saved = await putSettings(host, { threshold: 50, defaultOperation: 'handoff', autoChoose: true, autoCompress: true, autoHandoff: true });
+  // 侧栏保存默认值（阈值 + 默认操作 + 授权）→ 发布到 globalThis
+  const saved = await putSettings(host, { threshold: 50, defaultOperation: 'handoff', autoCompress: true, autoHandoff: true });
   assert.equal(saved.out.statusCode, 200);
-  // 旧客户端同时传 auto 与 preset → autoChoose 退役恒 false；旧互斥逻辑仍把 preset 清为 null。
-  assert.equal(saved.json.settings.autoChoose, false);
-  assert.equal(saved.json.settings.defaultOperation, null);
-  const sidebarDefaults = { defaultOperation: null, autoChoose: false, autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true };
+  // 退役 autoChoose 被忽略，defaultOperation 照常生效。
+  assert.equal(saved.json.settings.defaultOperation, 'handoff');
+  assert.equal(Object.prototype.hasOwnProperty.call(saved.json.settings, 'autoChoose'), false);
+  const sidebarDefaults = { defaultOperation: 'handoff', autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true };
   // 未改过面板的新会话：GET panel 读到侧栏默认值
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.panel, resolvePanelState({ defaults: sidebarDefaults }));
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.settings, { threshold: 50 }); // 面板 GET 保持 v1 形状
-  // 面板切到预设模式：显式预设 + 关自动（互斥）→ 整份当前值快照写入本会话（此后不再跟随侧栏默认）
-  const changed = await putPanel(host, { sessionId: 'sess-default-a', defaultOperation: 'continue', autoChoose: false });
+  // 面板切到预设模式 → 整份当前值快照写入本会话（此后不再跟随侧栏默认）
+  const changed = await putPanel(host, { sessionId: 'sess-default-a', defaultOperation: 'continue' });
   assert.equal(changed.out.statusCode, 200);
-  assert.deepEqual(changed.json.panel, resolvePanelState({ defaults: { autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true }, patch: { defaultOperation: 'continue', autoChoose: false } }));
+  assert.deepEqual(changed.json.panel, resolvePanelState({ defaults: { autoCompress: true, autoHandoff: true, unlimitedBudget: true, architect: true }, patch: { defaultOperation: 'continue' } }));
   // 侧栏默认再变：未改面板的新会话跟随新默认；改过的会话保持自己的快照
-  await putSettings(host, { threshold: 45, defaultOperation: 'compress', autoChoose: false, autoCompress: false, autoHandoff: false });
+  await putSettings(host, { threshold: 45, defaultOperation: 'compress', autoCompress: false, autoHandoff: false });
   assert.deepEqual((await getPanel(host, 'sess-default-b')).json.panel, resolvePanelState({ defaults: { defaultOperation: 'compress', unlimitedBudget: true, architect: true } }));
   assert.deepEqual((await getPanel(host, 'sess-default-a')).json.panel, changed.json.panel);
   // 人类在面板把模式写回 null（问我）后覆盖，不回落到侧栏默认 'compress'
@@ -1309,9 +1229,9 @@ test('host: 未改面板的会话 GET panel 返回侧栏默认；改过面板后
 test('host: 面板 no-op 写入不固化侧栏默认值（B-P2-8：会话继续跟随侧栏默认）', async () => {
   const host = fakeHost();
   const panelPath = host.config.panelPath;
-  await putSettings(host, { threshold: 50, autoChoose: false, autoCompress: true, autoHandoff: true, defaultOperation: 'compress-then-handoff' });
+  await putSettings(host, { threshold: 50, autoCompress: true, autoHandoff: true, defaultOperation: 'compress' });
   // 面板写一个与侧栏默认完全相同的值 → 没有语义变化 → 不创建会话快照
-  const noop = await putPanel(host, { sessionId: 'sess-noop', autoCompress: true, autoHandoff: true, defaultOperation: 'compress-then-handoff' });
+  const noop = await putPanel(host, { sessionId: 'sess-noop', autoCompress: true, autoHandoff: true, defaultOperation: 'compress' });
   assert.equal(noop.out.statusCode, 200);
   assert.equal(existsSync(panelPath), false, 'no-op 面板写入不得创建 panel.json 会话快照');
   // 侧栏默认改变 → 该会话（人类没真正改过面板）跟随新默认
@@ -1323,16 +1243,16 @@ test('host: 面板 no-op 写入不固化侧栏默认值（B-P2-8：会话继续�
 
 test('host: agent 内部写（source:agent）不把侧栏默认值固化进新会话（handoff 子会话，B-P2-8）', () => {
   // 直接走 panel-store（agent.js 的写入路径）：子会话只继承显式授权字段。
-  globalThis[SETTINGS_KEY] = { threshold: 40, defaultOperation: 'compress-then-handoff', autoChoose: false, autoCompress: false, autoHandoff: false, explicit: true };
+  globalThis[SETTINGS_KEY] = { threshold: 40, defaultOperation: 'compress', autoCompress: false, autoHandoff: false };
   const panelPath = tmpPath('relay-panel-agent-');
   configurePanelStore({ panelPath });
-  updatePanelState('sess-child-agent', { autoChoose: false, autoCompress: true, autoHandoff: true, authorizeNext: false }, { source: 'agent' });
+  updatePanelState('sess-child-agent', { autoCompress: true, autoHandoff: true, authorizeNext: false }, { source: 'agent' });
   // 侧栏默认变化：子会话未显式继承的字段跟随默认（不再被「全新会话」固化）
-  globalThis[SETTINGS_KEY] = { threshold: 40, defaultOperation: 'continue', autoChoose: false, autoCompress: false, autoHandoff: false, explicit: true };
+  globalThis[SETTINGS_KEY] = { threshold: 40, defaultOperation: 'continue', autoCompress: false, autoHandoff: false };
   assert.equal(panelStateOf('sess-child-agent').defaultOperation, 'continue');
   assert.equal(panelStateOf('sess-child-agent').autoCompress, true);
   // 落盘记录只有显式字段（重启用同一 panelPath 时不会被默认值快照覆盖）
-  assert.deepEqual(Object.keys(JSON.parse(readFileSync(panelPath, 'utf8')).sessions['sess-child-agent']).sort(), ['authorizeNext', 'autoChoose', 'autoCompress', 'autoHandoff']);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(panelPath, 'utf8')).sessions['sess-child-agent']).sort(), ['authorizeNext', 'autoCompress', 'autoHandoff']);
 });
 
 test('host: panel 路由 connection.requestRejection 401/403 直接拒绝', async () => {
@@ -1346,26 +1266,24 @@ test('host: panel 路由 connection.requestRejection 401/403 直接拒绝', asyn
   }
 });
 
-test('host v3: PUT authorizeNext 持久化回读；autoChoose/autoDecision 退役恒归一；显式默认操作生效', async () => {
+test('host v3: PUT authorizeNext 持久化回读；退役字段被忽略；显式默认操作生效', async () => {
   const host = fakeHost();
-  // 白名单：authorizeNext 可写；autoChoose 退役恒 false；autoDecision 退役恒 null
+  // 白名单：authorizeNext 可写；退役 autoChoose/autoDecision 出现在 body 里也被丢弃。
   const on = await putPanel(host, { sessionId: 'sess-v3', autoChoose: true, authorizeNext: true, autoDecision: { operation: 'compress', at: 1 } });
   assert.equal(on.json.panel.authorizeNext, true);
-  assert.equal(on.json.panel.autoChoose, false);
-  assert.equal(on.json.panel.autoDecision, null);
-  // autoDecision 内部字段也已退役：agent 面写入同样被归一丢弃（不再有模型自决档）
+  assert.equal(Object.prototype.hasOwnProperty.call(on.json.panel, 'autoChoose'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(on.json.panel, 'autoDecision'), false);
+  // 退役字段 agent 面写入同样被丢弃（不落记录、不回显）
   updatePanelState('sess-v3', { autoDecision: { operation: 'handoff', at: 2 } });
-  assert.equal(panelStateOf('sess-v3').autoDecision, null);
+  assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf('sess-v3'), 'autoDecision'), false);
   // GET 回读 authorizeNext
   assert.equal((await getPanel(host, 'sess-v3')).json.panel.authorizeNext, true);
   // 显式给 defaultOperation（含 null）→ 生效；授权不受影响（模式不产生免审、也不清免审）
   await putPanel(host, { sessionId: 'sess-v3', defaultOperation: null });
   assert.equal(panelStateOf('sess-v3').authorizeNext, true);
-  assert.equal(panelStateOf('sess-v3').autoChoose, false);
   const setMode = await putPanel(host, { sessionId: 'sess-v3', defaultOperation: 'compress' });
   assert.equal(setMode.json.panel.defaultOperation, 'compress');
-  assert.equal(setMode.json.panel.autoChoose, false);
-  assert.equal(setMode.json.panel.autoDecision, null);
+  assert.equal(setMode.json.panel.authorizeNext, true);
 });
 
 test('host v3: GET panel 的 live.organizeCount 可读', async () => {
