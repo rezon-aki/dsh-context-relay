@@ -294,6 +294,29 @@ test('B-04：只读 relay_work_items 不再清 pending；写入型（items / mod
   assert.match(injected[2].content[0].text, /\[闭环\] 上一步改动未落账：write\(c\.js\)/);
 });
 
+test('闭环抑制：台账存在且全部 done → 写文件不再催落账；出现 doing 分点后恢复提醒', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-closure-done', cwd, seq: 0 });
+  writeLedger(cwd, [{ id: 'p1', title: '收尾', status: 'done', phase: 'ship' }], { currentPhase: { phase: 'ship', since: 1 } });
+  const bundle = applyAgent(fakeServices({ session }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
+  const pre = preStepOf(bundle);
+  const post = postExecuteOf(bundle);
+  const injected = [];
+  const agent = { session, options: {}, inject(message) { injected.push(message); } };
+  await post({ name: 'write', agent, arguments: { file_path: '/tmp/done.js' } }, { isError: false }, async () => undefined);
+  await pre({ agent }, async () => undefined);
+  const first = injected.map((message) => message.content[0].text).join('\n');
+  assert.doesNotMatch(first, /\[闭环\]/, '全部 done → 不再催闭环');
+  assert.equal(PENDING_CLOSURE.has(session.id), false, 'pre-step 清掉「无分点可落账」的待落账标记');
+  // 重新开一个 doing 分点后：写入照常提醒
+  writeLedger(cwd, [{ id: 'p2', title: '新活', status: 'doing', next: 'x', phase: 'build' }], { currentPhase: { phase: 'build', since: 2 } });
+  await post({ name: 'write', agent, arguments: { file_path: '/tmp/open.js' } }, { isError: false }, async () => undefined);
+  await pre({ agent }, async () => undefined);
+  const second = injected.map((message) => message.content[0].text).join('\n');
+  assert.match(second, /\[闭环\] 上一步改动未落账：write\(open\.js\)/);
+});
+
 test('M-12：队友到线 notice 不含 Lead 台账行/计数，也不教用被裁的 relay_work_items', async () => {
   resetSharedState();
   const cwd = tmpCwd();

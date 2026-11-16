@@ -221,6 +221,18 @@ test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条 �
   }
 });
 
+test('planNotices：台账没有未闭合分点时不发 [闭环]（没有分点可落账）', () => {
+  const closedLedger = { exists: true, currentPhase: { phase: 'ship' }, items: [{ id: 'p1', title: '收尾', status: 'done', phase: 'ship' }], counts: { total: 1, pending: 0, doing: 0, blocked: 0, open: 0, done: 1 } };
+  const suppressed = planNotices(facts({ lastBand: 'organize', ledger: closedLedger, pendingClosure: [{ tool: 'write', target: 'README.md' }] }));
+  // 全 done 的台账仍会有「可以关 phase」焦点行（另一种提醒），本用例只断言 [闭环] 被抑制。
+  assert.ok(suppressed.notice === null || !suppressed.notice.text.includes('[闭环]'), '无未闭合分点 → 不发闭环行');
+  assert.equal(suppressed.claims?.guard?.closureSig ?? '', '', '不留下闭环去重签名，之后开新分点也不会重提旧改动');
+  // 有未闭合分点时行为不变（同场景对照）
+  const openLedger = { exists: true, currentPhase: { phase: 'build' }, items: [{ id: 'p1', title: '修', status: 'doing', next: '写测试', phase: 'build' }], counts: { total: 1, pending: 1 } };
+  const shown = planNotices(facts({ lastBand: 'organize', ledger: openLedger, pendingClosure: [{ tool: 'write', target: 'README.md' }] }));
+  assert.match(shown.notice.text, /\[闭环\] 上一步改动未落账：write\(README\.md\)/);
+});
+
 // ── C15/§5：平面降级可见（planeStatusOf → 每压缩周期一次 notice）──────────────
 const DEGRADED_PLANE = { role: 'lead', installed: true, degradations: [{ seam: 'schedule', reason: 'list() did not return the rc.2 page shape', level: 'degraded' }] };
 
