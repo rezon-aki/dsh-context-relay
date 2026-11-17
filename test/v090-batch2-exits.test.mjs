@@ -322,7 +322,8 @@ test('哨兵容量保全 notice：上升沿一次性注入、同档不重复、�
   assert.match(capacityText, /容量保全/);
   assert.match(capacityText, /ratio 86\.0%，阈值 85\.0%/);
   assert.match(capacityText, /phase 中段不打断」的唯一例外/);
-  assert.doesNotMatch(capacityText, /自动压缩|自动接力/, '只提示不自动动作');
+  assert.match(capacityText, /最坏兜底/, 'P0-D：容量是最坏兜底');
+  assert.match(capacityText, /不自动执行（不自动压缩\/不自动接力）/, '只提示不自动动作');
   // 同档再走 8 步：不重复。
   for (let index = 0; index < 8; index += 1) await step();
   assert.equal(injected.length, 2, '容量 notice 不重复');

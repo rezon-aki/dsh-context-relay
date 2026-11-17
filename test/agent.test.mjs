@@ -325,7 +325,7 @@ test('apply registers protocol section and six relay tools', () => {
   globalThis[Symbol.for('dsh-context-relay.settings')] = { unlimitedBudget: true };
   assert.equal(sections[1].text({}).trim(), '你的 token 预算无上限。', 'live 打开热生效');
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
-  assert.match(sections[0].text, /只在跨档时出现/);
+  assert.match(sections[0].text, /四档语义/);
   // 压缩/接力都是可选项，由人类/面板选（到线提醒里给动作）
   assert.match(sections[0].text, /严格按模式执行/);
   // P2/A3 修正：插件在压缩时自动跑 doc_lint 并把结果写进 brief/evidence，模型手动补充只在需要时
@@ -759,12 +759,15 @@ test('reminders: 升线提醒（同档不重复），回退后再升线仍提醒
   assert.match(message.source.summary, /\[context-relay\] band=warn/);
   assert.match(message.content[0].text, /到线提醒（插件 notice，非用户发言）/);
   assert.match(message.content[0].text, /接力 chip/, 'notice explains the composer panel');
-  assert.match(message.content[0].text, /phase 优先/, 'notice keeps the phase-first rule');
-  assert.match(message.content[0].text, /不中途压缩\/接力/, 'notice keeps the no-mid-phase-compress rule');
-  assert.match(message.content[0].text, /处理点在 phase 边界/, 'notice points action to the phase boundary');
+  assert.match(message.content[0].text, /现在就该动手/, 'warn 是可执行建议，不是只告知');
+  assert.match(message.content[0].text, /三选一/);
+  assert.match(message.content[0].text, /压缩继续/, '三选一含压缩');
+  assert.match(message.content[0].text, /清空复用/, '三选一含清空复用');
+  assert.match(message.content[0].text, /交接新会话/, '三选一含交接');
+  assert.doesNotMatch(message.content[0].text, /继续做完当前任务/, 'warn 不再教「继续做完」');
   assert.doesNotMatch(message.content[0].text, /thresholds=/, '阈值不重复塞进 notice（协议/status 里有）');
-  // 长度回归：Lead 到线提醒 ≤365 字符（原 749；v0.3.3 追加一行 relay_recommend 指引 ≈114 字符）
-  assert.ok(message.content[0].text.length <= 365, 'Lead notice chars ' + message.content[0].text.length);
+  // 长度回归：Lead 到线提醒 ≤900（P0-D 三选一 + 推荐 + 工具路径）
+  assert.ok(message.content[0].text.length <= 900, 'Lead notice chars ' + message.content[0].text.length);
   assert.equal(liveStateOf(session.id).band, 'warn');
   assert.equal(liveStateOf(session.id).phase, 'discover');
   await step(); // 同档重复：不提醒
@@ -953,7 +956,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   // Lead 文案保留：到线提醒 + 面板状态 + phase 优先指引（细节指向常驻协议）
   assert.match(injected[0].content[0].text, /到线提醒（插件 notice，非用户发言）/);
   assert.match(injected[0].content[0].text, /接力 chip/);
-  assert.match(injected[0].content[0].text, /phase 优先/);
+  assert.match(injected[0].content[0].text, /现在就该动手/);
 
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 };
   await step();
@@ -1905,11 +1908,11 @@ test('v0.9.0 单一模式到线提醒：cth 残留归一「问我」，不出现
   const singleText = await noticeOf('session-v038-single-notice-cth');
   assert.ok(singleText.length > 0, '到线提醒仍注入');
   assert.doesNotMatch(singleText, /压缩→新会话/, '到线提醒不得显示已移除档位');
-  assert.match(singleText, /模式「问我」/, '残留预设按「问我」展示');
+  assert.match(singleText, /模式=问我/, '残留预设按「问我」展示');
   // v0.10.0：退役 config.routerMode 被忽略：同一文案
   const legacyText = await noticeOf('session-v038-legacy-notice-cth', { routerMode: false });
   assert.doesNotMatch(legacyText, /压缩→新会话/);
-  assert.match(legacyText, /模式「问我」/);
+  assert.match(legacyText, /模式=问我/);
 });
 
 test('relay_organize injects the phase brief only after a successful compaction', async () => {
@@ -3336,7 +3339,7 @@ test('v0.9.0 面板状态文本：cth 档退役（归一「问我」），到线
   const agent = { session, inject(message) { injected.push(message); } };
   await preStepListener(events)({ agent }, async () => undefined);
   assert.equal(injected.length, 1);
-  assert.match(injected[0].content[0].text, /模式「问我」/);
+  assert.match(injected[0].content[0].text, /模式=问我/);
   assert.doesNotMatch(injected[0].content[0].text, /压缩→新会话/);
 
   // 拒绝分支只 throw：问人类文案同样不出现已移除档位（不再注入 notice）
@@ -3968,7 +3971,7 @@ test('文案：autoChoose 模型自决档退役（D8=A）——advice/常驻协�
   await listener({ agent: { session, inject(message) { injected.push(message); } } }, async () => undefined);
   assert.equal(injected.length, 1);
   const text = injected[0].content[0].text;
-  assert.match(text, /模式「问我」/);
+  assert.match(text, /模式=问我/);
   assert.doesNotMatch(text, /自决|autoChoose=on/);
   // P2-19：工具描述只留一行指针，语义收敛协议
   const desc = tools.get('relay_phase').description;

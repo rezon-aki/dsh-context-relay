@@ -160,7 +160,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER �
     'pending 不是跳过、不是同意',
     'phase 边界闸门',
     '不开新 phase',
-    '升线 notice 只告知',
+    '现在就该动手',
     '交接单 = 摘要 + 完整文件',
     '不因超长拒绝交接',
     '所有字节/条数上限只是 advisory',
@@ -256,7 +256,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
   const resident = [PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, WORK_LEDGER_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT].join('\n');
   const countIn = (haystack, phrase) => haystack.split(phrase).length - 1;
   // 1) 真源句 occurrence==1（base 承载；任何一段复制都会超 1）
-  for (const phrase of ['不产生审批豁免', '免审只来自 autoCompress', '模式只决定「做什么」', '升线 notice 只告知', '派活 brief 五字段缺一不可', '回执契约（写进 worker brief）', '授权口径（唯一真源）', 'lead-exec:<原因>']) {
+  for (const phrase of ['不产生审批豁免', '免审只来自 autoCompress', '模式只决定「做什么」', '现在就该动手', '派活 brief 五字段缺一不可', '回执契约（写进 worker brief）', '授权口径（唯一真源）', 'lead-exec:<原因>']) {
     assert.equal(countIn(resident, phrase), 1, '真源句应恰好出现 1 次: ' + phrase + '（实际 ' + countIn(resident, phrase) + '）');
   }
   // 2) P3 上收的小队口径：只在 PROTOCOL base 出现；ROUTER/TEAM_LEAD 只留指针

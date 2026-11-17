@@ -550,9 +550,10 @@ test('protocol 文案：phase 优先 + budget_plan + 拆票 + 先写好文档再
   assert.doesNotMatch(text, /每 8 步重申/);
   assert.doesNotMatch(text, /不用等 phase 完成/);
   assert.doesNotMatch(text, /现在调 tools\.relay_organize/);
-  // 到线提醒段：升线只告知预算状态与 phase 优先指引。
-  assert.match(text, /升线 notice 只告知/);
-  assert.match(text, /不中途压缩\/接力/);
+  // 到线提醒段：P0-D 四档语义（起点/warn 现在动手/兜底/最后防线）。
+  assert.match(text, /起点提醒/);
+  assert.match(text, /现在就该动手/);
+  assert.match(text, /兜底告警/);
 });
 
 test('sentinel: warn 升线只注入 1 条；随后 8 步不再注入（旧 nag 已删）', async () => {
@@ -569,13 +570,16 @@ test('sentinel: warn 升线只注入 1 条；随后 8 步不再注入（旧 nag 
   await step();
   assert.equal(injected.length, 1, '升到 warn：只注入 1 条');
   assert.match(injected[0].source.summary, /band=warn/);
-  // warn 档 notice：只告知 phase 优先 + 处理点在 phase 边界（细节指向常驻协议），不含 mid-phase relay 指令。
-  assert.match(injected[0].content[0].text, /phase 优先/);
-  assert.match(injected[0].content[0].text, /处理点在 phase 边界/);
-  assert.match(injected[0].content[0].text, /常驻协议/);
+  // P0-D：warn 是可执行建议（现在就该动手），三选一，不再只指向 phase 边界。
+  assert.match(injected[0].content[0].text, /现在就该动手/);
+  assert.match(injected[0].content[0].text, /三选一/);
+  assert.match(injected[0].content[0].text, /压缩继续/);
+  assert.match(injected[0].content[0].text, /清空复用/);
+  assert.match(injected[0].content[0].text, /交接新会话/);
+  assert.doesNotMatch(injected[0].content[0].text, /继续做完当前任务/);
   assert.doesNotMatch(injected[0].content[0].text, /现在调 tools\.relay_organize/);
-  // 长度回归：Lead 到线提醒 ≤300 字符（原 749；advice 复述删掉后只留事实+指引+指针）
-  assert.ok(injected[0].content[0].text.length <= 365, 'warn notice chars ' + injected[0].content[0].text.length);
+  // 长度上限：Lead 到线提醒 ≤900（P0-D 三选一 + 推荐 + 工具路径）
+  assert.ok(injected[0].content[0].text.length <= 900, 'warn notice chars ' + injected[0].content[0].text.length);
   for (let index = 0; index < 8; index += 1) await step();
   assert.equal(injected.length, 1, '同档 9 步只提醒一次：不再每 8 步重申');
 
