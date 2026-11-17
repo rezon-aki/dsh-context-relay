@@ -2,6 +2,56 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
 
+# Changelog
+
+面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
+
+## v0.11.0 (2026-11-17)
+
+「主动管理 + 小队模型 + 受控返修」：在 v0.10.0 完整形态上新增主动上下文管理（新起点自查 + warn 可执行建议 + 四档语义）、固定小队（spawn 默认关、上限 8、reset 复用、批量清理/纳入）、ship 受控 reopen、容量保全线独立化（默认 55%）与宿主自动压缩兜底。工具数仍 15，无 roster/work-items/panel 数据格式破坏。
+
+### 行为变更（升级前必读）
+
+- **容量保全线 85% → 默认 55%**，改为独立配置 `settings.capacityThreshold`（20–95，不参与 band 派生、不与 `threshold` 合并）；调回 85 即接近旧行为。
+- **spawn 默认关闭**（`allowSpawn=false`）：换人优先让目标 `relay_checkpoint` → `relay_freshen({reset:true,brief})` 全清复用；`relay_renew` 默认拒绝，仅换身份/角色且 `allowSpawn=true`。
+- **固定小队上限 8**（`squadMax`，含架构师，可上调）：默认视图只到 squad；legacy/retired 只给计数，用 `include_legacy`/`include_retired` 查看，用 `manage` 纳入（adopt）或批量清理（retire scope=legacy/names）。
+- **到线语义四档化**：起点（新 phase/新任务）主动管理 / warn=现在就该动手（压缩/清空复用/交接三选一，不再推荐继续）/ organize·relay=兜底告警 / capacity 55%=最坏兜底（不自动执行）；到线文案与协议同步。
+- **ship 受控 reopen**：ship→build/verify 默认必须显式 `reopen{reason,user_approved:true}`（`reopenGate` strict；warn 放行+warning；off=v0.10 旧行为）；ship→discover 标 `newTask`；同 phase 重复 ship 只告警 `ship-already-delivered`。返修后二次 ship 仍重新过 user_gate/contract_check。
+- **宿主自动压缩兜底**：host 归因时写 ≤2KB 最小恢复快照 + chain 条目 + 一次 recovery notice；`compactionFallback` 默认 on，off 只日志；unknown 只 `logWarn`，不写快照。
+
+### 默认值表
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| band | warn 30 / organize 35 / relay 45 | 由 `settings.threshold=35` 派生 |
+| capacity | 55% | `settings.capacityThreshold`，独立配置 |
+| allowSpawn / squadMax | false / 8 | 小队模型（含架构师） |
+| contextCheck / reopenGate / compactionFallback | on / strict / on | 新机制，均可关闭 |
+
+### P0（阻断核心链路）
+
+- **P0-A 选人健康修复**：`band=unavailable` 与 unknown 同归 `unknown` 并排除自动选人；清爽度排序（fresh<watch、ok<warn）+ `rosterKnown`/名字 tie-break；候选 band 并发读取、上限 12 + `truncated`；返回 `selection{mode,score,considered,excluded,truncated}`，失败路径同样带排除原因。
+- **P0-B 小队模型**：`squadMembersOf/legacyMembersOf/squadSummaryOf/adoptMembers` 单一判据；`relay_team_status` 默认只 squad + `manage{retire/adopt}`（legacy/names、keep、dry_run、retired.ndjson 归档）；spawn 关、cap、architect 计入 cap 且 fresh 豁免；dispatch/send_message/triage/快照只 squad。
+- **P0-C ship 受控 reopen**：strict/warn/off 矩阵、零副作用拒绝、非 ship 误用拒绝、二次 ship 重新过双门、`deriveReopen→relay_status.reopen`、`newTask`、`ship-already-delivered`。
+- **P0-D 主动上下文管理**：新 phase / 新任务（create_goal、task_board_run、ship 后首条用户消息）起点自查；四档文案；去重/冷却 ≥3 步/合并/投递成功才 claim/压缩不重放/off 静默。
+- **P0-E 容量线独立化**：`capacityThreshold` 默认 55、[20,95]、非法抛错；`capacityRatioOf` 唯一换算入口；sentinel/relay_status/文案全部动态渲染，删除写死 85%。
+
+### P1
+
+- **P1-A 宿主自动压缩兜底**：四态归因（relay-organize / relay-freshen / host / unknown）；host 归因写 `recovery/compaction-<sessionId>.md`（六类指针、≤2KB）+ chain `kind=compaction`；一次 recovery notice；全链路 fail-open。
+
+### 兼容与回退
+
+- 回退映射：`capacityThreshold=85`、`allowSpawn=true` + 调大 `squadMax`、`contextCheck:off`、`reopenGate:off`、`compactionFallback:off` ≈ v0.10 行为（默认展示仍只到 squad）。
+- 无数据迁移：roster / work-items / panel 格式不变；catalog 名字不能删除，退休后不再派活/展示，真清空团队用 `relay_handoff`。
+- 工具数保持 15；逐项升级/回滚见 [docs/design/MIGRATION.md](docs/design/MIGRATION.md)。
+
+### 验证与未验证
+
+- 全量测试与 `npm run check` / `npm pack --dry-run` 见本次收尾回执（.scratch/context-relay/reports/b7-changelog.md）。
+- 真机 V1–V8 未授权未跑：34 存量清理与可见性、spawn 关与 reset 复用、主动提醒、容量 55%、reopen 真实相位、宿主压缩归因、8 人上限、reset/wipe seam。
+- 已知限制：容量线调低于 relay 时容量 notice 不带排序提示（仅 `relay_status` 文本提示）；窗口未知时容量不判定；reopen 计数冷启动（投影可用）可能先报 0；catalog 不删名。
+
 ## v0.10.0 (2026-11-16)
 
 「完整形态」交付：以 2026-11-16 全面审计的 2 P0 / 5 P1 / 14 P2 为主线，完成结构性重塑（声明式 agent 平面 / 官方 seam 契约层 / 单一持久化 / 策略单源 / notice 规划投递分层 / 两段式用户门）与**兼容债一次删净**。基线 v0.8.1；v0.9.0 未单独发布，其批次 1–4 内容并入本版（历史段保留于下方）。

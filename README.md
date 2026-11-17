@@ -54,6 +54,7 @@
 - **交接会开新会话**：会中断旧会话里正在跑的队友和后台任务，并迁移定时任务；旧会话保留作审计。
 - **版本要求**：DSH `>=0.2.2-rc.2`（只支持这一代内核）、Node.js `>=20`；目前只在 DSH Web 环境验证过，headless 未验证。
 - **v0.10.0 是破坏性版本**：旧的 classic `relay` 别名、双模式配置、旧配置键都已删除，面板授权契约版本升到 3（升级后旧授权一次性失效，模式和架构师设置保留）。升级前先看[迁移说明](docs/design/MIGRATION.md)。
+- **v0.11.0 调整默认值**：容量线 55%（独立配置）、spawn 默认关、默认只显示当前小队、ship 后返修需显式 reopen、宿主压缩兜底；完整变更见 [CHANGELOG.md](CHANGELOG.md) 与迁移说明。
 
 ## 安装
 
@@ -93,7 +94,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 - 模式选择器里只有 **接力模式（Relay）· 超长任务** 一个生产模式。
 - 输入框上方多一条**状态条**（只有接力会话显示）：上下文用了多少、到没到线、现在是什么模式；点开就是面板。
 - 记过工作项后，状态条旁会多一个**台账胶囊**（`台账 3/8` = 未闭合/总数，进行中是琥珀点、阻塞是红点），点开是完整清单。
-- 上下文到线时会收到一条**状态提醒**（不是你的消息）：只报状态和「先把这一阶段的事做完」，不打断你。
+- 上下文到线时会收到一条**状态提醒**（不是你的消息）：warn 提示「现在就该动手」（压缩/清空复用/交接三选一）；organize/relay 是兜底告警；容量线（默认 55%）是最坏兜底。它不会自动执行，也不打断你。
 
 ### 面板里能改什么
 
@@ -120,10 +121,11 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ### 到线与处理
 
-- **越过提醒线**：收到一条状态提醒；不处理也不会打断你。
+- **到线分四档**：起点主动管理；warn 30% 是「现在就该动手」（压缩/清空复用/交接三选一）；organize/relay 是兜底告警；容量线 55%（独立配置）是最后防线。状态提醒不打断你，也不自动执行。
 - **你选「压缩继续」或明确说压缩**：agent 先把「接手这个活需要知道什么」整理成一页（目标、已定的事、证据、下一步），压缩旧对话，把这一页放回对话里，接着干。
 - **你选「接力新会话」或上下文到硬线**：生成交接单，开一个新会话并把摘要发给它；旧会话保留。旧会话里的队友和后台任务会被中断，定时任务迁到新会话。
 - 一个会话默认只压缩一次（避免摘要越压越漂）；你在面板里选「压缩继续」可以再来一次，仍然要过审批。
+- **容量保全线**（默认 55%，`settings.capacityThreshold` 独立配置）：到达后立即收尾当前动作、停止开新活/派活，先写 brief/progress/台账，再按模式/授权压缩或交接；不自动执行。
 
 ### 分阶段与两个用户确认点
 
@@ -143,9 +145,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ## 团队：Lead、队友和架构师
 
-- **小队默认 4 人，优先复用现有人手**；任务特别多时按部署上限扩编，满了会排队或报阻塞。
+- **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认关闭**，优先复用现有人手；没有可用队员时，让现有队员清空复用、把历史成员纳入小队（adopt），或 phase 边界交接重建。
 - **Lead 只做调度**：拆活、派活、验收；具体实现交给队友。队友会收到一张标准派活单：目标、必读材料、能改哪些文件、怎么验收、回执放哪。
-- **队友脏了就处理**：可以让它原地清空重来（工作记录保留），或换个身份重来；到线或状态不对时，插件会在下一次派活前提醒 Lead 先处理。
+- **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
 - **不会一直催队友**：队友的回执会自动送达，Lead 不会空转轮询（省 token）。
 
 ### 专职架构师
@@ -178,6 +180,12 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 |---|---|---|
 | `threshold` / `settings.threshold` | 35 | 水位线基准（%）：提前 5 个点提醒，到基准线建议处理，再高 10 个点是硬线。v0.10.0 起这是阈值的唯一来源。 |
 | `settings` | 六个字段的默认值 | 面板的初始默认值；你在界面上保存过的值优先。 |
+| `settings.capacityThreshold` | `55` | 容量保全线（%，20–95，独立于 band 阈值；调回 85 接近旧行为）。 |
+| `allowSpawn` | `false` | 是否允许 dispatch/renew 新建成员；false 时换人只能 reset 复用/adopt/handoff。 |
+| `squadMax` | `8` | 小队上限（含架构师，可上调；32 为防御上限）。 |
+| `contextCheck` | `'on'` | 新 phase/新任务起点自查提醒；`'off'` 全静默。 |
+| `reopenGate` | `'strict'` | ship→build/verify 返修闸门：`strict` / `warn` / `off`（off=v0.10 旧行为）。 |
+| `compactionFallback` | `'on'` | 宿主自动压缩归因兜底：host 归因写最小恢复快照+一次 notice；`off` 只日志。 |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | 面板和设置文件的位置。 |
 | `architect` | `true` | 架构师开关的默认值（输入框「架构师」小胶囊按会话覆盖）。 |
 | `workItems` | `true` | 启用工作台账；设为 `false` 完全回到旧行为（与「执行活先派活」的协议冲突，装载时会提示）。 |
@@ -205,7 +213,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 **Q：关掉「预算无上限」，队友还会收到那句提示吗？** 之后新建的队友/架构师/worker 会继承「关」；已在跑的队友会在下次清空复用（freshen）或架构师继续时同步。
 
-**Q：队友上下文脏了/卡住了怎么办？** 跟 Lead 说「清空这个队友」（保留工作记录、原地重来）或「换掉这个队友」（换身份；会占用一个并发名额，旧代释放）。
+**Q：队友上下文脏了/卡住了怎么办？** 让 Lead 让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 原地清空复用（保留工作记录、同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才 `relay_renew`。历史成员要先 `manage.adopt` 才能派活。
 
 **Q：会删掉我的对话吗？** 不会。压缩只是压缩——旧对话细节不再出现在当前上下文里，历史仍由 DSH 保存；交接的新旧会话都会留着。
 
@@ -216,6 +224,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 ## 已知限制与注意事项
 
 - **审批与授权**：压缩和交接默认要你点头；免审只来自面板里的自动授权。模式本身只决定「做什么」，不会产生免审。
+- **小队默认只显示当前代**：legacy（历史成员）与 retired 默认隐藏、不可派活；用 `include_legacy`/`include_retired` 查看，adopt 纳入或 retire 清理；catalog 名字不能删除，退休不可逆。
+- **容量线窗口未知时不判定**：投影/计量缺失时容量提醒静默，band 的绝对 token 兜底照旧。
+- **reopen 计数**：投影可用时 `relay_status.reopen` 走进程缓存，冷启动可能先显示 0，待无投影扫描或后续 reopen 校正。
 - **内核版本**：只支持 DSH 0.2.2-rc.2 这一代。内核形状对不上时，插件会降级并给出提示（`relay_status.plane.degradations` 可查），不会静默失败，也不会拒绝打开会话。
 - **PTC 程序通道是软约束**：工具面的裁剪只隐藏模型侧的 `bash`/`pwsh`/`write`/`edit` 调用；`run_code` 里用 `node:fs` 或子进程仍能直接读写文件。插件不做通道守卫（这是已经定下的取舍），靠协议、自查和回执约束，不承诺硬隔离。
 - **交接有成本**：会开一个新会话、消耗额度，中断旧会话里正在跑的队友和后台任务，并迁移定时任务；旧会话保留作审计。
@@ -232,6 +243,8 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 - **架构师模型默认跟随你的模型选择**：显式指定时必须在该会话的官方子代理白名单内。
 
 ## 升级与卸载
+
+**v0.11.0 是默认值/行为变更版（无数据迁移）**：容量线 85%→55% 独立配置、spawn 默认关、默认只显示 squad、到线四档语义、ship 返修需 reopen、宿主压缩兜底；回退映射见[迁移说明](docs/design/MIGRATION.md)。
 
 **v0.10.0 是破坏性版本**（从 0.8.x 直接升）：`panel.json` 的 `schemaVersion` 升到 3，旧文件里的会话授权一次性失效（自动压缩/自动交接/授权下一次需要重新开启；模式和架构师设置保留）；classic `relay` 别名、`routerMode`/`legacyPresetCompat`、`config.thresholds`、cth/autoChoose/autoDecision/handoffPreset、`relay_phase` 的 `next_operation` 等旧接口全部删除。旧的 classic 会话打开后，在模式选择器里切到 Relay 即可回填。完整清单和升级步骤见[迁移说明](docs/design/MIGRATION.md)，逐版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -254,7 +267,7 @@ npm run check   # 全部入口语法检查
 
 - [架构说明（ARCHITECTURE）](docs/design/ARCHITECTURE.md)：分层、9 个官方 seam 契约与降级、agent 平面、持久化/策略/提醒分层、阶段与台账契约；
 - [设计说明（DESIGN）](docs/design/DESIGN.md)：定位、设计目标、边界与验收口径；
-- [迁移说明（MIGRATION）](docs/design/MIGRATION.md)：0.8.x → v0.10.0 的破坏性变更与回滚。
+- [迁移说明（MIGRATION）](docs/design/MIGRATION.md)：v0.11.0 默认值变更与回退映射，以及 0.8.x → v0.10.0 的破坏性变更。
 
 ### 工具与接口
 
@@ -262,8 +275,8 @@ npm run check   # 全部入口语法检查
 
 | 工具 | 作用 |
 |---|---|
-| `relay_status` | 看上下文占用、到线状态、阶段、剩余预算、派活/执行占比、平面自检和建议。 |
-| `relay_phase` | 声明/切换阶段；首次进 build 校验设计门；交付阶段要求独立审查与汇报。 |
+| `relay_status` | 看上下文占用、到线状态、阶段、剩余预算、派活/执行占比、平面自检、小队摘要（teamSummary）与 reopen 记录。 |
+| `relay_phase` | 声明/切换阶段；首次进 build 校验设计门；交付阶段要求独立审查与汇报；ship 后返修用 `reopen{reason,user_approved}`，ship→discover 标新任务。 |
 | `relay_organize` | 写交接材料 → 官方压缩 → 把材料放回对话。每会话默认一次。 |
 | `relay_handoff` | 生成交接摘要与完整交接单，创建新接力会话并清理旧会话树。 |
 | `relay_work_items` | 读写 Lead 自己的工作台账（无参数=读；整表替换可带乐观锁）。 |
@@ -272,8 +285,8 @@ npm run check   # 全部入口语法检查
 | `relay_doc` | 会话文档的分层与索引：`index` / `list` / `read` / `search` / `lint`。 |
 | `relay_dispatch` | Lead 取分点 → 复用或新建 worker → 发标准派活单（目标/必读/写范围/验收/回执）。 |
 | `relay_collect` | Lead 短等回执（≤120s），只读回执头 + 摘要，校验新鲜度后把分点置 done/blocked。 |
-| `relay_team_status` | 团队体检：健康/档位/检查点/派活计数/reset 结果；状态没变的重复查询会被拒绝。 |
-| `relay_renew` | 队友换代（换身份/角色才用）。 |
+| `relay_team_status` | 团队体检（默认只当前小队）：健康/档位/检查点/派活计数/reset 结果；`include_legacy`/`include_retired` 查看历史；`manage` 做 retire/adopt；状态没变的重复查询会被拒绝。 |
+| `relay_renew` | 队友换代（默认关闭；只换身份/角色且 `allowSpawn=true` 才用）。 |
 | `relay_architect` | 创建/续用固定架构师（`fresh` 换新上下文 / `continue` 接着设计）。 |
 | `relay_checkpoint` | 队友/架构师写检查点（结论/完成/决策/证据/约束/未决/下一步）。 |
 | `relay_freshen` | 队友/架构师同任务内减压；`{reset:true, brief}` 真清空并换新 brief。 |

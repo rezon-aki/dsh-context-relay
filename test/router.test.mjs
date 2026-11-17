@@ -134,7 +134,7 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
     assert.ok(text.includes(phrase), 'SKILL 缺短语: ' + phrase);
   }
   assert.ok(!text.includes('当前实现仍 seed'));
-  for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '默认 4 人', 'maxActiveSubagents', '容量保全', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
+  for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
 test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER ≤2000 / TEAMMATE ≤1300', () => {

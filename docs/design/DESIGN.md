@@ -1,10 +1,10 @@
-# 设计说明（Design）· v0.10.0
+# 设计说明（Design）· v0.11.0
 
 > 范围：唯一生产模式「接力模式（Relay）· 超长任务」（内部 id `relay-long`）。
 >
 > 本文是仓库内的**可发布设计摘要**：只给目标、边界、关键结论与验收口径，不复制行为契约与版本历史；逐条设计点与内部审计记录不随仓库发布。实现架构与官方 seam 契约见 [ARCHITECTURE.md](ARCHITECTURE.md)，迁移与破坏性变更见 [MIGRATION.md](MIGRATION.md)，逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
 >
-> 版本：**v0.10.0（2026-11-16）**——完整形态交付，v0.9.0 未单独发布（内容并入）。
+> 版本：**v0.11.0（2026-11-17）**——主动上下文管理 + 小队模型 + ship 受控 reopen + 容量线独立化 + 宿主压缩兜底；v0.10.0 为上一完整形态（2026-11-16），v0.9.0 未单独发布（内容并入）。
 
 ## 1. 定位
 
@@ -41,7 +41,8 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 - 实时度量上下文占用并分四档：ok（<30%）/ warn（30–35%）/ organize（35–45%）/ relay（≥45%）；基准线默认 35% 可配置，四档按基准线派生。
 - 预算只是 phase 边界闸门：phase 中段不打断、不压缩、不接力，phase 优先。
-- 容量保全是唯一例外：逼近硬窗口（默认 ≥85%）时发一次性容量保全提醒，立即收尾当前动作、写 brief/progress、准备压缩或交接；不自动压缩/接力。
+- 容量保全线独立配置（`settings.capacityThreshold`，默认 55%、[20,95]，不参与 band 派生）：到达后立即收尾当前动作、停止开新活/派活、写 brief/progress/台账，再按模式/授权压缩或交接；不自动执行。容量线是「最坏兜底」，不是常规管理点。
+- 四档语义（v0.11）：起点（新 phase / 新任务）主动预估与管理；warn=现在就该动手（压缩/清空复用/交接三选一，面板优先）；organize/relay=兜底告警（本应已处理）；capacity=最坏兜底。提醒归 Lead，且只提醒不自动执行。
 - 开新 phase 前做可行性判断（`budget_plan`：proceed / split / relay），放不下就拆票，不硬挤。
 - 升线提醒事件驱动、只告知事实与边界动作、不重复；指标缺失/过期按保守档处理并提示，不静默当作 ok。
 - 历史 40/50 基准属旧口径，legacy `config.thresholds` 已在 v0.10.0 删除（换算见[迁移表](MIGRATION.md) MIG5）；新会话默认 35% 基准（band 30/35/45）。
@@ -50,6 +51,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 - 固定主链 discover → decide → build → verify → ship；每 phase 有 goal 与可验收 exit_criteria（discover/decide 必填，且只在跨 phase 时校验）。
 - 受控回边：verify→build（返修）与任意 phase→blocked/cancel（`exit_reason` 必填，不删历史、不替代用户门）；恢复时从退出前 phase 继续（ship→blocked/cancel 后可恢复回 ship）；回边不跳过用户门。
+- v0.11 ship 受控 reopen：ship→build/verify 必须显式 `reopen{reason 1-200, user_approved:true}`（`reopenGate` strict 默认零副作用拒绝；warn 放行+warning；off=v0.10 旧行为）；ship→discover 视为新任务并在结果标 `newTask`；同 phase 重复 ship 只告警 `ship-already-delivered`。返修后的二次 ship 仍重新过 user_gate/contract_check/委派/台账闸门。
 - **两段式用户门**：① **设计门**——首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true}`（用户确认过的设计文档路径），缺失零副作用拒绝；② **实现↔设计对齐**——ship 前由新上下文模型做一次独立审查（需求↔实现：偏移/劣化/偷懒/缺失，最多 1 轮），与其他验收并行、不串行终检；结论写进 `user_gate.review`，再向用户 `report`。
 - `contract_check{requirement, fidelity, attention}` 只在 **ship 必填**（交付自检），其他 phase 可选。
 - 验收只做最小必要：默认 = 目标模块测试 + 单次独立 diff 审查 +（必要时）一次语法/静态检查；`user_gate.verification{tier:'minimal'|'heavy', approved_by_user?, items[]}`，重型验证无用户明确授权即拒。
@@ -63,6 +65,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 - 链式记忆：chain 逐行记录会话 id、遮蔽 seq 区间、brief/handoff 指针；超界旋转归档，不丢指针。
 - 召回纪律：优先精确指针回读，每轮 ≤3 条、命中即停；全文检索只作兜底。
 - 冲突裁决顺序：最新用户裁决 > 快照 > 指针 > 旧会话；新裁决覆盖旧口径并在 brief 记录；归档指针带来源与版本，坏指针可诊断并给修复建议。
+- v0.11 宿主自动压缩兜底（P1-A）：归因 relay-organize / relay-freshen / host / unknown；host 归因写 ≤2KB 最小恢复快照（六类指针）+ chain 条目 + 一次 recovery notice；unknown 只 logWarn 不写；off 只日志；全链路 fail-open。
 - 长期记忆不淘汰：progress / lessons / chain / ledger / 团队记录超界只归档或完整落盘加指针，不删除。
 
 ### 4.4 会话交接
@@ -76,7 +79,8 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 ### 4.5 团队
 
-- 默认 4 人小队、按需增加到部署 `maxActiveSubagents`；满额排队/报阻塞、不硬撑；优先复用现有队友，不为每个任务 spawn。
+- 固定小队默认上限 8（含架构师，`squadMax` 可上调）；`allowSpawn=false` 默认关闭新建；优先复用现有队友，换人=checkpoint → `relay_freshen({reset:true,brief})` 全清复用；renew 仅换身份/角色且开启 spawn，受 cap 约束；架构师 fresh 豁免 spawn 但计入 cap。
+- 小队/历史/退役单一判据：默认视图/派活/闸门/triage 只看 squad；legacy/retired 只给计数，`include_legacy`/`include_retired` 查看；`manage` 支持 retire（scope=legacy/names、keep、dry_run、归档）与 adopt（受 cap，保留原名）；catalog 名字不删除，退休后不再派活/展示，真清空团队用 handoff。
 - 队友生命周期：checkpoint（写状态）→ freshen(reset)（真清空 + 新 brief）→ renew（换身份才用）；记录按 Lead 会话分区。
 - 派活 brief 强制五字段：目标 / 必读 1–3 份指针（含 when/role）/ 写范围 / 验收 / 回执路径；worker 自读自取，不要求 Lead 口头复述背景。
 - 回执契约：报告文件（头 3 行 task/revision/verdict）+ ≤200 字消息；Lead 只看 digest（≤600 字），验收抽样 ≤3 次/phase。
@@ -134,7 +138,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 ### 4.12 失败、并发与安全
 
-- 官方 seam 契约层：9 个官方 seam（preset/agents/tools/systemPrompt/compaction/projections/schedule/wipe/team）都有测试层形状断言；生产接线现状 4/9——tools/systemPrompt 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice，schedule/team 在调用点降级 N/A + warn；其余 5 个 seam 的生产接线留 v0.11。不符 → 降级并如实报，不静默 fail-open。
+- 官方 seam 契约层：9 个官方 seam（preset/agents/tools/systemPrompt/compaction/projections/schedule/wipe/team）都有测试层形状断言；生产接线现状 4/9——tools/systemPrompt 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice，schedule/team 在调用点降级 N/A + warn；其余 5 个 seam 仍只有测试层契约断言（v0.11 范围未扩展生产接线）。不符 → 降级并如实报，不静默 fail-open。
 - 单写者与原子写：写盘用 temp+rename 原子替换 + 跨进程异步锁 + journal 恢复；修订冲突检测；崩溃后可恢复，不留半成品。
 - 错误与操作契约：预检/校验失败零副作用；执行阶段失败可部分成功，但必须记录「操作 id、阶段、失败码、已发生效果、恢复点、归属」并给恢复动作。
 - 降级与恢复：底层服务不可用/磁盘失败时降级运行并如实报，进入恢复点，不静默继续。
@@ -159,6 +163,13 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 逐项形状断言与降级细节见 [ARCHITECTURE.md](ARCHITECTURE.md) §2。
 
+### 4.14 主动管理、返修与压缩兜底（v0.11.0）
+
+- 起点自查（P0-D）：新 phase / 新任务（create_goal、task_board_run、ship 后首条用户消息、ship→discover）给 Lead 一次可执行自查（先 relay_status 预估 → 继续/压缩/清空复用/交接四选一）；每 phase/task 一次、冷却 ≥3 步、phase+task 合并、投递成功才 claim、压缩不重放、off 全静默。
+- 四档到线文案：warn 不再推荐「继续」，给出压缩/清空复用/交接三选一；organize/relay 为兜底告警；capacity 为最坏兜底；文案含 relay_status 与面板模式现状（上限 900 字符）。
+- ship 受控 reopen 与 deriveReopen（见 §4.2）；宿主压缩兜底（见 §4.3）。
+- 默认值/回退：capacityThreshold 55（85 接近旧行为）、allowSpawn false + squadMax 8、contextCheck on、reopenGate strict、compactionFallback on；均可按 MIGRATION 回退。
+
 ## 5. 强制契约
 
 1. **两段式用户门**：① 设计门——首次进 build 必须有用户确认过的 `design_gate`；② 实现↔设计对齐——ship 只能从 verify 进，ship 前由新上下文的模型做独立审查（需求是否已定 + 实现是否忠实，查偏移/劣化/偷懒/缺失），再向用户大白话汇报；不弹审批弹窗。重型验证须用户明确授权。
@@ -168,6 +179,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 ## 6. 验收口径
 
 - 设计点与实现分开审；审计基线 = 用户裁决 + 本文（目标/边界）+ 内部逐条设计点全表；报告列 P0/P1/P2 与未验证项。
+- v0.11.0 验收基线：全量测试 934/934、`npm run check`、`npm pack --dry-run`；工具数 15；新增机制均有默认档与 off 回退（contextCheck/reopenGate/compactionFallback/capacityThreshold/allowSpawn）。
 - 独立审查：需求↔实现对齐，专查偏移/劣化/偷懒/缺失；单轮 ≤10 工具调用 / ≤5 分钟为 advisory，超时或未完成不算通过（可续审/换人复审）；P0/P1 修复后只看 diff 复核，P2/P3 记录不阻塞。
 - 每个功能有 `file:line` 证据与测试；不设空转闸门。
 - 字节/条数上限只做 advisory 引导：不硬拒绝、不截断丢数据；超界归档、分层、完整落盘加指针。
@@ -177,6 +189,6 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 - 实现架构与官方 seam 契约：[ARCHITECTURE.md](ARCHITECTURE.md)
 - 用户文档与使用方式：[README.md](../../README.md) / [README.en.md](../../README.en.md)
-- 迁移与兼容（0.8.x → v0.10.0）：[MIGRATION.md](MIGRATION.md)
+- 迁移与兼容（v0.11.0 默认值变更；0.8.x → v0.10.0 历史）：[MIGRATION.md](MIGRATION.md)
 - 逐版本行为变更：[CHANGELOG.md](../../CHANGELOG.md)
 - 随包技能（协议 / 文档治理 / 人机协作）：[skills/](../../skills/)

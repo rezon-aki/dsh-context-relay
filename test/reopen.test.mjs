@@ -152,6 +152,20 @@ test('P0-C off：缺失 reopen 放行且不记录（v0.10 旧行为）；非 shi
   assert.equal(ignored.reopen, undefined);
 });
 
+test('P0-C off：日志中的历史 reopen 不计入 relay_status.reopen（off 不记录）', async () => {
+  const log = [
+    { type: 'tool/ptc-dispatch', seq: 1, data: { name: 'relay_phase', arguments: { phase: 'build' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 2, data: { name: 'relay_phase', arguments: { phase: 'verify' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 3, data: { name: 'relay_phase', arguments: { phase: 'ship' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 4, data: { name: 'relay_phase', arguments: { phase: 'build', reopen: REOPEN }, isError: false, content: [] } },
+  ];
+  const session = fakeSession({ id: 'session-reopen-off-replay', cwd: tmpCwd(), log });
+  const h = harness({ session, reopenGate: 'off' });
+  const status = await h.status();
+  assert.equal(status.reopen.count, 0, 'off 档不记录 reopen（日志参数也不计）');
+  assert.doesNotMatch(status.text, /reopen:/);
+});
+
 test('P0-C strict/warn：非 ship 提供 reopen → invalid-args 拒绝（零副作用）', async () => {
   for (const reopenGate of ['strict', 'warn']) {
     const h = harness({ reopenGate });

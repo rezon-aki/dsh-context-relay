@@ -54,6 +54,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - **Handoff opens a new session.** It interrupts teammates and background jobs running in the old session and migrates scheduled jobs; the old session stays as an audit record.
 - **Version requirements:** DSH `>=0.2.2-rc.2` (this kernel generation only), Node.js `>=20`. It has only been verified in the DSH Web environment; headless is untested.
 - **v0.10.0 is a breaking release.** The old classic `relay` alias, the dual-mode configuration and the old config keys are all gone, and the panel authorization contract moves to version 3 (old authorizations expire once after the upgrade; mode and architect settings are kept). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
+- **v0.11.0 changes defaults:** capacity 55% (independently configured), spawn off, squad-only display by default, explicit reopen for post-delivery repair, and host-compaction fallback. See [CHANGELOG.md](CHANGELOG.md) and the migration guide.
 
 ## Install
 
@@ -93,7 +94,7 @@ Either way you still need to reload the profile, refresh the page, and then crea
 - The mode picker has exactly one production mode: **Relay mode · very long tasks**.
 - A **status bar** above the composer (relay sessions only): how much context is used, whether a line has been reached, and which mode is active. Click it to open the panel.
 - Once work items have been recorded, a **ledger chip** appears next to it (`ledger 3/8` = open items / total; an amber dot means in progress, a red dot blocked). Click it for the full list.
-- When the context reaches a line you get a **status notice** (not a user message): it just reports the state and says to finish the current phase first. It doesn't interrupt you.
+- When the context reaches a line you get a **status notice** (not a user message): warn says "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (55% by default) is the last resort. It never acts on its own and doesn't interrupt you.
 
 ### What you can change in the panel
 
@@ -120,10 +121,11 @@ A historical screenshot of the relay panel (the current dial is ask me / keep go
 
 ### Reaching a line, and what happens next
 
-- **Crossing the reminder line:** you get a status notice. If you do nothing, nothing interrupts you.
+- **Four line tiers:** proactive management at a fresh start; warn 30% means "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (55%, separately configured) is the last resort. A status notice doesn't interrupt you and is never executed automatically.
 - **You pick "compact and continue", or say "compact":** the agent first writes what a successor needs to know onto one page (the goal, what has been settled, the evidence, the next step), compacts the old conversation, puts that page back in, and keeps going.
 - **You pick "hand off to a new session", or the context reaches the hard line:** it writes a handover sheet, opens a new session and sends it the summary; the old session stays. Teammates and background jobs in the old session are interrupted, and scheduled jobs move to the new one.
 - A session compacts once by default (so the summary doesn't drift a little further with every pass); choosing "compact and continue" in the panel allows a second one, still subject to approval.
+- **Capacity line** (55% by default, `settings.capacityThreshold`, independently configured): once reached, finish the current action, stop starting new work or dispatching, write the brief/progress/ledger first, then compact or hand off according to the mode/authorization; it never executes automatically.
 
 ### Phases, and the two points where you sign off
 
@@ -143,9 +145,9 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 
 ## The team: Lead, teammates and the architect
 
-- **The team starts with four members and reuses whoever is already there;** when there's much more work it grows up to the deployment's limit, and once full, work queues or reports the blockage.
+- **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate, adopt a historical member, or rebuild the team at a phase boundary.
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
-- **A dirty teammate gets sorted out:** reset it in place (the work record is kept) or replace it under a new identity. If a teammate is over its line or in the wrong state, the plugin reminds the Lead to deal with it before the next dispatch.
+- **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
 - **It doesn't hover over teammates:** reports arrive automatically, so the Lead doesn't spin in a polling loop — which saves tokens.
 
 ### The dedicated architect
@@ -178,6 +180,12 @@ Host plugin configuration:
 |---|---|---|
 | `threshold` / `settings.threshold` | 35 | Watermark basis (%): a reminder fires 5 points earlier, at the basis line it suggests dealing with the context, and 10 points above that is the hard line. Since v0.10.0 this is the only source for the threshold. |
 | `settings` | six-field defaults | Initial defaults for the panel; anything you've saved in the UI wins. |
+| `settings.capacityThreshold` | `55` | Capacity line (%, 20–95, independent of the band threshold; setting 85 is close to the old behaviour). |
+| `allowSpawn` | `false` | Whether dispatch/renew may create members; when false, replace via reset-reuse/adopt/handoff only. |
+| `squadMax` | `8` | Squad cap (including the architect; can be raised; 32 is the defensive ceiling). |
+| `contextCheck` | `'on'` | Proactive self-check at a new phase/task; `'off'` silences it. |
+| `reopenGate` | `'strict'` | ship→build/verify repair gate: `strict` / `warn` / `off` (off = old v0.10 behaviour). |
+| `compactionFallback` | `'on'` | Host-compaction attribution fallback: write a minimal recovery snapshot + one notice on host attribution; `off` logs only. |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Where the panel and settings files are kept. |
 | `architect` | `true` | Default for the architect switch (the composer's architect pill overrides it per session). |
 | `workItems` | `true` | Enables the work ledger; setting it to `false` goes back completely to the old behaviour (it conflicts with the dispatch-work-first protocol, and a warning is shown at load). |
@@ -205,7 +213,7 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 
 **Q: With "unlimited budget" turned off, will teammates still get that line?** Teammates, architects and workers created afterwards inherit the "off"; ones already running pick it up at their next freshen, or when the architect continues.
 
-**Q: A teammate's context is dirty, or it's stuck — what do I do?** Tell the Lead to "wipe this teammate" (the work record is kept and it starts over in place) or "replace this teammate" (a new identity; it takes a concurrency slot and the old generation is released).
+**Q: A teammate's context is dirty, or it's stuck — what do I do?** Have the Lead get it to checkpoint, then `relay_freshen({reset:true,brief})` to wipe and reuse it in place (the work record is kept, same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members must be adopted first.
 
 **Q: Will it delete my conversations?** No. Compaction is only compaction: old detail stops appearing in the current context, but DSH still stores the history, and both the old and the new session of a handoff are kept.
 
@@ -216,6 +224,9 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 ## Known limits and things to keep in mind
 
 - **Approval and authorization:** compaction and handoff need your go by default; the only exemption comes from auto-authorization in the panel. The mode itself only decides what to do, and never creates an exemption.
+- **Only the current squad is shown by default:** legacy (historical) and retired members are hidden and not dispatchable; use `include_legacy`/`include_retired` to see them, adopt to include, or retire to clean up. Catalog names are never deleted; retirement is irreversible.
+- **Capacity is not judged when the window is unknown:** with no projection/meter the capacity notice stays silent; the band's absolute-token fallback still applies.
+- **reopen count:** with a projection available `relay_status.reopen` uses an in-process cache, so a cold start may show 0 until a no-projection scan or a later reopen corrects it.
 - **Kernel version:** only this generation of DSH (0.2.2-rc.2) is supported. If the kernel's shape doesn't match, the plugin falls back and says so (check `relay_status.plane.degradations`); it doesn't fail silently, and it doesn't refuse to open a session.
 - **The program channel is a soft limit:** trimming the tool surface only hides the model's `bash`/`pwsh`/`write`/`edit` calls; inside `run_code`, `node:fs` or a child process can still read and write files directly. The plugin doesn't police that channel (a settled trade-off); it relies on the protocol, self-checks and reports, and promises no hard isolation.
 - **Handoff has a cost:** it opens a new session and consumes quota, interrupts teammates and background jobs running in the old session, and migrates scheduled jobs; the old session is kept for audit.
@@ -232,6 +243,8 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 - **The architect model follows your model choice by default:** an explicit choice has to be inside the session's official subagent allowlist.
 
 ## Upgrade and uninstall
+
+**v0.11.0 changes defaults/behaviour (no data migration):** capacity 85%→55% independently configured, spawn off, squad-only display by default, four-tier line semantics, explicit reopen for post-delivery repair, and host-compaction fallback. Rollback mapping is in the [migration guide](docs/design/MIGRATION.md).
 
 **v0.10.0 is a breaking release** (upgrading straight from 0.8.x): `panel.json`'s `schemaVersion` moves to 3, so authorizations in the old file expire once (auto-compact / auto-handoff / next-operation authorizations need to be turned on again; mode and architect settings are kept); the classic `relay` alias, `routerMode`/`legacyPresetCompat`, `config.thresholds`, cth/autoChoose/autoDecision/handoffPreset and `next_operation` on `relay_phase` are all removed. Open an old classic session and switch it to Relay in the mode picker to backfill it. The full list and the upgrade steps are in the [migration guide](docs/design/MIGRATION.md); per-release notes are in [CHANGELOG.md](CHANGELOG.md).
 
@@ -254,7 +267,7 @@ Deeper design and implementation notes live in:
 
 - [Architecture](docs/design/ARCHITECTURE.md): layers, the 9 official kernel extension points and how the plugin behaves when one doesn't match, the agent plane, the persistence/policy/notice layering, and the phase and ledger contracts.
 - [Design](docs/design/DESIGN.md): positioning, design goals, boundaries and how acceptance is judged.
-- [Migration](docs/design/MIGRATION.md): the breaking changes from 0.8.x to v0.10.0 and how to roll back.
+- [Migration](docs/design/MIGRATION.md): the v0.11.0 default changes and rollback mapping, plus the 0.8.x → v0.10.0 breaking changes.
 
 ### Tools and endpoints
 
@@ -262,8 +275,8 @@ Deeper design and implementation notes live in:
 
 | Tool | What it does |
 |---|---|
-| `relay_status` | Context usage, line state, phase, budget left, dispatch/execution ratio, plane self-check and advice. |
-| `relay_phase` | Declare or switch phase; the first entry into build checks the design gate, and delivery requires the independent review and a report. |
+| `relay_status` | Context usage, line state, phase, budget left, dispatch/execution ratio, plane self-check, squad summary (teamSummary) and reopen history. |
+| `relay_phase` | Declare or switch phase; the first entry into build checks the design gate; delivery requires the independent review and a report; post-delivery repair uses `reopen{reason,user_approved}`, and ship→discover marks a new task. |
 | `relay_organize` | Write the handover page → official compaction → put the page back into the conversation. Once per session by default. |
 | `relay_handoff` | Produce the handover summary and the full handover file, create a new relay session, and clean up the old session tree. |
 | `relay_work_items` | Read or write the Lead's own work ledger (no args = read; a whole-list replace may carry an optimistic lock). |
@@ -272,8 +285,8 @@ Deeper design and implementation notes live in:
 | `relay_doc` | Layers and index for session documents: `index` / `list` / `read` / `search` / `lint`. |
 | `relay_dispatch` | The Lead takes a point → reuses or creates a worker → sends the standard brief (goal / must-read / write scope / acceptance / report path). |
 | `relay_collect` | The Lead waits briefly for reports (≤120s), reads only the report head and summary, checks freshness, then marks the point done or blocked. |
-| `relay_team_status` | Team health check: health / band / checkpoints / dispatch counts / reset results; a repeat query with nothing changed is refused. |
-| `relay_renew` | Replace a teammate generation (only for a change of identity or role). |
+| `relay_team_status` | Team health check (current squad only by default): health / band / checkpoints / dispatch counts / reset results; `include_legacy`/`include_retired` reveal history; `manage` does retire/adopt; a repeat query with nothing changed is refused. |
+| `relay_renew` | Replace a teammate generation (off by default; only for a change of identity/role with `allowSpawn=true`). |
 | `relay_architect` | Create or continue the fixed architect (`fresh` for a new context / `continue` to keep designing). |
 | `relay_checkpoint` | Teammates and the architect write a checkpoint (conclusion / done / decisions / evidence / constraints / open questions / next steps). |
 | `relay_freshen` | Pressure relief inside a task for teammates and the architect; `{reset:true, brief}` truly wipes the context and installs a new brief. |

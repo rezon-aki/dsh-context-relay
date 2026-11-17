@@ -1,10 +1,28 @@
-# 迁移说明（v0.10.0）
+# 迁移说明（v0.11.0）
 
-> 升级路径：**0.8.x（npm 当前发布线）→ 0.10.0 直接升级**；v0.9.0 未单独发布，其归一动作已包含在 0.10.0 内。
+> 本文覆盖 **v0.11.0** 与 **v0.10.0** 两次升级：v0.11.0 无数据格式破坏，只有默认值与行为变更（见 §0）；v0.10.0 的兼容债删除与 schemaVersion=3 见 §1 起。
 >
-> 本文只写破坏性变更、升级/回滚步骤与保留数据。设计目标与边界见 [DESIGN.md](DESIGN.md)，实现架构与 seam 契约见 [ARCHITECTURE.md](ARCHITECTURE.md)，逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
+> 设计目标与边界见 [DESIGN.md](DESIGN.md)，实现架构与 seam 契约见 [ARCHITECTURE.md](ARCHITECTURE.md)，逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
 
-## 1. 原则
+## 0. 升级到 v0.11.0（先读）
+
+**无数据迁移。** `panel.json` / `settings.json` / `roster` / `work-items` / `retired.ndjson` 格式不变；旧 settings 缺新键时取默认。
+
+| 项 | v0.10.0 | v0.11.0 默认 | 回退到旧行为 |
+|---|---|---|---|
+| 容量保全线 | 写死 85% | `settings.capacityThreshold=55`（独立、[20,95]） | `capacityThreshold:85` |
+| spawn | 默认可用 | `allowSpawn=false`（spawn 关闭） | `allowSpawn:true`，需要时调大 `squadMax` |
+| 小队展示 | 列出全部当前代 | 默认只 squad（上限 8，含架构师）；legacy/retired 给计数 | 无数据回退；`include_legacy/include_retired` 查看，数据未删 |
+| 到线语义 | 升线只告知 | 四档：起点主动管理 / warn 现在动手 / organize·relay 兜底 / capacity 55% 最坏兜底 | 无开关；文案与推荐随新版，数据不变 |
+| ship 后返修 | 直接切 build/verify | 必须 `reopen{reason,user_approved:true}` | `reopenGate:'off'` = v0.10 旧行为 |
+| 新起点自查 | 无 | `contextCheck:'on'` | `contextCheck:'off'` 全静默 |
+| 宿主压缩兜底 | 无 | `compactionFallback:'on'`（host 归因写快照+一次 notice） | `compactionFallback:'off'` 只日志 |
+
+升级步骤：备份 `~/.dsh/data/dsh-context-relay/` 与工作区 `.scratch/context-relay/`（可选但推荐）→ 安装 `dsh-context-relay@0.11.0` → 重载 profile/刷新页面 → 按需在新 settings 里设置 `capacityThreshold` 与各开关 → 跑一次 `relay_status` 确认版本/平面正常。
+
+回滚：代码回退 v0.10.0，默认值/行为回到旧口径；新写入的数据文件格式兼容，无需迁移。注意 v0.10.0 自身相对 0.8.x 的授权失效不可逆（见 §1）。
+
+## 1. 原则（v0.10.0 基线）
 
 - **一次删净**：v0.9.0 的兼容窗口在 v0.10.0 关闭——旧字段、旧 id、旧配置不再「读入归一」，而是删除或按新语义拒绝。升级前先完成第 3 节动作。
 - **用户数据不自动删除**：`panel.json` / `settings.json` 与工作区 `.scratch/context-relay/**` 保留；插件不自动改写旧交接、报告、进度等文件。

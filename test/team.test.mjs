@@ -1386,6 +1386,30 @@ test('relay_dispatch 自动选人：clean(ok+ck) 优先、dirty(unavailable) 排
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
+test('relay_dispatch 无候选失败：带上 considered/excluded/truncated（B1 复核小修）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, ctx } = dispatchCtx({
+      dir,
+      members: [
+        { id: 'session-d1', name: 'dirty-1', role: 'teammate', status: 'inactive' },
+        { id: 'session-d2', name: 'dirty-2', role: 'teammate', status: 'inactive' },
+      ],
+      pressures: { 'session-d1': undefined, 'session-d2': undefined },
+    });
+    await seedLedger(dir, [{ id: 'a1', title: '全脏', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx, { allowSpawn: false });
+    const failed = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.code, 'no-squad-member');
+    assert.deepEqual([...failed.considered].sort(), ['dirty-1', 'dirty-2']);
+    assert.ok(failed.excluded.some((row) => row.name === 'dirty-1' && row.reason === 'health-unknown'), '失败结果保留排除原因');
+    assert.equal(failed.truncated, false);
+    assert.equal(ledgerItem(dir, 'a1').status, 'open', '拒绝零副作用');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
 test('relay_dispatch 自动选人：候选读取上限 12，超出标 truncated（v0.11 P0-A）', async () => {
   const dir = tempWorkspace();
   clearDelegationMemory();

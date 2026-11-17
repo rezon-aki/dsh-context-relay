@@ -1,4 +1,4 @@
-# 架构说明（Architecture · v0.10.0）
+# 架构说明（Architecture · v0.11.0）
 
 > 范围：本插件在 DSH 0.2.2-rc.2 上的实现架构、官方 seam 契约与关键机制。目标与边界见 [DESIGN.md](DESIGN.md)；破坏性变更与升级步骤见 [MIGRATION.md](MIGRATION.md)；逐版本行为变更见 [CHANGELOG.md](../../CHANGELOG.md)。
 >
@@ -18,12 +18,13 @@
 | 常驻协议文本 | `lib/agent/protocol.js`、`lib/agent/worker.js` | PROTOCOL / ROUTER / TEAM_LEAD / WORK_LEDGER / ARCHITECT / TEAMMATE / WORKER 文本；单一真源 |
 | notice 流水线 | `lib/agent/notice/plan.js`、`lib/agent/notice/deliver.js`（`sentinel.js` 只编排） | 事实 → 计划（纯函数）→ 投递（claim 后置、脱敏、压缩复位） |
 | phase / 台账 | `lib/agent/tools.js`、`lib/agent/work-items.js` | phase 状态机、闸门、台账读写与归档 |
-| 团队 / 派活 | `lib/agent/{team,team-tools,team-context,delegation,delegation-tools}.js`、`lib/team-api.js` | 队友健康 / checkpoint / freshen / renew / 架构师；dispatch / collect |
+| 团队 / 派活 | `lib/agent/{team,team-tools,team-context,delegation,delegation-tools}.js`、`lib/team-api.js` | 小队视图/mange（retire/adopt）、队友健康 / checkpoint / freshen / renew / 架构师；dispatch / collect |
+| 压缩兜底 | `lib/agent/compaction-fallback.js` | 宿主自动压缩四态归因、最小恢复快照、chain 记录（P1-A） |
 | 交接 / 记忆 | `lib/agent/{handoff,progress,chain,lessons,recall}.js` | 交接、滚动进度、链式索引、经验、召回 |
 | 文档系统 | `lib/docs.js` | L0 索引、L1/L2/raw 分层、有界读、search、lint |
 | Web client | `lib/client.js` | composer 面板与侧栏；常量契约 + 单轮询器 |
 
-## 2. 官方 seam 契约（v0.10.0）
+## 2. 官方 seam 契约（v0.11.0）
 
 | seam | 用到的方法 / 形状 | 形状不符时 |
 |---|---|---|
@@ -38,7 +39,7 @@
 | team | `capabilitiesOf(ctx)`：kind=subagents + 核心能力清单 | 团队面降级、不注册队友工具 |
 
 契约：探测**只读、永不抛错**；服务缺失或形状不符时降级为 N/A + warn，并写入 `relay_status.plane.degradations` 与首步 notice——**不静默 fail-open，也不因此拒绝会话**。
-生产接线现状：`tools`/`systemPrompt` 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice（sentinel 采集 `planeStatusOf`，每压缩周期一次）；`schedule` 在 handoff 内断言方法/分页形状、`team` 经 `capabilitiesOf` 能力探测，二者在调用点降级 N/A + warn（不进 plane 降级通道）；其余 5 个 seam 的生产形状断言留 v0.11（当前只有测试层契约断言）。
+生产接线现状：`tools`/`systemPrompt` 经 `seamShape` 进 `relay_status.plane.degradations` 与首步 notice（sentinel 采集 `planeStatusOf`，每压缩周期一次）；`schedule` 在 handoff 内断言方法/分页形状、`team` 经 `capabilitiesOf` 能力探测，二者在调用点降级 N/A + warn（不进 plane 降级通道）；其余 5 个 seam 仍只有测试层契约断言（v0.11 范围未扩展生产形状断言）。
 
 ## 3. agent 平面与 preset 切换（M-02）
 
@@ -50,22 +51,25 @@
 
 ## 4. 持久化与文件布局（C5）
 
-- 工作区记录 `.scratch/context-relay/`：`progress.md`、`chain.ndjson`、`lessons.md`、`handoff-*.md`、`work-items/<session>.json`、`team/<leadSessionId>/…`、`dispatch/<scope>/<itemId>.json`、`reports/`、`architecture/`、`docs/`。
+- 工作区记录 `.scratch/context-relay/`：`progress.md`、`chain.ndjson`、`lessons.md`、`handoff-*.md`、`work-items/<session>.json`、`team/<leadSessionId>/…`（含 `retired.ndjson` / `retired-archive-<年>.ndjson`）、`dispatch/<scope>/<itemId>.json`、`recovery/compaction-<sessionId>.md`、`reports/`、`architecture/`、`docs/`。
 - 宿主数据 `~/.dsh/data/dsh-context-relay/`：`panel.json`（按会话面板状态）、`settings.json`（侧栏设置）。
 - 规则：temp + rename 原子替换；跨进程租约锁（退避 10→1000ms，wait ≤1000ms）；写入 journal 可恢复；写前凭据扫描。`~/.dsh` 侧只做 fsync + rename + 并发冲突 warn（不加跨进程锁）。
 - 面板契约版本：`PANEL_SCHEMA_VERSION=3`。载入版本不匹配 → 会话授权（autoCompress / autoHandoff / authorizeNext）一次性失效，模式与架构师设置保留；下次自然写盘落当前版本。
 
 ## 5. 策略单源与关键常量（C6/C10）
 
-- `resolveEffectiveThresholds({settings})` 是阈值唯一解析入口：warn = 基准 −5、organize = 基准、relay = 基准 +10；窗口已知只用比例，未知退绝对 token（100k/130k/160k）。legacy `config.thresholds` 已删，唯一来源 `settings.threshold`（默认 35）。
+- `resolveEffectiveThresholds({settings})` 是 band 阈值唯一解析入口：warn = 基准 −5、organize = 基准、relay = 基准 +10；窗口已知只用比例，未知退绝对 token（100k/130k/160k）。legacy `config.thresholds` 已删，唯一来源 `settings.threshold`（默认 35）。
+- 容量线独立：`capacityRatioOf(settings)` 是唯一换算入口，读 `settings.capacityThreshold`（默认 55、[20,95]），**不参与 band 派生、不与 threshold 合并**；`capacityOf(pressure,{ratio})` 默认/非法值回落 55%。
 - 面板：`PANEL_OPERATIONS = ['compress','handoff','continue']`（null = 问我）；标签、默认值、schema 版本都只在 policy；client 逐字镜像并由常量契约测试锁住。
 - `bandFor`：ok / warn / organize / relay / **unavailable**（投影与计量均缺时显式降级，不猜 ok）。
-- 预算：warn 档切 phase 必填 `budget_plan`（proceed/split/relay）；容量保全线 85%。
+- 预算：warn 档切 phase 必填 `budget_plan`（proceed/split/relay）；容量保全线默认 55%（独立配置）。
+- 其他开关默认：`allowSpawn=false`、`squadMax=8`、`contextCheck='on'`、`reopenGate='strict'`、`compactionFallback='on'`；均只走 host config/settings 文件（本轮不加侧栏输入，D11）。
 - 汇报：`USER_REPORT_LIMITS`（默认 600 / 展开 4000 / 单行 400，只 warning 不阻断）；handoff 摘要与列表条数为 advisory。
 
 ## 6. notice 流水线（C4）
 
 - 采集（sentinel）→ `planNotices(facts)`（纯函数，每 step 0/1 条，正文 ≤900 字符）→ `deliverPlan`（**投递成功后**才 claim 去重键；失败下一步重试）。
+- 四档语义：起点（新 phase / 新任务：create_goal、task_board_run、ship 后首条用户消息）自查；warn=现在就该动手；organize/relay=兜底告警；capacity=最坏兜底。context-check 去重/冷却 ≥3 步/phase+task 合并/压缩不重放；P1-A recovery notice 同 seq 不重发。
 - 去重生命周期：到线档位、容量 used、面板签名、边界 `previous→phase`（出现序号）、闭环签名、平面降级签名（`planeSig`）；`compactionSeq` 上升 → 压缩复位（band 重新武装 + 清 `LEDGER_GUARD` / `BOUNDARY_NOTICES`）。
 - 平面/seam 降级（`planeStatusOf` 的 installed=false 或 degradations 非空）→ 每压缩周期一次 notice，列 seam 名与原因并指向 `relay_status.plane`。
 - `[闭环]` 只认 `write`/`edit`/`apply_patch`；只读工具不清 pending；闭环 target 只取首行并过凭据脱敏；队友稿不带 Lead 台账行；band=unavailable 给一次性保守提示。
@@ -73,6 +77,7 @@
 ## 7. phase、台账与两段式用户门（C7/C9）
 
 - 主链 `discover → decide → build → verify → ship`；`blocked`/`cancel` 出口（`exit_reason` 必填、零副作用拒绝）；允许 verify→build 返修；ship 出口可恢复（仅当本次退出确实从 ship 退出时回 ship，其余仍只能 verify→ship）。
+- ship 受控 reopen：ship→build/verify 默认必须 `reopen{reason,user_approved:true}`（strict；warn 放行+warning；off=v0.10 旧行为）；ship→discover 标 `newTask`；同 phase 重复 ship 告警 `ship-already-delivered`；返修后二次 ship 仍重新过 user_gate/contract_check。`deriveReopen` 提供 `relay_status.reopen{count,last}`（投影热路径走缓存，off 档不记录）。
 - 两段式用户门：**设计门**——首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true}`；**实现↔设计对齐**——ship 的 `user_gate{review, report}` 非空硬门 + `user_gate.verification{tier: minimal|heavy, approved_by_user?, items[]}`，heavy 无用户授权即拒。`contract_check` 只在 ship 必填；`exit_criteria` 只在 discover/decide 且仅 crossing 时校验。
 - 台账：items 只在主链跨 phase 时登记（同 phase 传 items 显式拒绝，零副作用）；`phase=null` 条目纳入 strict 关闸；`GET /context-relay/work-items` 纯只读（不触发旧 workspace 台账惰性迁移写盘）；ship 严格校验 done 需 evidence；上限 30，超限先归档 done。
 - 委派闸门 `delegationGate`：warn（默认，只提醒）/ strict（命中即拒，零副作用）/ off；build→verify 检查会话 Lead 执行占比与 `lead-exec:` 证据。
@@ -80,7 +85,8 @@
 ## 8. 团队与派活（C8）
 
 - 深度判定：root = lead；depth=1 = teammate（架构师用 spawn 前 pending 标记或 roster 认领）；depth≥2 = worker。
-- 队友保鲜：`relay_checkpoint` → `relay_freshen({reset:true, brief})`（真清空）→ 派新任务；`relay_renew` 只用于换身份。reset 成功/回退/失败都会注入结果 notice，`relay_team_status` 汇总 reset 状态；status 签名含 deeper（孙代理数量）防止误判未变。
+- 小队模型：`squadMembersOf / legacyMembersOf / squadSummaryOf / adoptMembers` 是唯一判据；默认可视/派活/闸门/triage 只看 squad，legacy/retired 只给计数（`include_legacy`/`include_retired` 显式查看）；`manage{retire(scope=legacy/names,keep,dry_run),adopt}` 做批量清理与纳入，legacy 退休只归档 `retired.ndjson`（不写 roster），catalog 名字不删。
+- 队友保鲜：`relay_checkpoint` → `relay_freshen({reset:true, brief})`（真清空）→ 派新任务；`relay_renew` 默认关闭（`allowSpawn=false`），只换身份/角色且开启 spawn 时可用并受 `squadMax` 约束；`relay_architect` fresh 豁免 allowSpawn 但计入 cap。reset 成功/回退/失败都会注入结果 notice，`relay_team_status` 汇总 reset 状态；status 签名含 deeper（孙代理数量）防止误判未变。
 - 派活：`relay_dispatch` 取台账分点 → 五字段 brief → worker → 台账 doing+owner+next，返回 dispatchId；`relay_collect` 短等 ≤120s、只回 digest，校验回执头 `task==itemId` 与 `revision==dispatchId`。**新鲜度权威 = 落盘的 dispatch 记录**（`.scratch/context-relay/dispatch/`），进程内缓存只是加速；reload 丢内存可观测。
 
 ## 9. 交接与 handoff（M-01）
@@ -90,12 +96,13 @@
 ## 10. 失败、降级与兼容
 
 - 预检/校验失败**零副作用**；执行阶段失败可部分成功，但必须记录「操作 id、阶段、失败码、已发生效果、恢复点」，并给恢复动作。
+- v0.11 新增 fail-open 点：context-check 事件扫描/推荐计算抛错只跳过并 logWarn（pending 最多重试 5 步）；reopen/job 失败零副作用拒绝或逐条记账；adopt/retire 逐项 fail-open（roster/归档/上下文清理各自记录）；dispatch spawn 后 roster 登记失败只 warn（新 worker 会落为 legacy，需 adopt）；P1-A 快照/chain 写失败各自 fail-open（unknown 归因只 logWarn，不写快照）。
 - 底层服务缺失/形状不符 → 降级 N/A + warn，模型可见（`relay_status` / notice）；不静默继续。
 - 兼容策略：只支持 DSH 0.2.2-rc.2；更早内核不支持。v0.10.0 已删除全部 v0.9.0 迁移期兼容面（classic 别名、cth/autoChoose/autoDecision/handoffPreset、legacy thresholds、routerMode、next_operation），lib/ 由 compat-grep 防回潮。
 - **PTC 程序通道是执行软约束（已裁决不做通道守卫）**：工具面裁剪只隐藏模型工具调用；`run_code` 内 `node:fs` / 子进程仍可直接读写，靠协议纪律、自查与回执约束，不承诺硬隔离。
 
 ## 11. 测试与发布
 
-- `node --test test/*.test.mjs`；`npm run check`（全部入口 `node --check`）。
-- 契约测试：9 个 seam 形状测试 + `compat-grep`（退役标识防回潮）+ client 常量契约 + panel schema 契约。
+- `node --test test/*.test.mjs`（v0.11.0 收尾基线 934/934；新增 context-check / capacity-threshold / reopen / squad / compaction-fallback 测试）；`npm run check`（全部入口 `node --check`，含 `lib/agent/compaction-fallback.js`）。
+- 契约测试：9 个 seam 形状测试 + `compat-grep` + client 常量契约 + panel schema 契约 + 15 工具 desc/params 与 4 角色装配预算快照（v0.11 有意更新；工具数仍 15）。
 - CI：`.github/workflows/ci.yml` 固定 `@deepseek-ai/dsh@0.2.2-rc.2`，缺包 skip 由 CI 对 reporter「skipped」汇总断言兜底（`DSH_SEAM_REQUIRED=1` 为语义开关，测试侧未消费），跑 test + check + `npm pack --dry-run` 断言；发布 workflow 三触发路径都校验 tag == version。
