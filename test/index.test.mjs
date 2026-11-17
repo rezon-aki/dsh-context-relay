@@ -316,7 +316,7 @@ test('preset：叠加 timed 配置是合并而非覆盖（保留官方行已有 
 
 test('preset：apply 只注册唯一模式；agent 行选项白名单透传（退役 routerMode/classic 别名已删）', async () => {
   const host = fakeHost({
-    config: { presetId: 'relay', injectBrief: false, handoffApproval: 'prompt', delegationGate: 'off', allowSpawn: true, squadMax: 6, reopenGate: 'warn', unrelated: 'drop-me' },
+    config: { presetId: 'relay', injectBrief: false, handoffApproval: 'prompt', delegationGate: 'off', allowSpawn: true, squadMax: 6, reopenGate: 'warn', compactionFallback: 'off', unrelated: 'drop-me' },
   });
   await tick(); // 异步 register 落定
   assert.equal(host.registrations.length, 1, 'v0.10.0 只剩唯一生产模式（classic 别名已删）');
@@ -336,6 +336,7 @@ test('preset：apply 只注册唯一模式；agent 行选项白名单透传（�
   assert.equal(agentRow.config.allowSpawn, true, 'v0.11 P0-B：allowSpawn 白名单透传');
   assert.equal(agentRow.config.squadMax, 6, 'v0.11 P0-B：squadMax 白名单透传');
   assert.equal(agentRow.config.reopenGate, 'warn', 'v0.11 P0-C：reopenGate 白名单透传');
+  assert.equal(agentRow.config.compactionFallback, 'off', 'v0.11 P1-A：compactionFallback 白名单透传');
   assert.equal(Object.prototype.hasOwnProperty.call(agentRow.config, 'unrelated'), false);
   // 退役字段不再出现在行 config（thresholds/routerMode/legacyPresetCompat 均删）。
   for (const key of ['thresholds', 'routerMode', 'legacyPresetCompat']) {

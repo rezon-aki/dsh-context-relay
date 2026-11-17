@@ -916,7 +916,8 @@ test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重�
   const log = [];
   const session = fakeSession({ id: 'session-plane-degraded', cwd, log });
   const { services } = fakeServices({ session });
-  const listener = preStepListener(applyAgent(services).events);
+  // P1-A（v0.11）默认 on 会在压缩复位时先发 recovery notice；本用例只验平面降级 notice，关掉兜底隔离。
+  const listener = preStepListener(applyAgent(services, { compactionFallback: 'off' }).events);
   const injected = [];
   // 平面 reconcile 失败（agent.ctx.inject 抛错）→ installed=false + tools/systemPrompt 降级记录。
   const agent = {
@@ -2985,7 +2986,8 @@ test('reminders: 投影 noticeBand/lastCompactionSeq 驱动 seed 与重新武装
   assert.match(injected[1].source.summary, /band=relay/);
   await listener({ agent }, async () => undefined);
   assert.equal(injected.length, 2, 'same band dedupes once');
-  assert.equal(counts.snapshot, 0, 'reminder projection path avoids snapshotEvents');
+  // P1-A（v0.11）：投影热路径仍不扫事件；仅在「压缩复位」那一步补扫一次 compactionId 做归因（本夹具事件里无 id → unknown 不提示）。
+  assert.equal(counts.snapshot, 1, 'per-step hot path avoids snapshotEvents；压缩复位步补扫 compactionId 一次');
 
   // 旧段 notice 不再抑制新段（重新武装）
   const stale = fakeSession({ id: 'session-projection-stale', cwd });

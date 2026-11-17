@@ -399,7 +399,8 @@ test('M-11/A-04：压缩后 focus/上下文 guard 复位 → 同一条焦点行�
   writeLedger(cwd, [{ id: 'p1', title: '修闸门', status: 'doing', next: '写测试', phase: 'build' }], { currentPhase: { phase: 'build', since: 1 } });
   const log = [];
   const session = fakeSession({ id: 'session-m11', cwd, log });
-  const bundle = applyAgent(fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services, { workItemsPath: '.scratch/context-relay/work-items.json' });
+  // P1-A（v0.11）默认 on 会在压缩复位时额外发 recovery notice；本用例只验台账 guard 复位，关掉兜底隔离。
+  const bundle = applyAgent(fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services, { workItemsPath: '.scratch/context-relay/work-items.json', compactionFallback: 'off' });
   const pre = preStepOf(bundle);
   const injected = [];
   const agent = { session, inject(message) { injected.push(message); } };
