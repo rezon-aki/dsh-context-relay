@@ -4321,7 +4321,8 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // 实测 9970，预算按实测+130 上调到 10100（C11 注入预算快照重定基线；仍逐条受 ≤400/单行约束）。
   // v0.10.x 完成确认门：relay_work_items 条目新增 lead_confirm{no_drift,no_missing,no_regression} 结构化 schema
   // → 实测 10540，预算按实测+~1.5% 上调到 10700（#68：只调预算，不删语义/约束）。
-  assert.ok(parameterChars <= 10700, '参数 schema 总字符 <=10700（v0.10.x 实测 10540+160），实际 ' + parameterChars);
+  // v0.11 P0-C：relay_phase 新增 reopen{reason,user_approved}（设计 §4.4 预计 +250B）→ 实测 10966，预算按实测+~1.2% 上调到 11100。
+  assert.ok(parameterChars <= 11100, '参数 schema 总字符 <=11100（v0.11 P0-C 实测 10966），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');

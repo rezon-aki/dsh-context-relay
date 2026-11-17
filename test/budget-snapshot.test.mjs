@@ -176,7 +176,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [397, 4846],
+  relay_phase: [397, 5272],
   relay_organize: [314, 651],
   relay_doc: [305, 823],
   doc_lint: [110, 147],
@@ -191,8 +191,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（v0.11 P0-B：relay_team_status 增 manage/include_* 且 desc 收敛到 ≤400 → desc 5,491 / params 17,431 / schema 22,922）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 17431, schema: 22922 };
+/** 15 工具 schema 合计（v0.11 P0-B: desc 5,491 / params 17,431；P0-C reopen schema 后 params 17,857 / schema 23,348）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 17857, schema: 23348 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -250,8 +250,8 @@ const ROLE_SNAPSHOT = {
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
     toolDescChars: 4737,
-    toolSchemaChars: 20009,
-    totalChars: 31725,
+    toolSchemaChars: 20435,
+    totalChars: 32151,
   },
   teammate: {
     sections: [
@@ -265,8 +265,8 @@ const ROLE_SNAPSHOT = {
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: ['relay_status', 'relay_phase', 'relay_doc', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
     toolDescChars: 1912,
-    toolSchemaChars: 9949,
-    totalChars: 11225,
+    toolSchemaChars: 10375,
+    totalChars: 11651,
   },
   architect: {
     sections: [

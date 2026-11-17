@@ -157,6 +157,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER �
     '最多 1 轮',
     '≤10 个工具调用 / ≤5 分钟',
     'contract_check{requirement, fidelity, attention}',
+    'reopen（build/verify）',
     'pending 不是跳过、不是同意',
     'phase 边界闸门',
     '不开新 phase',

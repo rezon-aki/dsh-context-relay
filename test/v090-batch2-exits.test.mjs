@@ -194,7 +194,7 @@ test('relay_phase 出口旁路：出口不触发 phase/分点闸门、不写台�
   await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK }), /只能从 verify 来/);
 });
 
-test('relay_phase：ship 出口可恢复（C7/A-10）——ship→blocked 后回 ship 仍需 user_gate/contract_check；ship→verify 返修允许', async () => {
+test('relay_phase：ship 出口可恢复（C7/A-10）——ship→blocked 后回 ship 仍需 user_gate/contract_check；ship→verify 返修需 reopen', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-ship-recover', cwd, seq: 0 });
@@ -216,10 +216,12 @@ test('relay_phase：ship 出口可恢复（C7/A-10）——ship→blocked 后回
   assert.equal(recovered.phase, 'ship');
   assert.equal(recovered.previous, 'blocked');
   assert.equal(recovered.resumed, true, 'ship 出口恢复 = resumed');
-  // ship→verify 返修回边（按设计允许回到 verify 重新验收），再 verify→ship。
-  const rework = await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  // ship→verify 返修回边（P0-C：交付后修复必须显式 reopen；strict 缺 reopen 零副作用拒绝），再 verify→ship。
+  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /reopen/, 'ship→verify 修复必须带 reopen（strict）');
+  const rework = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, reopen: { reason: '用户提出返修：补边界用例', user_approved: true } });
   assert.equal(rework.phase, 'verify');
   assert.equal(rework.previous, 'ship');
+  assert.deepEqual(rework.reopen, { from: 'ship', to: 'verify', reason: '用户提出返修：补边界用例', userApproved: true });
   const reshipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
   assert.equal(reshipped.phase, 'ship');
   assert.equal(reshipped.previous, 'verify');
