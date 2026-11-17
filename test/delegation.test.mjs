@@ -5,6 +5,10 @@ import {
   DELEGATION_MIN_CALLS,
   DELEGATION_GATE_DEFAULT,
   DELEGATION_GATE_MODES,
+  DISPATCH_CANDIDATE_LIMIT,
+  DISPATCH_HEALTHS,
+  dispatchScoreOf,
+  rankDispatchCandidates,
   DELEGATION_REPORT_DIR,
   DELEGATION_REPORT_READ_BYTES,
   DELEGATION_DIGEST_CHARS,
@@ -75,6 +79,37 @@ test('常量口径：阈值/样本下限/默认档/回执目录与读取上限�
   assert.equal(DELEGATION_REPORT_DIR, '.scratch/context-relay/reports');
   assert.equal(DELEGATION_REPORT_READ_BYTES, 65536);
   assert.equal(DELEGATION_DIGEST_CHARS, 600);
+});
+
+test('dispatchScoreOf：score=healthRank*10+bandRank；running/不可用档 → null', () => {
+  assert.equal(dispatchScoreOf({ health: 'fresh', band: 'ok' }), 0);
+  assert.equal(dispatchScoreOf({ health: 'fresh', band: 'warn' }), 1);
+  assert.equal(dispatchScoreOf({ health: 'watch', band: 'ok' }), 10);
+  assert.equal(dispatchScoreOf({ health: 'watch', band: 'warn' }), 11);
+  assert.equal(dispatchScoreOf({ health: 'fresh', band: 'ok', status: 'running' }), null);
+  assert.equal(dispatchScoreOf({ health: 'unknown', band: 'unavailable' }), null);
+  assert.equal(dispatchScoreOf({ health: 'fresh', band: 'unavailable' }), null, 'band 不可用即使显式 health=fresh 也不可自动复用');
+  assert.equal(dispatchScoreOf({ health: 'stale', band: 'organize' }), null);
+  assert.equal(dispatchScoreOf({ health: 'watch', band: 'unknown' }), null);
+  assert.equal(dispatchScoreOf({}), null);
+});
+
+test('rankDispatchCandidates：排除 unavailable/unknown/running；score → rosterKnown → name 确定性排序', () => {
+  const ranked = rankDispatchCandidates([
+    { name: 'b-watch', health: 'watch', band: 'ok' },
+    { name: 'a-warn', health: 'fresh', band: 'warn' },
+    { name: 'z-fresh', health: 'fresh', band: 'ok' },
+    { name: 'a-fresh', health: 'fresh', band: 'ok' },
+    { name: 'known-late', health: 'fresh', band: 'ok', rosterKnown: true },
+    { name: 'dirty', health: 'unknown', band: 'unavailable' },
+    { name: 'unknown-band', health: 'unknown', band: 'unknown' },
+    { name: 'busy', health: 'fresh', band: 'ok', status: 'running' },
+  ]);
+  assert.deepEqual(ranked.map((row) => row.name), ['known-late', 'a-fresh', 'z-fresh', 'a-warn', 'b-watch']);
+  assert.deepEqual(ranked.map((row) => row.score), [0, 0, 0, 1, 10]);
+  assert.ok(ranked.every((row) => DISPATCH_HEALTHS.includes(row.health)), '只保留 fresh/watch');
+  assert.equal(DISPATCH_CANDIDATE_LIMIT, 12);
+  assert.deepEqual(rankDispatchCandidates(null), []);
 });
 
 test('normalizeDelegationConfig：默认 warn；off / strict 原样保留（v0.10.0 C14b strict 生效）；非法 → warn', () => {

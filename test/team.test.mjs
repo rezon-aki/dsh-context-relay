@@ -12,7 +12,7 @@ import { apply } from '../lib/agent.js';
 import { clearTeamStatusMemory, createTeamTools } from '../lib/agent/team-tools.js';
 import { TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPendingResets, hasPendingReset } from '../lib/agent/reset.js';
-import { clearSentinelMemory, LAST_BAND } from '../lib/agent/sentinel.js';
+import { clearSentinelMemory, dispatchNeedOf, LAST_BAND } from '../lib/agent/sentinel.js';
 import { DISPATCH_HEALTHS, clearDelegationMemory, createDelegationTools, delegationMemoryState, dispatchHealthOf } from '../lib/agent/delegation-tools.js';
 import { DELEGATION_DISPATCH_DIR, dispatchRecordPathOf, receiptFreshnessOf } from '../lib/agent/delegation.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
@@ -217,12 +217,20 @@ test('checkpoint 文件：写/读/换代归档；buildRenewPrompt 有界+指针�
   } finally { cleanup(dir); }
 });
 
-test('classifyHealth：fresh/watch/stale/spent/unknown 与建议动作', () => {
+test('classifyHealth：fresh/watch/stale/spent/unknown/unavailable 与建议动作', () => {
   assert.equal(classifyHealth({ band: 'ok' }).health, 'fresh');
   assert.equal(classifyHealth({ band: 'warn' }).health, 'watch');
   assert.equal(classifyHealth({ band: 'organize' }, true).health, 'stale');
   assert.equal(classifyHealth({ band: 'relay' }, false).health, 'spent');
   assert.equal(classifyHealth({ band: 'unknown' }).health, 'unknown');
+  // v0.11 P0-A：band=unavailable（指标不可用）不得落 fresh；归 unknown 且不可自动选人。
+  const unavailable = classifyHealth({ band: 'unavailable' });
+  assert.equal(unavailable.health, 'unknown');
+  assert.equal(unavailable.band, 'unavailable');
+  assert.match(unavailable.action, /指标不可用/);
+  assert.match(unavailable.action, /unavailable/);
+  assert.match(dispatchNeedOf('unavailable'), /指标不可用/);
+  assert.notEqual(dispatchNeedOf('unavailable'), dispatchNeedOf('ok'));
   assert.match(classifyHealth({ band: 'organize' }, true).action, /relay_freshen\(\{reset:true/);
   assert.match(classifyHealth({ band: 'organize' }, true).action, /仅换身份/);
   assert.doesNotMatch(classifyHealth({ band: 'organize' }, true).action, /先换新/);
@@ -408,6 +416,8 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     const impl = report.team.find((row) => row.name === 'impl-g1');
     const review = report.team.find((row) => row.name === 'review-g1');
     assert.equal(impl.gen, 1);
+    assert.equal(impl.rosterKnown, true, 'v0.11 P0-A：roster 当前代标记 rosterKnown');
+    assert.equal(review.rosterKnown, false, 'catalog 有、roster 无的成员 rosterKnown=false');
     assert.equal(report.phase, null, '无台账时 Lead phase 为 null');
     assert.equal(impl.phase, null);
     assert.equal(impl.items, undefined, '无台账时不带条目计数');
@@ -1054,7 +1064,7 @@ function delegationToolsOf(ctx, runtime = {}) {
   };
 }
 
-function dispatchCtx({ dir, members = [], pressures = {}, spawnResult, sendError } = {}) {
+function dispatchCtx({ dir, members = [], pressures = {}, spawnResult, sendError, sessionQuery } = {}) {
   const lead = makeAgent({ sessionId: LEAD, cwd: dir });
   const teams = makeTeamService({
     members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }, ...members],
@@ -1062,9 +1072,10 @@ function dispatchCtx({ dir, members = [], pressures = {}, spawnResult, sendError
     ...(spawnResult === undefined ? {} : { spawnResult }),
     ...(sendError === undefined ? {} : { sendError }),
   });
+  const query = sessionQuery ?? (Object.keys(pressures).length > 0 ? pressureQuery(pressures) : undefined);
   const ctx = fakeCtx({
     agentTeams: teams,
-    ...(Object.keys(pressures).length > 0 ? { sessionQuery: pressureQuery(pressures) } : {}),
+    ...(query === undefined ? {} : { sessionQuery: query }),
   });
   return { lead, teams, ctx };
 }
@@ -1268,8 +1279,10 @@ test('relay_dispatch 自动选人 health：仅 fresh/watch 可复用（stale/spe
   assert.equal(dispatchHealthOf({}, { band: 'organize' }), 'spent');
   assert.equal(dispatchHealthOf({}, { band: 'relay' }), 'spent');
   assert.equal(dispatchHealthOf({}, { band: 'unknown' }), 'unknown');
+  assert.equal(dispatchHealthOf({}, { band: 'unavailable' }), 'unknown', 'v0.11 P0-A：unavailable 与 unknown 同归 unknown（不得落 fresh）');
   assert.equal(DISPATCH_HEALTHS.includes(dispatchHealthOf({}, { band: 'organize' })), false);
   assert.equal(DISPATCH_HEALTHS.includes(dispatchHealthOf({}, { band: 'unknown' })), false);
+  assert.equal(DISPATCH_HEALTHS.includes(dispatchHealthOf({}, { band: 'unavailable' })), false, 'unavailable 被 DISPATCH_HEALTHS 排除');
   // 集成 A：worker-1 到线（38% → band=organize → health=spent/stale）→ 不自动复用，改新建 worker-2。
   const dirA = tempWorkspace();
   clearDelegationMemory();
@@ -1301,6 +1314,102 @@ test('relay_dispatch 自动选人 health：仅 fresh/watch 可复用（stale/spe
     assert.equal(result.worker.name, 'worker-2');
     assert.equal(teams.calls.send.length, 0);
   } finally { cleanup(dirB); clearDelegationMemory(); }
+});
+
+test('relay_dispatch 自动选人：clean(ok+ck) 优先、dirty(unavailable) 排除；显式 dirty 拒、accept_dirty 放行（v0.11 P0-A）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const { lead, teams, ctx } = dispatchCtx({
+      dir,
+      members: [
+        { id: 'session-clean', name: 'clean-w', role: 'teammate', status: 'inactive' },
+        { id: 'session-dirty', name: 'dirty-w', role: 'teammate', status: 'inactive' },
+      ],
+      // dirty-w 有 sessionQuery 但压力指标缺失 → band=unavailable（不是 unknown）。
+      pressures: { 'session-clean': 2000, 'session-dirty': undefined },
+    });
+    const roster = { version: 1, lineages: {} };
+    ensureLineage(roster, 'clean-w', { name: 'clean-w', sessionId: 'session-clean' });
+    await writeRoster(dir, roster, LEAD);
+    const built = buildCheckpointMarkdown({ lineage: 'clean-w', name: 'clean-w', gen: 1, input: { one_line: 'clean baseline' } });
+    await writeCheckpoint(dir, 'clean-w', built.markdown, LEAD);
+    await seedLedger(dir, [
+      { id: 'a1', title: '自动选 clean', status: 'open' },
+      { id: 'a2', title: '显式 dirty', status: 'open' },
+    ]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const auto = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a1' }, { agent: lead });
+    assert.equal(auto.ok, true);
+    assert.equal(auto.worker.name, 'clean-w', 'unavailable 的 dirty-w 不得被自动选人');
+    assert.equal(auto.worker.reused, true);
+    assert.equal(auto.selection.mode, 'reused');
+    assert.equal(auto.selection.score, 0, 'fresh(ok) score=0');
+    assert.deepEqual([...auto.selection.considered].sort(), ['clean-w', 'dirty-w']);
+    assert.ok(auto.selection.excluded.some((row) => row.name === 'dirty-w' && row.reason === 'health-unknown'), 'dirty 候选给出排除原因');
+    assert.equal(auto.selection.truncated, false);
+    assert.equal(teams.calls.send.length, 1);
+
+    const refused = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'dirty-w' }, { agent: lead });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'worker-needs-management');
+    assert.equal(refused.worker.band, 'unavailable');
+    assert.match(refused.summary, /指标不可用/);
+    assert.equal(teams.calls.send.length, 1, '显式 dirty 拒绝不发消息');
+    assert.equal(ledgerItem(dir, 'a2').status, 'open');
+
+    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'dirty-w', accept_dirty: true }, { agent: lead });
+    assert.equal(accepted.ok, true, 'accept_dirty 放行（Lead 显式判断）');
+    assert.equal(accepted.worker.name, 'dirty-w');
+    assert.equal(accepted.selection.score, null, '脏候选无可用评分');
+    assert.equal(teams.calls.send.length, 2);
+    assert.equal(ledgerItem(dir, 'a2').owner, 'dirty-w');
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch 自动选人：候选读取上限 12，超出标 truncated（v0.11 P0-A）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    const members = Array.from({ length: 14 }, (_, index) => ({ id: 'session-w' + (index + 1), name: 'worker-' + (index + 1), role: 'teammate', status: 'inactive' }));
+    const pressures = Object.fromEntries(members.map((member) => [member.id, 2000]));
+    const { lead, ctx } = dispatchCtx({ dir, members, pressures });
+    await seedLedger(dir, [{ id: 'a1', title: '14 人候选', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(result.worker.name, 'worker-1', '12 名内按 score+name 选首个');
+    assert.equal(result.selection.considered.length, 12, '只读 12 个候选 band');
+    assert.equal(result.selection.truncated, true);
+    assert.ok(result.selection.excluded.some((row) => row.name === 'worker-13' && row.reason === 'candidate-limit'));
+    assert.ok(result.selection.excluded.some((row) => row.name === 'worker-14' && row.reason === 'candidate-limit'));
+  } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch 自动选人：候选 band 并发读取（Promise.all，非串行）', async () => {
+  const dir = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const sessionQuery = {
+      async observeSession() {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+        inFlight -= 1;
+        return { projections: { values: { contextPressure: { projectedTokens: 2000, contextWindow: 100000 } } }, [Symbol.dispose]() {} };
+      },
+    };
+    const members = ['w1', 'w2', 'w3'].map((name) => ({ id: 'session-' + name, name: name + '-member', role: 'teammate', status: 'inactive' }));
+    const { lead, ctx } = dispatchCtx({ dir, members, sessionQuery });
+    await seedLedger(dir, [{ id: 'a1', title: '并发读 band', status: 'open' }]);
+    const { dispatch } = delegationToolsOf(ctx);
+    const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(result.ok, true);
+    assert.equal(maxInFlight, 3, '3 个候选同时读 band（串行会是 1）');
+    assert.equal(result.selection.considered.length, 3);
+  } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
 test('relay_dispatch：worker-1..9 名字耗尽 → worker-name-exhausted（与 spawn 满额 member-limit 区分）', async () => {
