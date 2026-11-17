@@ -19,7 +19,7 @@ const BASE = {
   pendingClosure: [],
   dispatchRows: [],
   guard: {},
-  capacity: { atRisk: false, ratio: 0.42, threshold: 0.85 },
+  capacity: { atRisk: false, ratio: 0.42, threshold: 0.55 },
   capacityMemory: undefined,
   panelPrevious: panelSignatureOf(PANEL),
   metricsUnavailable: false,
@@ -70,37 +70,37 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
 });
 
 test('planNotices：容量上升沿与到线提醒合并为一条；单独时一条容量 notice', () => {
-  const capacity = { atRisk: true, ratio: 0.86, threshold: 0.85 };
+  const capacity = { atRisk: true, ratio: 0.56, threshold: 0.55 };
   const merged = planNotices(facts({ capacity }));
   assert.equal(merged.capacityRising, true);
   assert.equal(merged.notice.kind, 'phase', '与到线提醒同 step 合并（仍是一条）');
   assert.match(merged.notice.text, /容量保全/);
-  assert.match(merged.notice.text, /ratio 86\.0%，阈值 85\.0%/);
+  assert.match(merged.notice.text, /ratio 56\.0%，阈值 55\.0%/);
   assert.deepEqual(merged.claims.capacity, { used: 420000 });
   assert.ok(merged.notice.text.length <= NOTICE_MAX);
 
-  const alone = planNotices(facts({ lastBand: 'relay', state: { band: 'relay', used: 420000, window: 1000000, ratio: 0.42 }, capacity }));
+  const alone = planNotices(facts({ lastBand: 'relay', state: { band: 'relay', used: 560000, window: 1000000, ratio: 0.56 }, capacity }));
   assert.equal(alone.notice.kind, 'capacity');
   assert.match(alone.notice.summary, /容量保全/);
-  assert.deepEqual(alone.claims.capacity, { used: 420000 });
+  assert.deepEqual(alone.claims.capacity, { used: 560000 });
 });
 
 test('planNotices：压缩生效（used 降 ≥15%）重新武装容量并再提示一次', () => {
   const plan = planNotices(facts({
     lastBand: 'relay',
-    state: { band: 'relay', used: 850000, window: 1000000, ratio: 0.85 },
-    capacity: { atRisk: true, ratio: 0.85, threshold: 0.85 },
+    state: { band: 'relay', used: 800000, window: 1000000, ratio: 0.8 },
+    capacity: { atRisk: true, ratio: 0.8, threshold: 0.55 },
     capacityMemory: { used: 1000000 },
   }));
   assert.equal(plan.capacityRearmed, true);
   assert.equal(plan.track.capacity, null, '重新武装 = 清掉上次 used');
   assert.equal(plan.notice.kind, 'capacity', '重新武装后可再提示一次');
-  assert.deepEqual(plan.claims.capacity, { used: 850000 });
+  assert.deepEqual(plan.claims.capacity, { used: 800000 });
   // 回落到阈值下：静默清武装
   const dropped = planNotices(facts({
     lastBand: 'relay',
     state: { band: 'relay', used: 420000, window: 1000000, ratio: 0.42 },
-    capacity: { atRisk: false, ratio: 0.42, threshold: 0.85 },
+    capacity: { atRisk: false, ratio: 0.42, threshold: 0.55 },
     capacityMemory: { used: 500000 },
   }));
   assert.equal(dropped.notice, null);
@@ -182,7 +182,7 @@ test('planNotices：指标不可用（M-14）一次性保守提示，claim basis
   const plan = planNotices(facts({
     state: unavailable,
     lastBand: 'ok',
-    capacity: { atRisk: false, ratio: undefined, threshold: 0.85, basis: 'unavailable' },
+    capacity: { atRisk: false, ratio: undefined, threshold: 0.55, basis: 'unavailable' },
     panel: undefined,
     panelPrevious: undefined,
     metricsUnavailable: true,
@@ -194,7 +194,7 @@ test('planNotices：指标不可用（M-14）一次性保守提示，claim basis
   const again = planNotices(facts({
     state: unavailable,
     lastBand: 'ok',
-    capacity: { atRisk: false, ratio: undefined, threshold: 0.85, basis: 'unavailable' },
+    capacity: { atRisk: false, ratio: undefined, threshold: 0.55, basis: 'unavailable' },
     panel: undefined,
     panelPrevious: undefined,
     metricsUnavailable: true,
@@ -206,7 +206,7 @@ test('planNotices：指标不可用（M-14）一次性保守提示，claim basis
 test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条 ≤900 字符', () => {
   const cases = [
     facts({}),
-    facts({ capacity: { atRisk: true, ratio: 0.9, threshold: 0.85 } }),
+    facts({ capacity: { atRisk: true, ratio: 0.9, threshold: 0.55 } }),
     facts({ panel: { ...PANEL, defaultOperation: 'handoff' } }),
     facts({ ledger: LEDGER_PENDING, pendingClosure: [{ tool: 'write', target: 'x.js' }] }),
     facts({ metricsUnavailable: true, state: { band: 'ok', used: undefined } }),

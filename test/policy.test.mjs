@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ALL_PHASES,
-  CAPACITY_PRESERVE_RATIO,
+  CAPACITY_RATIO_DEFAULT,
   DELEGATION_EXEC_RATIO_MAX,
   DEFAULT_PANEL_STATE,
   DEFAULT_SETTINGS,
@@ -10,6 +10,7 @@ import {
   PHASE_EXITS,
   USER_REPORT_LIMITS,
   capacityOf,
+  capacityRatioOf,
   isExitPhase,
   normalizePhaseState,
   userReportWarnings,
@@ -515,11 +516,11 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   assert.equal(thresholdsFromPercent(20).warnRatio, 0.15);
   // 2026-10-25 v2 口径：侧栏设置 = 阈值基准 + 面板各选项默认值（六字段）。
   assert.deepEqual(normalizeSettings({}), DEFAULT_SETTINGS);
-  assert.deepEqual(DEFAULT_SETTINGS, { threshold: 35, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true });
+  assert.deepEqual(DEFAULT_SETTINGS, { threshold: 35, capacityThreshold: 55, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true });
   // 2026-11-01 用户裁决：默认基准 40% → 35%（提醒 30 / 二次提醒 35 / 硬线 45）。
   assert.deepEqual(thresholdsFromPercent(DEFAULT_SETTINGS.threshold), DEFAULT_THRESHOLDS);
   // 字段往返；退役/未知值归一默认（不落库）
-  const roundTrip = { threshold: 55, defaultOperation: 'compress', autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
+  const roundTrip = { threshold: 55, capacityThreshold: 60, defaultOperation: 'compress', autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   assert.deepEqual(normalizeSettings(roundTrip), roundTrip);
   assert.deepEqual(
     normalizeSettings({ ...roundTrip, defaultOperation: 'compress-then-handoff', autoChoose: true }),
@@ -540,7 +541,7 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   // 旧字段（autoPhase/autoContinue/autoChoose 等）一律忽略，绝不回写。
   assert.deepEqual(
     normalizeSettings({ threshold: 55, autoPhase: true, autoContinue: true, autoApprove: true, autoChoose: true }),
-    { threshold: 55, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true },
+    { threshold: 55, capacityThreshold: 55, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true },
   );
   assert.deepEqual(normalizeSettings({ autoPhase: true }), DEFAULT_SETTINGS);
   assert.throws(() => normalizeSettings({ threshold: 'nope' }), /finite percentage/);
@@ -556,6 +557,29 @@ test('settings: 阈值百分比推导 + 面板默认值六字段（新增 unlimi
   for (const bad of ['yes', 1, null, {}, []]) {
     assert.throws(() => normalizeSettings({ architect: bad }), /architect must be a boolean/, '非法 architect 必须拒绝：' + String(bad));
   }
+});
+
+test('v0.11 P0-E normalizeSettings：capacityThreshold 独立默认 55 / 非法抛错 / 裁剪 [20,95]', () => {
+  // 缺省 55（独立字段；不参与 band 派生、不与 threshold 合并）。
+  assert.equal(normalizeSettings({}).capacityThreshold, 55);
+  assert.equal(DEFAULT_SETTINGS.capacityThreshold, 55);
+  // 独立：改 threshold 不影响 capacityThreshold；改 capacityThreshold 不影响 threshold/band 派生。
+  assert.equal(normalizeSettings({ threshold: 60 }).capacityThreshold, 55);
+  assert.equal(normalizeSettings({ threshold: 60 }).threshold, 60);
+  const capOnly = normalizeSettings({ capacityThreshold: 70 });
+  assert.equal(capOnly.capacityThreshold, 70);
+  assert.equal(capOnly.threshold, 35);
+  assert.deepEqual(thresholdsFromPercent(capOnly.threshold), DEFAULT_THRESHOLDS, '容量线不参与 band 派生');
+  // 裁剪区间 [20,95]（与 threshold 的 [20,85] 各自独立；容量线不得抬高/降低 band 阈值）。
+  assert.equal(normalizeSettings({ capacityThreshold: 99 }).capacityThreshold, 95);
+  assert.equal(normalizeSettings({ capacityThreshold: 1 }).capacityThreshold, 20);
+  assert.equal(normalizeSettings({ capacityThreshold: 54.6 }).capacityThreshold, 55);
+  assert.equal(normalizeSettings({ threshold: 99, capacityThreshold: 60 }).threshold, 85);
+  // 非法值抛错（host 路由 → 400），与 threshold 各自校验、互不掩盖。
+  for (const bad of [null, true, false, '55', 'nope', NaN, Infinity, {}, []]) {
+    assert.throws(() => normalizeSettings({ capacityThreshold: bad }), /capacityThreshold must be a finite percentage/, '非法 capacityThreshold 必须拒绝：' + String(bad));
+  }
+  assert.throws(() => normalizeSettings({ threshold: 'x', capacityThreshold: 60 }), /threshold must be a finite percentage/);
 });
 
 test('resolveEffectiveThresholds：唯一解析入口（settings.threshold → 派生；legacy 双口径已删）', () => {
@@ -701,20 +725,35 @@ test('v0.9.0 状态机出口常量：PHASE_EXITS/ALL_PHASES/normalizePhaseState/
   assert.throws(() => normalizePhase('blocked'), /unknown phase/);
 });
 
-test('v0.9.0 capacityOf：85% 阈值判定 / 窗口未知不猜 / used 缺失不误报', () => {
-  assert.equal(CAPACITY_PRESERVE_RATIO, 0.85);
-  assert.deepEqual(capacityOf({ used: 84, window: 100 }), { atRisk: false, ratio: 0.84, threshold: 0.85, basis: 'ratio' });
-  assert.deepEqual(capacityOf({ used: 85, window: 100 }), { atRisk: true, ratio: 0.85, threshold: 0.85, basis: 'ratio' });
+test('v0.11 P0-E capacityOf/capacityRatioOf：独立容量线默认 55% / 窗口未知不猜 / used 缺失不误报', () => {
+  assert.equal(CAPACITY_RATIO_DEFAULT, 0.55);
+  assert.equal(capacityRatioOf(), 0.55);
+  assert.equal(capacityRatioOf({ capacityThreshold: 40 }), 0.4);
+  // 独立于 band 阈值：改 threshold 不影响容量比例，改 capacityThreshold 不影响 band 派生。
+  assert.equal(capacityRatioOf(normalizeSettings({ threshold: 80 })), 0.55);
+  assert.equal(thresholdsFromPercent(normalizeSettings({ capacityThreshold: 90 }).threshold).relayRatio, 0.45);
+  // 防御性裁剪/回落：normalizeSettings 在路由层已裁剪 [20,95]；capacityRatioOf 对原始值同样收敛。
+  assert.equal(capacityRatioOf({ capacityThreshold: 'x' }), 0.55);
+  assert.equal(capacityRatioOf({ capacityThreshold: 1 }), 0.2);
+  assert.equal(capacityRatioOf({ capacityThreshold: 99 }), 0.95);
+  assert.deepEqual(capacityOf({ used: 54, window: 100 }), { atRisk: false, ratio: 0.54, threshold: 0.55, basis: 'ratio' });
+  assert.deepEqual(capacityOf({ used: 55, window: 100 }), { atRisk: true, ratio: 0.55, threshold: 0.55, basis: 'ratio' });
   assert.equal(capacityOf({ used: 860_000, window: 1_000_000 }).atRisk, true);
+  assert.equal(capacityOf({ used: 56, window: 100 }).atRisk, true, '0.56 ≥ 默认 0.55 触发');
+  assert.equal(capacityOf({ used: 46, window: 100 }).atRisk, false, '0.46 < 默认 0.55 不触发');
   // 窗口未知 / 为 0 / used 缺失 → unavailable，不把预算/绝对 token 当容量线。
   for (const pressure of [undefined, {}, { used: 100_000 }, { window: 100_000 }, { used: 90, window: 0 }, { used: -1, window: 100 }]) {
     const capacity = capacityOf(pressure);
     assert.equal(capacity.atRisk, false, '窗口未知不保全：' + JSON.stringify(pressure));
     assert.equal(capacity.basis, 'unavailable');
     assert.equal(capacity.ratio, undefined);
+    assert.equal(capacity.threshold, 0.55, '未知窗口仍报告独立配置阈值');
   }
-  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 0.9 }).atRisk, true, 'ratio 可调（测试用）');
-  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 2 }).threshold, 0.85, '非法 ratio 回落常量');
+  // 配置值生效（0.4 / 0.85 均可）；非法 ratio 回落默认 55%。
+  assert.equal(capacityOf({ used: 40, window: 100 }, { ratio: 0.4 }).atRisk, true, '独立配置 40% 生效');
+  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 0.9 }).atRisk, true, '独立配置 90% 生效');
+  assert.equal(capacityOf({ used: 55, window: 100 }, { ratio: 0.55 }).atRisk, true, '默认 55% 边界 atRisk');
+  assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 2 }).threshold, 0.55, '非法 ratio 回落默认 55%');
 });
 
 test('v0.9.0 userReportWarnings：合规零 warning；缺段/乱序/空段/超长/代码块/输出 → 只 warning 不抛不拒', () => {
@@ -771,7 +810,7 @@ test('v0.9.0 formatStatus：capacity 事实行只在 atRisk 时出现（预算�
     budget: { headroomToWarn: 0, headroomToOrganize: 0, headroomToRelay: 60_000 },
     capacity: capacityOf({ used: 870_000, window: 1_000_000 }),
   });
-  assert.match(atRisk, /capacity: 87\.0% ≥ 85\.0% → 容量保全（收尾\/交接准备；预算档本身不构成中途打断例外）/);
+  assert.match(atRisk, /capacity: 87\.0% ≥ 55\.0% → 容量保全（独立配置；收尾\/交接准备；预算档本身不构成中途打断例外）/);
   assert.ok(atRisk.indexOf('capacity:') > atRisk.indexOf('budget:'), 'capacity 行在 budget 行之后');
   assert.doesNotMatch(formatStatus({ phase: 'build', capacity: capacityOf({ used: 10, window: 100 }) }), /capacity:/, '不 atRisk 不渲染');
   assert.doesNotMatch(formatStatus({ phase: 'build' }), /capacity:/, '无 capacity 字段不渲染（旧输出不变）');

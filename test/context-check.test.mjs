@@ -94,7 +94,7 @@ const BASE_FACTS = {
   pendingClosure: [],
   dispatchRows: [],
   guard: {},
-  capacity: { atRisk: false, ratio: 0.02, threshold: 0.85 },
+  capacity: { atRisk: false, ratio: 0.02, threshold: 0.55 },
   capacityMemory: undefined,
   panelPrevious: JSON.stringify([null, false, false, false]),
   organizeCount: 0,
@@ -172,7 +172,7 @@ test('planNotices：更高优先 notice 占用时 context-check 不 claim（下�
   const rising = planNotices(facts({
     state: { band: 'warn', used: 36000, window: 100000, ratio: 0.36 },
     lastBand: 'ok',
-    capacity: { atRisk: false, ratio: 0.36, threshold: 0.85 },
+    capacity: { atRisk: false, ratio: 0.36, threshold: 0.55 },
     contextCheck: ccFact({ band: 'warn', recommendation: contextCheckChoice({ band: 'warn' }) }),
   }));
   assert.equal(rising.notice.kind, 'phase', '到线提醒优先');
@@ -180,7 +180,7 @@ test('planNotices：更高优先 notice 占用时 context-check 不 claim（下�
   const next = planNotices(facts({
     state: { band: 'warn', used: 36000, window: 100000, ratio: 0.36 },
     lastBand: 'warn',
-    capacity: { atRisk: false, ratio: 0.36, threshold: 0.85 },
+    capacity: { atRisk: false, ratio: 0.36, threshold: 0.55 },
     contextCheck: ccFact({ band: 'warn', recommendation: contextCheckChoice({ band: 'warn' }) }),
   }));
   assert.equal(next.notice.kind, 'context-check', '下一步补发');

@@ -276,7 +276,7 @@ test('deriveExit：无投影时从日志 fallback 重建出口（restart 后仍�
 
 // ── 容量保全 ───────────────────────────────────────────────────────────
 
-test('relay_status.capacity：≥85% 报事实 + text 容量行；窗口未知 basis=unavailable 不保全', async () => {
+test('relay_status.capacity：≥55%（独立配置默认）报事实 + text 容量行；窗口未知 basis=unavailable 不保全', async () => {
   resetSharedState();
   const session = fakeSession({ id: 'session-capacity-status', cwd: tmpCwd(), seq: 0 });
   const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 860_000 } });
@@ -285,9 +285,9 @@ test('relay_status.capacity：≥85% 报事实 + text 容量行；窗口未知 b
   const status = await applied.tools.get('relay_status').execute({}, { agent });
   assert.equal(status.capacity.atRisk, true);
   assert.equal(status.capacity.basis, 'ratio');
-  assert.equal(status.capacity.threshold, 0.85);
+  assert.equal(status.capacity.threshold, 0.55);
   assert.equal(status.capacity.ratio, 0.86);
-  assert.match(status.text, /capacity: 86\.0% ≥ 85\.0% → 容量保全/);
+  assert.match(status.text, /capacity: 86\.0% ≥ 55\.0% → 容量保全（独立配置/);
   // 回落：不 atRisk 不渲染容量行。
   bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 500_000 };
   const dropped = await applied.tools.get('relay_status').execute({}, { agent });
@@ -304,37 +304,37 @@ test('relay_status.capacity：≥85% 报事实 + text 容量行；窗口未知 b
 test('哨兵容量保全 notice：上升沿一次性注入、同档不重复、回落后重新武装；不自动压缩/接力', async () => {
   resetSharedState();
   const session = fakeSession({ id: 'session-capacity-sentinel', cwd: tmpCwd(), seq: 0 });
-  const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 840_000 } });
+  const bundle = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 460_000 } });
   const applied = applyAgent(bundle.services);
   const listener = applied.events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
   const step = () => listener({ agent }, async () => undefined);
-  // 84%：到线提醒（relay 档）但未到容量线——只有 band notice。
+  // 46%：到线提醒（organize 档）但未到容量线（默认 55%）——只有 band notice。
   await step();
   assert.equal(injected.length, 1);
   assert.doesNotMatch(injected[0].content[0].text, /容量保全/);
-  // 86%：同 band 不重复提醒，但容量上升沿注入一条容量 notice（合并/单条）。
-  bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 860_000 };
+  // 56%：容量上升沿注入（同 step 升 relay 档时合并为一条，仍含容量段）。
+  bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 560_000 };
   await step();
   assert.equal(injected.length, 2, '容量上升沿注入一次');
   const capacityText = injected[1].content[0].text;
   assert.match(capacityText, /容量保全/);
-  assert.match(capacityText, /ratio 86\.0%，阈值 85\.0%/);
+  assert.match(capacityText, /ratio 56\.0%，阈值 55\.0%/);
   assert.match(capacityText, /phase 中段不打断」的唯一例外/);
   assert.match(capacityText, /最坏兜底/, 'P0-D：容量是最坏兜底');
   assert.match(capacityText, /不自动执行（不自动压缩\/不自动接力）/, '只提示不自动动作');
   // 同档再走 8 步：不重复。
   for (let index = 0; index < 8; index += 1) await step();
   assert.equal(injected.length, 2, '容量 notice 不重复');
-  // 回落到 40%：重置武装（不注入）；再次到 86% → 再注入一次。
+  // 回落到 40%：重置武装（不注入）；再次到 56% → 再注入一次。
   bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 400_000 };
   await step();
   assert.equal(injected.length, 2, '回落不注入');
-  bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 860_000 };
+  bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 560_000 };
   await step();
   assert.equal(injected.length, 3, '回落重置后再次上升沿提醒');
-  assert.match(injected[2].content[0].text, /容量保全/);
+  assert.match(injected[2].content[0].text, /容量保全（最坏兜底，独立配置/);
   // 窗口未知：不注入容量 notice。
   resetSharedState();
   const blindSession = fakeSession({ id: 'session-capacity-blind', cwd: tmpCwd(), seq: 0 });
@@ -402,7 +402,7 @@ test('relay_handoff：blocked/cancel 会话可交接（status.phase schema/执�
 });
 
 
-test('容量保全重新武装（P2-3）：压缩后 used 大降但仍 ≥85% → 允许再次提示一次', async () => {
+test('容量保全重新武装（P2-3）：压缩后 used 大降但仍 ≥容量线 → 允许再次提示一次', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-capacity-rearm', cwd, seq: 0 });
@@ -414,7 +414,7 @@ test('容量保全重新武装（P2-3）：压缩后 used 大降但仍 ≥85% �
   const step = () => listener({ agent: { session, inject(message) { injected.push(message); } } }, async () => undefined);
   await step();
   assert.equal(texts().length, 1, '100% 首次容量 notice');
-  // 压缩生效：used 1.0M → 0.85M（下降 15%）；ratio 仍 85% ≥ 阈值 → 仍 atRisk，但重新武装允许再提示一次。
+  // 压缩生效：used 1.0M → 0.85M（下降 15%）；ratio 85% 仍 ≥ 容量线（默认 55%）→ 仍 atRisk，但重新武装允许再提示一次。
   bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 850_000 };
   await step();
   assert.equal(texts().length, 2, 'used 较 notice 时下降 ≥15% → 仍 atRisk 也重新提示一次');

@@ -229,19 +229,19 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   roleTools = 该角色 agent-scope 注册的工具；tools = 角色实际可见工具面；
  *   toolDescChars/toolSchemaChars = 可见工具的 desc / desc+params JSON 合计；
  *   totalChars = sectionChars + toolSchemaChars（每请求常驻注入总量）。
- * 值来源：C11 实测（C9/C10 之后）。
+ * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符，已同步实测。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 6449],
+      ['context-relay:protocol', 6490],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1840],
       ['context-relay:architect', 693],
       ['context-relay:router', 1942],
       ['context-relay:team-lead', 614],
     ],
-    sectionChars: 11553,
+    sectionChars: 11594,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
@@ -250,7 +250,7 @@ const ROLE_SNAPSHOT = {
     ],
     toolDescChars: 4734,
     toolSchemaChars: 18917,
-    totalChars: 30470,
+    totalChars: 30511,
   },
   teammate: {
     sections: [

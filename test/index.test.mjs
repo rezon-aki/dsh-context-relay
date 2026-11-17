@@ -500,7 +500,7 @@ test('host: sessionProjections 缺失时安全跳过并 warn，路由/preset 不
 });
 
 const DEFAULT_SETTINGS = Object.freeze({
-  threshold: 35, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
+  threshold: 35, capacityThreshold: 55, defaultOperation: null, autoCompress: false, autoHandoff: false, unlimitedBudget: true, architect: true,
 });
 
 test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，退役/旧字段忽略', async () => {
@@ -520,7 +520,7 @@ test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，
   assert.deepEqual(globalThis[SETTINGS_KEY], DEFAULT_SETTINGS);
   const putBody = { threshold: 60, defaultOperation: 'compress-then-handoff', autoChoose: true, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   // 退役 autoChoose / 未知 cth 值一律丢弃/归一 null（不 400）。
-  const putExpected = { threshold: 60, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
+  const putExpected = { threshold: 60, capacityThreshold: 55, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false };
   const put = await callAsync(route, { method: 'PUT', headers: jsonHeaders, body: JSON.stringify(putBody) });
   assert.equal(put.out.statusCode, 200);
   assert.equal(put.json.persisted, true);
@@ -542,7 +542,7 @@ test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，
   });
   assert.equal(legacy.out.statusCode, 200);
   // body 显式给 defaultOperation（非法值归一为 null，语义=「问我」预设模式）
-  assert.deepEqual(legacy.json.settings, { threshold: 65, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
+  assert.deepEqual(legacy.json.settings, { threshold: 65, capacityThreshold: 55, defaultOperation: null, autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   assert.deepEqual(JSON.parse(readFileSync(settingsPath, 'utf8')), legacy.json.settings);
   assert.equal(globalThis[SETTINGS_KEY].autoPhase, undefined);
   assert.equal(globalThis[SETTINGS_KEY].autoContinue, undefined);
@@ -552,7 +552,7 @@ test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，
   assert.equal(clipped.json.settings.autoHandoff, true);
   // 显式预设 → 生效；退役 autoChoose 即使旧客户端传也不生效、不 400。
   const modePreset = await callAsync(route, { method: 'PUT', body: JSON.stringify({ defaultOperation: 'handoff', autoChoose: false }) });
-  assert.deepEqual(modePreset.json.settings, { threshold: 85, defaultOperation: 'handoff', autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
+  assert.deepEqual(modePreset.json.settings, { threshold: 85, capacityThreshold: 55, defaultOperation: 'handoff', autoCompress: true, autoHandoff: true, unlimitedBudget: false, architect: false });
   const retired = await callAsync(route, { method: 'PUT', body: JSON.stringify({ autoChoose: true }) });
   assert.equal(retired.out.statusCode, 200);
   assert.deepEqual(retired.json.settings, modePreset.json.settings);
@@ -569,6 +569,16 @@ test('host: settings 路由 GET/PUT 五字段、持久化、发布 globalThis，
   const badArchitect = await callAsync(route, { method: 'PUT', body: JSON.stringify({ architect: 'yes' }) });
   assert.equal(badArchitect.out.statusCode, 400, '非法 architect → 400');
   assert.equal(badArchitect.json.code, 'invalid-settings');
+  // v0.11 P0-E：容量线独立配置——改它不动 band 阈值；非法值 400；裁剪 [20,95]。
+  const cap = await callAsync(route, { method: 'PUT', body: JSON.stringify({ capacityThreshold: 70 }) });
+  assert.equal(cap.out.statusCode, 200);
+  assert.equal(cap.json.settings.capacityThreshold, 70);
+  assert.equal(cap.json.settings.threshold, 20, '容量线独立：改容量线不影响 threshold');
+  assert.deepEqual(cap.json.thresholds, thresholdsFromPercent(20), 'band 阈值派生不变');
+  const capBad = await callAsync(route, { method: 'PUT', body: JSON.stringify({ capacityThreshold: 'nope' }) });
+  assert.equal(capBad.out.statusCode, 400, '非法 capacityThreshold → 400');
+  assert.equal(capBad.json.code, 'invalid-settings');
+  assert.equal((await callAsync(route, { method: 'PUT', body: JSON.stringify({ capacityThreshold: 99 }) })).json.settings.capacityThreshold, 95);
   assert.equal((await callAsync(route, { method: 'POST' })).out.statusCode, 405);
 });
 
