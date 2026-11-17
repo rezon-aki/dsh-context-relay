@@ -14,6 +14,7 @@ import { apply } from '../lib/agent.js';
 import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearDeriveMemory, derivePhase, deriveReopen } from '../lib/agent/derive.js';
+import { foldRelayEvent, initialState } from '../lib/projection.js';
 
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
@@ -130,7 +131,13 @@ test('P0-C warn：缺/不完整 reopen 放行 + warning + 记录 missing；合�
   await h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
   const incomplete = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK, reopen: { reason: '返修' } });
   assert.equal(incomplete.warning, 'reopen-missing');
-  assert.deepEqual(incomplete.reopen, { from: 'ship', to: 'build', missing: ['reopen.user_approved'] });
+  // 可观测契约：已提供的 reason 原样保留（不丢审计事实），缺失项进 missing；未提供的 userApproved 不虚构。
+  assert.deepEqual(incomplete.reopen, { from: 'ship', to: 'build', reason: '返修', missing: ['reopen.user_approved'] });
+  // 显式给了 user_approved:false：保留调用方给的值 + 记入 missing（不静默改写）。
+  await h.call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  const denied = await h.call({ phase: 'verify', contract_check: CONTRACT_CHECK, reopen: { reason: '返修', user_approved: false } });
+  assert.deepEqual(denied.reopen, { from: 'ship', to: 'verify', reason: '返修', userApproved: false, missing: ['reopen.user_approved'] });
   // 合法 reopen：记录、无 warning（先重新交付一次，再从 ship 退出）。
   await h.call({ phase: 'verify', contract_check: CONTRACT_CHECK });
   await h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
@@ -166,12 +173,31 @@ test('P0-C off：日志中的历史 reopen 不计入 relay_status.reopen（off �
   assert.doesNotMatch(status.text, /reopen:/);
 });
 
-test('P0-C strict/warn：非 ship 提供 reopen → invalid-args 拒绝（零副作用）', async () => {
+test('P0-C strict/warn：非 ship 提供 reopen → fail(invalid-args) 拒绝（零副作用）', async () => {
   for (const reopenGate of ['strict', 'warn']) {
     const h = harness({ reopenGate });
-    await assert.rejects(h.call({ phase: 'decide', exit_criteria: '方案定稿', reopen: REOPEN }), /reopen/, reopenGate + '：非 ship reopen 必须拒绝');
+    const refused = await h.call({ phase: 'decide', exit_criteria: '方案定稿', reopen: REOPEN });
+    assert.equal(refused.ok, false, reopenGate + '：非 ship reopen 必须拒绝');
+    assert.equal(refused.code, 'invalid-args', reopenGate + '：设计 §3.3 固定拒绝码 invalid-args');
+    assert.equal(refused.field, 'reopen');
+    assert.match(refused.error, /reopen/);
     assert.equal((await h.status()).phase, 'discover', reopenGate + '：拒绝零副作用');
   }
+});
+
+test('P0-C 返回式拒绝（ok:false）不推进 phase：投影/日志派生同口径（零副作用）', async () => {
+  const refusal = [{ type: 'text', text: JSON.stringify({ ok: false, code: 'invalid-args', error: 'reopen 只用于 ship 退出到 build/verify' }) }];
+  const event = {
+    type: 'tool/ptc-dispatch',
+    seq: 1,
+    data: { name: 'relay_phase', arguments: { phase: 'decide', reopen: REOPEN }, isError: false, content: refusal },
+  };
+  // 投影：ok:false 的成功事件不得应用 args.phase。
+  const projected = foldRelayEvent(initialState, event);
+  assert.equal(projected.phase, 'discover', '投影不因返回式拒绝推进 phase');
+  // 日志派生：同一事件在冷启动重放时同样不算 phase 切换。
+  const session = fakeSession({ id: 'session-reopen-refused-replay', cwd: tmpCwd(), log: [event] });
+  assert.equal(derivePhase(session, undefined), 'discover', '日志派生不因返回式拒绝推进 phase');
 });
 
 test('P0-C ship→discover：放行并标 newTask（新任务开始），无需 reopen', async () => {
