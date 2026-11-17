@@ -15,6 +15,7 @@ import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updat
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
+import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
 
 const HANDOFF_KEY = Symbol.for('dsh-context-relay.handoffs');
 /** 每次切 phase 必填的契约自检（两条用户契约的工作时落地）。 */
@@ -152,6 +153,13 @@ function preStepListener(events) {
   const found = events.filter((event) => event.name === 'agent/pre-step').at(-1);
   assert.ok(found, 'agent/pre-step listener registered');
   return found.listener;
+}
+
+/** v0.11 P0-B：catalog 成员默认是 legacy；把要参与 squad 视图/派活的成员写进 roster 当前代。 */
+async function seedSquadRoster(cwd, leadSessionId, names) {
+  const roster = emptyRoster();
+  for (const name of names) ensureLineage(roster, name, { name, sessionId: 'session-' + name });
+  await writeRoster(cwd, roster, leadSessionId);
 }
 
 function tmpCwd() {
@@ -1700,7 +1708,8 @@ test('pressureOf skips tokenMeter.measure when the projection already has a valu
 
 test('teammateState releases the session observation lease via Symbol.dispose', async () => {
   resetSharedState();
-  const session = fakeSession({ seq: 0 });
+  const cwd = tmpCwd();
+  const session = fakeSession({ seq: 0, cwd });
   let released = 0;
   const { services } = fakeServices({
     session,
@@ -1719,6 +1728,7 @@ test('teammateState releases the session observation lease via Symbol.dispose', 
       },
     },
   });
+  await seedSquadRoster(cwd, session.id, ['worker']);
   const { tools } = applyAgent(services);
   const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
   assert.equal(report.team.length, 1);
@@ -2622,6 +2632,7 @@ test('v0.9.0 批次3 delegation 度量：relay_status 返回 delegation 块（ex
   });
   const metricsOf = async (id, projection) => {
     const { session } = countingSnapshotSession({ id, cwd: tmpCwd() });
+    await seedSquadRoster(session.header.cwd ?? tmpCwd(), id, members.map((member) => member.name));
     const bundle = attachRelayProjection(fakeServices({
       session,
       extra: { agentTeams: { tryMembership: () => ({ role: 'lead' }), listMembers: () => members } },
@@ -2838,6 +2849,7 @@ test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect�
     sendMessage(caller, request) { sent.push({ caller, request }); return { messageId: 'm-int-1' }; },
   };
   const session = fakeSession({ id: leadSessionId, cwd });
+  await seedSquadRoster(cwd, leadSessionId, [worker.name]);
   const projection = {
     phase: 'discover', goal: null, exitCriteria: null, organizeCount: 0, compactionEpoch: 0,
     noticeBand: null, lastNoticeSeq: -1, lastCompactionSeq: -1, lastContinueActionSeq: -1,
@@ -4331,9 +4343,11 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   }
   // A-06 实测 2,141/3,000 → 预算按实测+~3% 定格；15 工具逐条精确快照见 test/budget-snapshot.test.mjs。
   // v0.10.x 完成确认门：relay_collect 描述补 lead_confirm 口径 → 实测 2353，预算按实测+~2% 上调到 2400。
-  assert.ok(leadDescriptionChars <= 2400, 'lead-only 5 条描述总字符 <=2400（v0.10.x 实测 2353），实际 ' + leadDescriptionChars);
-  // v0.10.x 完成确认门：relay_collect 新增 lead_confirm 结构化 schema → 实测 3643，预算按实测+~1.5% 上调到 3700。
-  assert.ok(leadParameterChars <= 3700, 'lead-only 5 条参数总字符 <=3700（v0.10.x 实测 3643），实际 ' + leadParameterChars);
+  // v0.11 P0-B：relay_team_status 描述补默认 squad/manage/include_* 口径后收敛 ≤400 → 实测 2356，预算 2400 不变。
+  assert.ok(leadDescriptionChars <= 2400, 'lead-only 5 条描述总字符 <=2400（v0.11 P0-B 实测 2356），实际 ' + leadDescriptionChars);
+  // v0.10.x 完成确认门：relay_collect 新增 lead_confirm 结构化 schema → 实测 3643，预算 3700。
+  // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
+  assert.ok(leadParameterChars <= 4800, 'lead-only 5 条参数总字符 <=4800（v0.11 P0-B 实测 4732），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

@@ -31,6 +31,13 @@ function tmpCwd() {
   return mkdtempSync(join(tmpdir(), 'relay-tc-'));
 }
 
+/** v0.11 P0-B：把 catalog 成员登记为当前 squad（默认视图/闸门只认 squad）。 */
+async function seedSquad(cwd, leadSessionId, names) {
+  const roster = emptyRoster();
+  for (const name of names) ensureLineage(roster, name, { name, sessionId: 'session-' + name });
+  await writeRoster(cwd, roster, leadSessionId);
+}
+
 function resetSharedState() {
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true };
@@ -185,6 +192,7 @@ test('relay_team_status：队友到线写团队上下文快照 + pending 提示�
     { id: 'session-tc-a', name: 'impl-a', role: 'teammate', status: 'inactive' },
     { id: 'session-tc-b', name: 'impl-b', role: 'teammate', status: 'inactive' },
   ];
+  await seedSquad(dir, 'session-tc-lead', ['impl-a', 'impl-b']);
   const teams = {
     tryMembership: () => ({ role: 'lead', name: 'lead', root: { session: { id: 'session-tc-lead' } } }),
     listMembers: () => members,
@@ -429,6 +437,7 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
       return { projections: { values: { contextPressure: { contextWindow: 1000000, projectedTokens } } }, [Symbol.dispose]() {} };
     },
   };
+  await seedSquad(cwd, 'session-dispatch-lead', ['mate-1', 'mate-2']);
   const { services, state } = fakeServices({ session: leadSession, extra: { agentTeams: teams, sessionQuery } });
   const bundle = applyAgent(services);
   const post = bundle.events.find((entry) => entry.name === 'tools/post-execute').listener;
@@ -497,7 +506,8 @@ test('派活判断点按 (target,band,status) 首次/变化才打断：同状态
   const roster = emptyRoster();
   const lineage = ensureLineage(roster, 'old-mate', { name: 'mate-retired', role: 'worker' });
   retireGeneration(lineage, 'mate-retired', 'renewed');
-  writeRoster(cwd, roster, 'session-gate-lead');
+  for (const name of ['mate-1', 'mate-2', 'mate-3']) ensureLineage(roster, name, { name, sessionId: 'session-dm-' + name.slice(-1) });
+  await writeRoster(cwd, roster, 'session-gate-lead');
   const teams = {
     tryMembership: (caller) => (caller?.session?.id === 'session-gate-lead'
       ? { role: 'lead', name: 'lead', root: { session: { id: 'session-gate-lead' } } }

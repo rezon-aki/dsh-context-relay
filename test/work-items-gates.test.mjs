@@ -18,6 +18,7 @@ import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
+import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
@@ -922,6 +923,10 @@ test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处�
       return { projections: { values: { contextPressure: { contextWindow: 1000000, projectedTokens } } }, [Symbol.dispose]() {} };
     },
   };
+  // v0.11 P0-B：triage 只看 squad → 先把两名成员登记为当前小队。
+  const roster = emptyRoster();
+  for (const name of ['mate-1', 'mate-2']) ensureLineage(roster, name, { name, sessionId: 'session-' + name });
+  await writeRoster(cwd, roster, 'session-team-triage');
   const bundle = applyAgent(fakeServices({ session, extra: { agentTeams: teams, sessionQuery } }).services);
   const phase = bundle.tools.get('relay_phase');
   const ctxFile = join(cwd, '.scratch/context-relay/team-context/session-team-triage.json');

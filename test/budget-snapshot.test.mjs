@@ -182,7 +182,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
   doc_lint: [110, 147],
   relay_work_items: [392, 2166],
   relay_handoff: [384, 1534],
-  relay_team_status: [371, 62],
+  relay_team_status: [374, 1151],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
   relay_dispatch: [248, 1314],
@@ -191,8 +191,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（v0.10.x 台账完成确认门后：desc 5,488 / params 16,342 / schema 21,830）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5488, params: 16342, schema: 21830 };
+/** 15 工具 schema 合计（v0.11 P0-B：relay_team_status 增 manage/include_* 且 desc 收敛到 ≤400 → desc 5,491 / params 17,431 / schema 22,922）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 17431, schema: 22922 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -229,28 +229,29 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   roleTools = 该角色 agent-scope 注册的工具；tools = 角色实际可见工具面；
  *   toolDescChars/toolSchemaChars = 可见工具的 desc / desc+params JSON 合计；
  *   totalChars = sectionChars + toolSchemaChars（每请求常驻注入总量）。
- * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符，已同步实测。
+ * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符；
+ * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 6490],
+      ['context-relay:protocol', 6552],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1840],
       ['context-relay:architect', 693],
-      ['context-relay:router', 1942],
-      ['context-relay:team-lead', 614],
+      ['context-relay:router', 1992],
+      ['context-relay:team-lead', 624],
     ],
-    sectionChars: 11594,
+    sectionChars: 11716,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
       'relay_status', 'relay_recommend', 'relay_phase', 'relay_organize', 'relay_doc', 'doc_lint', 'relay_work_items', 'relay_handoff',
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
-    toolDescChars: 4734,
-    toolSchemaChars: 18917,
-    totalChars: 30511,
+    toolDescChars: 4737,
+    toolSchemaChars: 20009,
+    totalChars: 31725,
   },
   teammate: {
     sections: [

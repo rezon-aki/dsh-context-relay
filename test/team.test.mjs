@@ -344,8 +344,25 @@ function pressureQuery(byId) {
   };
 }
 
-function makeRuntime(ctx) {
-  return { ctx, currentThresholds: () => thresholds };
+function makeRuntime(ctx, overrides = {}) {
+  // v0.11 P0-B：既有工具测试默认保留 spawn 可用；新默认（spawn 关）由 squad 专测显式传 {allowSpawn:false}。
+  return { ctx, currentThresholds: () => thresholds, allowSpawn: true, squadMax: 8, ...overrides };
+}
+
+/** 把 catalog 成员登记为当前小队（roster 当前代）；legacy 场景传 rosterMembers: null 跳过。 */
+function seedRosterFile(dir, names, lead = LEAD) {
+  const lineages = {};
+  for (const name of names) {
+    const lineage = lineageOf(name);
+    const gen = genOf(name);
+    const entry = lineages[lineage] ?? { profile: { role: '', description: '' }, generations: [], activeGen: 0 };
+    entry.generations.push({ gen, name });
+    entry.activeGen = Math.max(entry.activeGen, gen);
+    lineages[lineage] = entry;
+  }
+  const root = join(dir, '.scratch', 'context-relay', 'team', lead);
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'roster.json'), JSON.stringify({ version: 1, lineages }), 'utf8');
 }
 
 function findPreStepListener(ctx) {
@@ -407,6 +424,7 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     assert.equal(nonLead.code, 'lead-only');
     const roster = { version: 1, lineages: {} };
     ensureLineage(roster, 'impl', { name: 'impl-g1', sessionId: 'session-w1' });
+    ensureLineage(roster, 'review', { name: 'review-g1', sessionId: 'session-w2' });
     await writeRoster(dir, roster, LEAD);
     const built = buildCheckpointMarkdown({ lineage: 'impl', name: 'impl-g1', gen: 1, input: { one_line: 'wip' } });
     await writeCheckpoint(dir, 'impl', built.markdown, LEAD);
@@ -417,7 +435,7 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     const review = report.team.find((row) => row.name === 'review-g1');
     assert.equal(impl.gen, 1);
     assert.equal(impl.rosterKnown, true, 'v0.11 P0-A：roster 当前代标记 rosterKnown');
-    assert.equal(review.rosterKnown, false, 'catalog 有、roster 无的成员 rosterKnown=false');
+    assert.equal(review.rosterKnown, true, 'v0.11 P0-B：squad 行的 rosterKnown=true（legacy 默认不展示）');
     assert.equal(report.phase, null, '无台账时 Lead phase 为 null');
     assert.equal(impl.phase, null);
     assert.equal(impl.items, undefined, '无台账时不带条目计数');
@@ -425,9 +443,9 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     assert.equal(review.health, 'spent');
     assert.deepEqual(report.stale.sort(), ['impl-g1', 'review-g1']);
     assert.match(report.text, /records=\.scratch\/context-relay\/team\/session-lead\//);
-    assert.match(report.text, /小队目标=4（按需扩到 maxActiveSubagents/, 'v0.9.0 #28：小队目标 4 口径');
-    assert.match(report.text, /stale → 边界 reset 复用（真清空，0 额度）；仅换身份才 renew/);
-    assert.match(report.text, /spent → 先 checkpoint 再 reset 复用（0 额度）；仅换身份才 renew/);
+    assert.match(report.text, /^小队 2\/8/, 'v0.11 P0-B：默认只展示当前 squad 计数');
+    assert.match(report.text, /stale → 边界 reset 复用（真清空，0 额度）；换身份\/角色且 allowSpawn 才 renew/);
+    assert.match(report.text, /spent → 先 checkpoint 再 reset 复用（0 额度）；换身份\/角色且 allowSpawn 才 renew/);
     assert.match(impl.action, /relay_freshen\(\{reset:true/, '结构化 action 也 reset-first');
     assert.doesNotMatch(impl.action, /relay_renew）|先换新/);
     assert.ok(report.text.length <= 2000, '团队报告有界');
@@ -569,6 +587,7 @@ test('relay_architect：continue 未选也可复用已有代与模型，不 spaw
     const lead = makeAgent({ sessionId: LEAD, cwd: dir });
     const teams = makeTeamService({ members: [{ id: 'session-architect', name: 'architect', role: 'teammate', status: 'inactive' }], memberships: new Map([[lead, membership('lead', 'lead', lead)]]) });
     updatePanelState(LEAD, { architectModel: null });
+    seedRosterFile(dir, ['architect']);
     await writeCheckpoint(dir, 'architect', '## 架构师记录', LEAD);
     const ctx = fakeCtx({ agentTeams: teams });
     const tool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((item) => item.name === 'relay_architect');
@@ -1064,7 +1083,9 @@ function delegationToolsOf(ctx, runtime = {}) {
   };
 }
 
-function dispatchCtx({ dir, members = [], pressures = {}, spawnResult, sendError, sessionQuery } = {}) {
+function dispatchCtx({ dir, members = [], pressures = {}, spawnResult, sendError, sessionQuery, rosterMembers } = {}) {
+  // v0.11 P0-B：默认把测试成员登记为 squad（legacy 场景显式 rosterMembers:null）。
+  if (rosterMembers !== null) seedRosterFile(dir, rosterMembers ?? members.filter((member) => member?.role === 'teammate').map((member) => member.name));
   const lead = makeAgent({ sessionId: LEAD, cwd: dir });
   const teams = makeTeamService({
     members: [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }, ...members],
@@ -1329,9 +1350,7 @@ test('relay_dispatch 自动选人：clean(ok+ck) 优先、dirty(unavailable) 排
       // dirty-w 有 sessionQuery 但压力指标缺失 → band=unavailable（不是 unknown）。
       pressures: { 'session-clean': 2000, 'session-dirty': undefined },
     });
-    const roster = { version: 1, lineages: {} };
-    ensureLineage(roster, 'clean-w', { name: 'clean-w', sessionId: 'session-clean' });
-    await writeRoster(dir, roster, LEAD);
+    // dispatchCtx 已把两名成员登记为 squad；clean-w 再补一份 checkpoint（rosterKnown/ck 优先）。
     const built = buildCheckpointMarkdown({ lineage: 'clean-w', name: 'clean-w', gen: 1, input: { one_line: 'clean baseline' } });
     await writeCheckpoint(dir, 'clean-w', built.markdown, LEAD);
     await seedLedger(dir, [
@@ -1420,7 +1439,7 @@ test('relay_dispatch：worker-1..9 名字耗尽 → worker-name-exhausted（与 
     for (let index = 1; index <= 9; index += 1) busy.push({ id: 'session-w' + index, name: 'worker-' + index, role: 'teammate', status: 'running' });
     const { lead, teams, ctx } = dispatchCtx({ dir, members: busy });
     await seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
-    const { dispatch } = delegationToolsOf(ctx);
+    const { dispatch } = delegationToolsOf(ctx, { squadMax: 32 });
     const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
     assert.equal(result.ok, false);
     assert.equal(result.code, 'worker-name-exhausted', '名字耗尽独立 code（不是 member-limit）');
@@ -1783,6 +1802,7 @@ test('relay_team_status：汇总 reset 结果（真清空/回退/失败）；res
     const ctx = fakeCtx({ agentTeams: teams, sessionQuery: pressureQuery({ 'session-w1': 2000, 'session-w2': 2000, 'session-w3': 2000 }) });
     const statusTool = createTeamTools(makeRuntime(ctx.ctx)).leadTools.find((tool) => tool.name === 'relay_team_status');
     clearTeamStatusMemory();
+    seedRosterFile(dir, ['impl-g1', 'impl2-g1', 'impl3-g1']);
     await appendLedger(dir, 'impl', { event: 'reset', name: 'impl-g1', gen: 1, at: '2026-11-16T01:00:00.000Z' }, LEAD);
     await appendLedger(dir, 'impl2', { event: 'freshen', reset: true, name: 'impl2-g1', gen: 1, at: '2026-11-16T01:01:00.000Z' }, LEAD);
     await appendLedger(dir, 'impl3', { event: 'reset-failed', name: 'impl3-g1', gen: 1, reason: 'surface replacement rejected', at: '2026-11-16T01:02:00.000Z' }, LEAD);
@@ -2080,6 +2100,7 @@ test('relay_architect：mode=continue 复用当前架构师时同步 Lead 当前
       ],
       memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
     });
+    seedRosterFile(dir, ['architect']);
     const f = fakeCtx({ agentTeams: teams });
     const tool = createTeamTools(makeRuntime(f.ctx)).leadTools.find((item) => item.name === 'relay_architect');
     const result = await tool.execute({ mode: 'continue', brief: '继续设计登录模块', task_id: 'login' }, { agent: lead });

@@ -149,7 +149,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER �
   // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1300, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '四段式', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '默认 4 人', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
+    '四段式', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
     '不产生审批豁免',
     '免审只来自 autoCompress / autoHandoff / authorizeNext',
@@ -237,7 +237,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤6560 / ROUTER �
     assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 硬约束短语缺失: ' + phrase);
   }
   // 已上收到 PROTOCOL base 的小队口径：ROUTER 不再重复（P3 唯一真源）
-  for (const phrase of ['默认 4 人', 'maxActiveSubagents', '满额排队/报阻塞']) {
+  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status manage']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺小队口径: ' + phrase);
     assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复小队口径: ' + phrase);
   }
@@ -260,7 +260,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
     assert.equal(countIn(resident, phrase), 1, '真源句应恰好出现 1 次: ' + phrase + '（实际 ' + countIn(resident, phrase) + '）');
   }
   // 2) P3 上收的小队口径：只在 PROTOCOL base 出现；ROUTER/TEAM_LEAD 只留指针
-  for (const phrase of ['默认 4 人', 'maxActiveSubagents', '满额排队/报阻塞']) {
+  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status manage']) {
     assert.equal(countIn(resident, phrase), 1, '上收口径应只出现 1 次: ' + phrase);
     assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复: ' + phrase);
     assert.equal(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), false, 'TEAM_LEAD 不应重复: ' + phrase);
@@ -289,8 +289,9 @@ test('v0.9.0 批次4 P3：root 常驻合计预算（≤11360 且 ≥11000，防�
   const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
   // 批次4 实测 11,324；C9 两段式用户门后 11,331；C10 删退役档协议句后 ≈11,251；
   // v0.10.x 台账完成确认门新增一句后实测 11,452 → 上限按实测+~1% 上调到 11,560；下限 11,000 防删过头。
-  // v0.11 P0-E 容量线独立配置（协议 55% 口径）后实测 11,594 → 上限同步到 11,620。
-  assert.ok(resident <= 11620, 'root 常驻合计超预算: ' + resident);
+  // v0.11 P0-E 容量线独立配置（协议 55% 口径）后实测 11,594 → 上限 11,620；
+  // v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 11,704 → 上限同步到 11,720。
+  assert.ok(resident <= 11720, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
 
@@ -386,8 +387,8 @@ test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁�
 
 test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，退役档/两段式句已删', () => {
   // 预算与短语：v0.10.0 删掉退役档（压缩→新会话/两段式）句与 LONG 派生后，base 仍承载全部硬约束。
-  // v0.11 P0-E 容量保全线改为默认 55% 独立配置（含「不自动压缩」）后实测 6,490 → 预算同步到 6,500。
-  assert.ok(PROTOCOL_TEXT.length <= 6500, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  // v0.11 P0-E 容量线 55% 后实测 6,490；v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 6,552 → 预算同步到 6,560。
+  assert.ok(PROTOCOL_TEXT.length <= 6560, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision']) {
     assert.ok(!PROTOCOL_TEXT.includes(retiredPhrase), '退役句不得回到常驻协议: ' + retiredPhrase);
   }
