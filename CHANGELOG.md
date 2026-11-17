@@ -1,6 +1,6 @@
 # Changelog
 
-面向使用者的版本变更记录（每个版本更新了什么）。内部设计、验收、审计与研究文档不随发布提供。
+面向使用者的版本变更记录（每个版本更新了什么）。内部设计草稿、验收、审计与研究记录不随发布提供（公开架构/迁移文档见 docs/design）。
 
 ## v0.11.0 (2026-11-17)
 
@@ -44,7 +44,7 @@
 
 ### 验证与未验证
 
-- 全量测试与 `npm run check` / `npm pack --dry-run` 见本次收尾回执（.scratch/context-relay/reports/b7-changelog.md）。
+- 验证：全量测试 **935/935** 通过（`node --test test/*.test.mjs`）、`npm run check` exit 0、`npm pack --dry-run` 产出 `dsh-context-relay-0.11.0.tgz`（51 files）。
 - 真机 V1–V8 未授权未跑：34 存量清理与可见性、spawn 关与 reset 复用、主动提醒、容量 55%、reopen 真实相位、宿主压缩归因、8 人上限、reset/wipe seam。
 - 已知限制：容量线调低于 relay 时容量 notice 不带排序提示（仅 `relay_status` 文本提示）；窗口未知时容量不判定；reopen 计数冷启动（投影可用）可能先报 0；catalog 不删名。
 
