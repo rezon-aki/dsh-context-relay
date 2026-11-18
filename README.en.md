@@ -160,6 +160,10 @@ The most expensive mistake in a long task is starting to write before the route 
 - **The switch:** the small "architect" pill next to "unlimited budget" in the composer (relay sessions only, on by default) controls per session whether route design is handed to the architect.
 - **The model:** open the composer's model picker; under **Model / effort** there are two more rows, **Architect model / Architect effort**. They follow the model you picked by default and can be set separately (an explicit choice has to be inside the official subagent allowlist).
 
+![Architect model selection](docs/images/architect-model-menu.png)
+
+Set the architect model / reasoning effort in the composer's model menu; follows your model by default, can be set separately.
+
 ## The work ledger: its own phase-level to-do list
 
 Long tasks drift as they run: the agent forgets what it set out to do and how far it got. The ledger turns "what has to be finished in this phase" into a list:
