@@ -160,7 +160,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 - **开关**：输入框里「预算无上限」旁边的「架构师」小胶囊（只对接力会话显示，默认开），按会话控制是否把路线交给架构师；
 - **模型**：点开输入框的模型选择器，「模型 / 推理等级」下面有「架构师模型 / 架构师推理等级」两行，默认跟随你选的模型，也可以单独指定（显式指定需在官方子代理白名单内）。
 
-![架构师模型选择](docs/images/architect-model-menu.png)
+![架构师模型选择](https://github.com/rezon-aki/dsh-context-relay/blob/main/docs/images/architect-model-menu.png?raw=true)
 
 在输入框的模型菜单里设置「架构师模型 / 架构师推理等级」；默认跟随你的模型，也可单独指定。
 
