@@ -1,6 +1,6 @@
 # dsh-context-relay
 
-> A two-layer agent suite built on official subagents: a Leader who owns the conversation with you and runs the team; documents kept in order and memory chained across sessions; only the context that is actually needed, with documents fetched on demand; the whole team working efficiently at low context; drift and corner-cutting caught and verified; human interaction tuned; and only the verification that is truly needed — heavy testing only with your consent.
+> An agent suite with a two-layer architecture built on official subagents: a Leader dedicated to interfacing with you and managing the team; document governance and chained memory; only the minimum necessary context, with documents fetched on demand; the whole team working efficiently at low context; implementation drift and corner-cutting corrected and verified; human interaction tuned; and only the minimum necessary verification — heavy testing only with your consent; plus a dedicated architect with independently configurable model and reasoning effort, ultra-low-context, contamination-free and burden-free, who finalizes the engineering implementation; and the one-line hint "your token budget is unlimited" to strengthen dsh41f's depth of thought.
 
 [中文](README.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [Changelog](CHANGELOG.md) · [Migration](docs/design/MIGRATION.md) · MIT
 
