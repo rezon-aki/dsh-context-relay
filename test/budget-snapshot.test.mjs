@@ -182,7 +182,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [370, 7167],
+  relay_phase: [370, 7513],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
@@ -197,8 +197,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（w6b relations 后：desc 5,504 / params 19,889 / schema 25,393；含 w2 risk 与 w1 design_gate 回显字段）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5504, params: 19889, schema: 25393 };
+/** 15 工具 schema 合计（fix-p1 risk 判档描述后：desc 5,504 / params 20,235 / schema 25,739；含 w2 risk 与 w1 design_gate 回显字段）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5504, params: 20235, schema: 25739 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -239,9 +239,11 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测；
  * w1 设计门回显/深度模板后 lead 协议 +534、architect 协议 +77，relay_phase schema 同步实测；
  * w3 说人话后 protocol 回执句 +11、router 回执段 +7、teammate 协议 +32（仍 ≤7200/≤2000/≤1300 字符预算）；
- * w5 角色注入裁剪后：teammate 裁 relay_doc+ask_user（-1,255 schema）、architect 裁 ask_user、
- * worker 只留 doc_lint（1,948→257 schema）；human-loop 不再全局注册，只在 Lead 的 agent scope 注册；
+ * w5 角色注入裁剪后：teammate/architect/worker 裁 ask_user；human-loop 不再全局注册，只在 Lead 的 agent scope 注册；
  * w6b relations 后 relay_doc desc +40 / params +10：lead 与 architect 工具面同步 +50（teammate/worker 无 relay_doc）。
+ * fix-p1 角色矩阵按审计 §2.6 修正：doc_lint 只 Lead；teammate/worker 保留 relay_doc；architect/worker 裁 relay_status。
+ *   → teammate: status+phase+doc+checkpoint+freshen（12,509 schema）；architect: doc+checkpoint（2,850）；
+ *   worker: 只 relay_doc（1,305）；Lead 不变（13 工具，22,826 schema / relay_phase params 7,513）。
  */
 const ROLE_SNAPSHOT = {
   lead: {
@@ -261,8 +263,8 @@ const ROLE_SNAPSHOT = {
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
     toolDescChars: 4750,
-    toolSchemaChars: 22480,
-    totalChars: 34748,
+    toolSchemaChars: 22826,
+    totalChars: 35094,
   },
   teammate: {
     sections: [
@@ -272,12 +274,12 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 1308,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_doc', 'ask_user_question'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
-    tools: ['relay_status', 'relay_phase', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
-    toolDescChars: 1580,
-    toolSchemaChars: 11115,
-    totalChars: 12423,
+    tools: ['relay_status', 'relay_phase', 'relay_doc', 'relay_checkpoint', 'relay_freshen'],
+    toolDescChars: 1815,
+    toolSchemaChars: 12509,
+    totalChars: 13817,
   },
   architect: {
     sections: [
@@ -287,12 +289,12 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 783,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'ask_user_question'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint'],
-    tools: ['relay_status', 'relay_doc', 'doc_lint', 'relay_checkpoint'],
-    toolDescChars: 1139,
-    toolSchemaChars: 3515,
-    totalChars: 4298,
+    tools: ['relay_doc', 'relay_checkpoint'],
+    toolDescChars: 683,
+    toolSchemaChars: 2850,
+    totalChars: 3633,
   },
   worker: {
     sections: [
@@ -302,12 +304,12 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 386,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'relay_doc', 'ask_user_question'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: [],
-    tools: ['doc_lint'],
-    toolDescChars: 110,
-    toolSchemaChars: 257,
-    totalChars: 643,
+    tools: ['relay_doc'],
+    toolDescChars: 345,
+    toolSchemaChars: 1305,
+    totalChars: 1691,
   },
 };
 

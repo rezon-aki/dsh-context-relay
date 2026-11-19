@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
-import { SUBAGENT_ASK_USER_DENY, TEAMMATE_DOC_DENY, WORKER_RELAY_DENY } from '../lib/plane/roles.js';
+import { SUBAGENT_ASK_USER_DENY, SUBAGENT_DOC_LINT_DENY, SUBAGENT_STATUS_DENY } from '../lib/plane/roles.js';
 import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
@@ -93,9 +93,9 @@ function agentListener(f) {
 }
 
 /** w5 角色 deny 期望（顺序 = roles.js 表内 deny 组顺序）。 */
-const TEAMMATE_DENY = [...LEAD_ONLY_TOOLS, ...TEAMMATE_DOC_DENY, ...SUBAGENT_ASK_USER_DENY];
-const ARCHITECT_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_ASK_USER_DENY];
-const WORKER_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY];
+const TEAMMATE_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY];
+const ARCHITECT_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY];
+const WORKER_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY];
 
 test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执契约齐全', () => {
   const text = ROUTER_PROTOCOL_TEXT;
@@ -751,7 +751,7 @@ test('v0.2.17 D：fail-open——relay_phase 未注册时只 warn，B 与影子�
   const calls = [];
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections, { restrictThrows: new Set(['relay_phase']) }) });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY], 'relay_phase 未注册 → 跳过，其余仍裁');
+  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], 'relay_phase 未注册 → 跳过，其余仍裁');
   assert.ok(f.warns.some((line) => line.includes('subagent restrict: no tools restricted')), 'D 全部失败应 warn（不静默）');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议不受 D 失败影响');
   // agent.ctx 缺失：两段 restrict 均只 warn、不抛（不阻断会话创建）

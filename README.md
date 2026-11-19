@@ -57,7 +57,7 @@
 - **版本要求**：DSH `>=0.2.2-rc.2`（只支持这一代内核）、Node.js `>=20`；目前只在 DSH Web 环境验证过，headless 未验证。
 - **v0.10.0 是破坏性版本**：旧的 classic `relay` 别名、双模式配置、旧配置键都已删除，面板授权契约版本升到 3（升级后旧授权一次性失效，模式和架构师设置保留）。升级前先看[迁移说明](docs/design/MIGRATION.md)。
 - **v0.11.0 调整默认值**：容量线 55%（独立配置）、spawn 默认关、默认只显示当前小队、ship 后返修需显式 reopen、宿主压缩兜底；完整变更见 [CHANGELOG.md](CHANGELOG.md) 与迁移说明。
-- **v0.12.0 细化行为（无迁移）**：按风险配门禁（T0 文档改动可免设计门与独立审查，T2 全门）、T2 设计门回显用户原话与不做清单、输出统一四段式、文档索引 A/B/C 分层与注入计量、按角色裁剪工具与技能、constraints/contracts/relations 语义层；完整变更见 [CHANGELOG.md](CHANGELOG.md)。
+- **v0.12.0 细化行为（无迁移）**：按风险配门禁（T0 文档改动可免设计门与独立审查，但须带实际 diff 证据；T2 全门）、T2 设计门回显用户原话与不做清单、输出统一四段式、文档索引 A/B/C 分层与注入计量、按角色裁剪工具与技能、constraints/contracts/relations 语义层；完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 安装
 
@@ -139,7 +139,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 验收默认只做最小必要：跑目标测试 + 一次独立 diff 审查 +（必要时）一次语法检查。全量回归、真机验证、大样本、多轮审查这类「重型验证」默认不做，需要你明确同意。
 
-- **按风险配门禁**：改动分 T0（文档/琐碎）、T1（局部代码）、T2（公开面/数据格式/权限/不可逆或大改）。T0 可跳过设计门与独立审查，T1 保留一次 diff 审查，T2 全门照旧；分级可以随 `relay_phase` 的 `risk` 显式指定，也可以自动判定（未知按 T2 保守处理）。
+- **按风险配门禁**：改动分 T0（文档/琐碎）、T1（局部代码）、T2（公开面/数据格式/权限/不可逆或大改）。T0 可跳过设计门与独立审查，但必须带实际 diff 证据（`paths` + `lines`，仅文档且 ≤20 行；只写 reason 会降为 T1）；T1 保留一次 diff 审查（同 diff 复用审查结论须带 `diff_hash`，reopen/新任务清空）；T2 全门照旧。用户可见行为、工具 schema/返回契约、`lib/index.js` 等公开面自动升 T2；分级可随 `relay_phase` 的 `risk` 显式指定，也可自动判定（未知按 T2 保守处理）。
 
 ### 汇报与提问
 
@@ -153,7 +153,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 - **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认关闭**，优先复用现有人手；没有可用队员时，让现有队员清空复用、把历史成员纳入小队（adopt），或 phase 边界交接重建。
 - **Lead 只做调度**：拆活、派活、验收；具体实现交给队友。队友会收到一张标准派活单：目标、必读材料、能改哪些文件、怎么验收、回执放哪。
-- **按角色裁剪**：human-loop 技能只注册给接力 Lead；worker 不再拿到 `relay_status`/`relay_doc`，teammate 不再拿到 `relay_doc`；需要人拍板的问题（`ask_user_question`）只给 Lead。工具名与参数不变。
+- **按角色裁剪**：human-loop 技能只注册给接力 Lead；`doc_lint` 与需要人拍板的问题（`ask_user_question`）只给 Lead；teammate/worker 保留 `relay_doc`（brief/handoff 的有界读），架构师与 worker 不再拿到 `relay_status`。工具名与参数不变。
 - **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
 - **不会一直催队友**：队友的回执会自动送达，Lead 不会空转轮询（省 token）。
 
@@ -284,7 +284,7 @@ npm run check   # 全部入口语法检查
 
 ### 工具与接口
 
-共 15 个工具：7 个常驻 + `doc_lint` + 5 个 Lead 专属 + 2 个队友/架构师工具。工具面按角色裁剪：Lead 不装执行工具（`bash`/`pwsh`/`write`/`edit` 被隐藏），队友不装 Lead-only 工具，普通子代理只有最小三件套。
+共 15 个工具：7 个常驻 + `doc_lint` + 5 个 Lead 专属 + 2 个队友/架构师工具。工具面按角色裁剪：Lead 不装执行工具（`bash`/`pwsh`/`write`/`edit` 被隐藏），`doc_lint` 只给 Lead；队友保留 status/phase/doc 与 checkpoint/freshen，worker 只保留 `relay_doc`，架构师与 worker 不拿 `relay_status`。
 
 | 工具 | 作用 |
 |---|---|

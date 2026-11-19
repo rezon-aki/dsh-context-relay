@@ -11,9 +11,9 @@ import {
   PROTOCOL_SECTION_NAME,
   ROLES,
   SUBAGENT_ASK_USER_DENY,
+  SUBAGENT_DOC_LINT_DENY,
   SUBAGENT_ONLY_HIDDEN_TOOLS,
-  TEAMMATE_DOC_DENY,
-  WORKER_RELAY_DENY,
+  SUBAGENT_STATUS_DENY,
   delegationDepthOf,
   roleOfAgent,
 } from '../lib/plane/roles.js';
@@ -69,21 +69,29 @@ test('协议文本单一真源：roles 段直接引用 protocol.js / worker.js�
   }
 });
 
-test('deny 清单：root 只裁执行类；队友裁 lead-only + doc + ask_user；架构师裁 lead-only + phase + ask_user；worker 再裁 status/doc', () => {
+test('deny 清单：doc_lint 只 Lead；teammate/worker 保留 relay_doc；architect/worker 裁 relay_status', () => {
   assert.deepEqual(ROLES.lead.deny.map((group) => group.names), [ROUTER_DENY_TOOLS]);
   assert.deepEqual([...LEAD_ONLY_TOOLS], ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items']);
   assert.deepEqual([...SUBAGENT_ONLY_HIDDEN_TOOLS], ['relay_phase']);
   assert.deepEqual([...SUBAGENT_ASK_USER_DENY], ['ask_user_question']);
-  assert.deepEqual([...TEAMMATE_DOC_DENY], ['relay_doc']);
-  assert.deepEqual([...WORKER_RELAY_DENY], ['relay_status', 'relay_doc']);
-  assert.deepEqual(ROLES.teammate.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, TEAMMATE_DOC_DENY, SUBAGENT_ASK_USER_DENY]);
-  assert.deepEqual(ROLES.architect.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, SUBAGENT_ASK_USER_DENY]);
-  assert.deepEqual(ROLES.worker.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, WORKER_RELAY_DENY, SUBAGENT_ASK_USER_DENY]);
-  // 不变量：ask_user 不在 Lead 的 deny 里；所有非 Lead 角色都裁掉它。
-  assert.ok(!ROLES.lead.deny.some((group) => group.names.includes('ask_user_question')));
+  assert.deepEqual([...SUBAGENT_DOC_LINT_DENY], ['doc_lint']);
+  assert.deepEqual([...SUBAGENT_STATUS_DENY], ['relay_status']);
+  assert.deepEqual(ROLES.teammate.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_DOC_LINT_DENY, SUBAGENT_ASK_USER_DENY]);
+  assert.deepEqual(ROLES.architect.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, SUBAGENT_STATUS_DENY, SUBAGENT_DOC_LINT_DENY, SUBAGENT_ASK_USER_DENY]);
+  assert.deepEqual(ROLES.worker.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, SUBAGENT_STATUS_DENY, SUBAGENT_DOC_LINT_DENY, SUBAGENT_ASK_USER_DENY]);
+  // 不变量：doc_lint/ask_user 只在 Lead 可见；teammate/worker 保留 relay_doc；architect/worker 不拿 relay_status。
+  assert.ok(!ROLES.lead.deny.some((group) => group.names.includes('doc_lint')));
   for (const role of ['teammate', 'architect', 'worker']) {
+    assert.ok(ROLES[role].deny.some((group) => group.names.includes('doc_lint')), role + ' 必须裁掉 doc_lint');
     assert.ok(ROLES[role].deny.some((group) => group.names.includes('ask_user_question')), role + ' 必须裁掉 ask_user_question');
   }
+  for (const role of ['teammate', 'worker']) {
+    assert.ok(!ROLES[role].deny.some((group) => group.names.includes('relay_doc')), role + ' 必须保留 relay_doc（brief/handoff 有界读）');
+  }
+  for (const role of ['architect', 'worker']) {
+    assert.ok(ROLES[role].deny.some((group) => group.names.includes('relay_status')), role + ' 不拿 relay_status');
+  }
+  assert.ok(!ROLES.teammate.deny.some((group) => group.names.includes('relay_status')), 'teammate 保留 relay_status（band 决策）');
   // 旧导出名从 agent.js 继续可用（router.test 等消费），且与单一真源同值。
   assert.deepEqual([...LEGACY_LEAD_ONLY], [...LEAD_ONLY_TOOLS]);
   assert.deepEqual([...LEGACY_SUBAGENT_HIDDEN], [...SUBAGENT_ONLY_HIDDEN_TOOLS]);

@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Context Relay 操作手册
 
-> **v0.12.0 新增**：① **风险分级**——T0/T1/T2 与门禁矩阵（T0 文档改动免设计门/独立审查，T2 全门，未知保守 T2）；② **设计回显**——T2 设计门必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条），T0 一段 / T1 一页 / T2 七段；③ **说人话**——notice/报错/结果统一四段 `human`，内部键只进 `facts`/结构化字段；④ **文档索引 v2**——在役/决策单列 + 目录分组、A/B/C 分层、legend/health 与注入计量；⑤ **角色裁剪**——human-loop 与 `ask_user_question` 只给 Lead，worker/teammate 工具面再裁；⑥ **语义层**——`constraints`/`contracts`/`relations` 标记与 `relay_doc related` 一跳。
+> **v0.12.0 新增**：① **风险分级**——T0/T1/T2 与门禁矩阵（T0 文档改动免设计门/独立审查，但须带实际 diff 证据 `paths`+`lines`，只写 reason 降 T1；T2 全门，未知保守 T2）；② **设计回显**——T2 设计门必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条），T0 一段 / T1 一页 / T2 七段；③ **说人话**——notice/报错/结果统一四段 `human`，内部键只进 `facts`/结构化字段；④ **文档索引 v2**——在役/决策单列 + 目录分组、A/B/C 分层、legend/health 与注入计量；⑤ **角色裁剪**——human-loop、`doc_lint`、`ask_user_question` 只给 Lead；teammate/worker 保留 `relay_doc`，架构师/worker 不拿 `relay_status`；⑥ **语义层**——`constraints`/`contracts`/`relations` 标记与 `relay_doc related` 一跳。
 >
 > **v0.11.0 更新**：① **主动管理**——新 phase/新任务起点自查；到线四档（起点主动 / warn 现在动手 / organize·relay 兜底 / capacity 55% 最坏兜底），warn 不再推荐继续。② **固定小队**——默认上限 8（含架构师）、spawn 默认关、换人=reset 全清复用、`relay_team_status manage` 做 retire/adopt，默认视图只 squad。③ **ship 受控 reopen**——ship→build/verify 必须显式 `reopen{reason,user_approved:true}`，ship→discover 标 newTask。④ **容量线独立**——`settings.capacityThreshold` 默认 55%。⑤ **宿主压缩兜底**——host 归因写最小恢复快照+一次 notice（unknown 只日志）。
 >
@@ -122,6 +122,7 @@ disable-model-invocation: true
 - **v0.2.15：通常由插件自动跑**——relay_organize 在压缩前、relay_handoff 在生成交接单时自动执行并把结论并入 brief/evidence；模型无需为「压缩后必跑」额外调用，需补充检查时再手动跑。
 - `paths` 只接受 **workspace 相对路径**（绝对/`~`/`..`/符号链接越界 → WARN，且不读取工作区外文件）。
 - git 检查目标 = 工作区 `AGENTS.md` + 本工作区约定的 `docs/machine.md`/`docs/workflow.md`（存在才纳入）+ `paths` 额外文档；ignored 文件报 WARN（带规则来源）而不是 PASS；探测不到 = UNKNOWN（不是 ok）。部署级额外文档可经 `options.extraDocs`（代码级）传入，host config 通道留待后续。
+- **角色装配**：`doc_lint` 只随 Lead 装配（队友/架构师/worker 工具面已裁掉）；文档体检由 Lead 在收口/交付时统一跑，结果并入 brief/evidence。
 
 ## 队友保鲜（唯一生产模式；真清空、记录分区、手动重建）
 

@@ -57,7 +57,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - **Version requirements:** DSH `>=0.2.2-rc.2` (this kernel generation only), Node.js `>=20`. It has only been verified in the DSH Web environment; headless is untested.
 - **v0.10.0 is a breaking release.** The old classic `relay` alias, the dual-mode configuration and the old config keys are all gone, and the panel authorization contract moves to version 3 (old authorizations expire once after the upgrade; mode and architect settings are kept). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
 - **v0.11.0 changes defaults:** capacity 55% (independently configured), spawn off, squad-only display by default, explicit reopen for post-delivery repair, and host-compaction fallback. See [CHANGELOG.md](CHANGELOG.md) and the migration guide.
-- **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), four-part plain-language output, a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
+- **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review, but only with actual diff evidence; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), four-part plain-language output, a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -139,7 +139,7 @@ Every phase has a clear start and a clear finish. Two things have to line up bef
 
 Acceptance stays minimal by default: run the target tests, do one independent diff review, and (if needed) one syntax check. Heavy verification — a full regression suite, real-device runs, large samples, several review rounds — isn't done by default and needs your explicit approval.
 
-- **Gates follow risk:** changes are graded T0 (docs/trivial), T1 (local code) or T2 (public surface / data format / permissions / irreversible / large change). T0 may skip the design gate and the independent review; T1 keeps one diff review; T2 keeps every gate. You can set the tier explicitly with `relay_phase`'s `risk`, or let it be classified automatically (unknown signals fall back to T2).
+- **Gates follow risk:** changes are graded T0 (docs/trivial), T1 (local code) or T2 (public surface / data format / permissions / irreversible / large change). T0 may skip the design gate and the independent review but needs actual diff evidence (`paths` + `lines`, docs-only and ≤20 lines; a reason alone downgrades to T1); T1 keeps one diff review (reusing a conclusion for the same diff requires `diff_hash`; reopen/new task clears it); T2 keeps every gate. User-visible behaviour, tool schema/return contracts and public surfaces such as `lib/index.js` are auto-upgraded to T2. You can set the tier explicitly with `relay_phase`'s `risk`, or let it be classified automatically (unknown signals fall back to T2).
 
 ### Reports and questions
 
@@ -153,7 +153,7 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 
 - **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate, adopt a historical member, or rebuild the team at a phase boundary.
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
-- **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead; workers no longer receive `relay_status`/`relay_doc`, and teammates no longer receive `relay_doc`; questions meant for a human (`ask_user_question`) go to the Lead only. Tool names and parameters are unchanged.
+- **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead; `doc_lint` and questions meant for a human (`ask_user_question`) go to the Lead only; teammates and workers keep `relay_doc` (bounded reads of briefs/handoffs), while the architect and workers no longer receive `relay_status`. Tool names and parameters are unchanged.
 - **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
 - **It doesn't hover over teammates:** reports arrive automatically, so the Lead doesn't spin in a polling loop — which saves tokens.
 
@@ -284,7 +284,7 @@ Deeper design and implementation notes live in:
 
 ### Tools and endpoints
 
-15 tools in total: 7 always available + `doc_lint` + 5 Lead-only + 2 for teammates and the architect. Tools are trimmed by role: the Lead doesn't get the execution tools (`bash`/`pwsh`/`write`/`edit` are hidden), teammates don't get Lead-only tools, and ordinary subagents get only a minimal three-tool set.
+15 tools in total: 7 always available + `doc_lint` + 5 Lead-only + 2 for teammates and the architect. Tools are trimmed by role: the Lead doesn't get the execution tools (`bash`/`pwsh`/`write`/`edit` are hidden); `doc_lint` is Lead-only; teammates keep status/phase/doc plus checkpoint/freshen; workers keep only `relay_doc`; the architect and workers don't get `relay_status`.
 
 | Tool | What it does |
 |---|---|

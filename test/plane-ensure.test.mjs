@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
 import { clearPlaneMemory, disposeAllPlanes, disposePlane, ensureAgentPlane, isPlaneTracked, planeStatusOf } from '../lib/plane/ensure.js';
-import { LEAD_ONLY_TOOLS, ROLES, SUBAGENT_ASK_USER_DENY, SUBAGENT_ONLY_HIDDEN_TOOLS, TEAMMATE_DOC_DENY, WORKER_RELAY_DENY } from '../lib/plane/roles.js';
+import { LEAD_ONLY_TOOLS, ROLES, SUBAGENT_ASK_USER_DENY, SUBAGENT_DOC_LINT_DENY, SUBAGENT_ONLY_HIDDEN_TOOLS, SUBAGENT_STATUS_DENY } from '../lib/plane/roles.js';
 import { ARCHITECT_WORKER_PROTOCOL_TEXT, ROUTER_DENY_TOOLS, TEAMMATE_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 
@@ -134,7 +134,7 @@ test('ensureAgentPlane 按角色表装配：teammate/architect/worker 的 deny/s
   };
   const teammate = scopedAgent({ sessionId: 'session-plane-teammate', header: { origin: 'subagent', delegationDepth: 1 } });
   assert.equal(ensureAgentPlane(teammate.agent, runtime).role, 'teammate');
-  assert.deepEqual(teammate.state.restricted, [...LEAD_ONLY_TOOLS, ...TEAMMATE_DOC_DENY, ...SUBAGENT_ASK_USER_DENY], '队友裁 lead-only + doc + ask_user');
+  assert.deepEqual(teammate.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], '队友裁 lead-only + doc_lint + ask_user（保留 relay_status/relay_doc）');
   assert.deepEqual(teammate.state.registered, ['relay_checkpoint', 'relay_freshen']);
   assert.deepEqual(teammate.state.skills, [], '队友不装配 human-loop（角色技能只给 Lead）');
   assert.equal(teammate.state.sections[0].text, TEAMMATE_PROTOCOL_TEXT);
@@ -142,7 +142,7 @@ test('ensureAgentPlane 按角色表装配：teammate/architect/worker 的 deny/s
   const architectRuntime = { ...runtime, isArchitect: () => true };
   const architect = scopedAgent({ sessionId: 'session-plane-arch', header: { origin: 'subagent', parentSession: 'lead', delegationDepth: 1 } });
   assert.equal(ensureAgentPlane(architect.agent, architectRuntime).role, 'architect');
-  assert.deepEqual(architect.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_ASK_USER_DENY], '架构师裁 lead-only + phase + ask_user');
+  assert.deepEqual(architect.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], '架构师裁 lead-only + phase + status + doc_lint + ask_user');
   assert.deepEqual(architect.state.registered, ['relay_checkpoint'], '架构师只拿 checkpoint');
   assert.deepEqual(architect.state.skills, [], '架构师不装配 human-loop');
   assert.equal(architect.state.sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT);
@@ -150,7 +150,7 @@ test('ensureAgentPlane 按角色表装配：teammate/architect/worker 的 deny/s
   const worker = scopedAgent({ sessionId: 'session-plane-worker', header: { origin: 'subagent', delegationDepth: 2 } });
   const workerResult = ensureAgentPlane(worker.agent, runtime);
   assert.equal(workerResult.role, 'worker');
-  assert.deepEqual(worker.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY], 'worker 裁 lead-only + phase + status/doc + ask_user');
+  assert.deepEqual(worker.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], 'worker 裁 lead-only + phase + status + doc_lint + ask_user（保留 relay_doc）');
   assert.deepEqual(worker.state.registered, [], 'worker 不注册角色工具');
   assert.deepEqual(worker.state.skills, [], 'worker 不装配 human-loop');
   assert.deepEqual(worker.state.sections.map((section) => section.name), ['context-relay:protocol']);
