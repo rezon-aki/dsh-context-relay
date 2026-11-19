@@ -231,19 +231,20 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   totalChars = sectionChars + toolSchemaChars（每请求常驻注入总量）。
  * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符；
  * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测；
- * w1 设计门回显/深度模板后 lead 协议 +534、architect 协议 +77，relay_phase schema 同步实测。
+ * w1 设计门回显/深度模板后 lead 协议 +534、architect 协议 +77，relay_phase schema 同步实测；
+ * w3 说人话后 protocol 回执句 +11、router 回执段 +7、teammate 协议 +32（仍 ≤7200/≤2000/≤1300 字符预算）。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 7086],
+      ['context-relay:protocol', 7097],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1840],
       ['context-relay:architect', 693],
-      ['context-relay:router', 1992],
+      ['context-relay:router', 1999],
       ['context-relay:team-lead', 624],
     ],
-    sectionChars: 12250,
+    sectionChars: 12268,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
@@ -252,22 +253,22 @@ const ROLE_SNAPSHOT = {
     ],
     toolDescChars: 4710,
     toolSchemaChars: 22430,
-    totalChars: 34680,
+    totalChars: 34698,
   },
   teammate: {
     sections: [
-      ['context-relay:protocol', 1261],
+      ['context-relay:protocol', 1293],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 0],
       ['context-relay:architect', 0],
     ],
-    sectionChars: 1276,
+    sectionChars: 1308,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: ['relay_status', 'relay_phase', 'relay_doc', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
     toolDescChars: 1885,
     toolSchemaChars: 12370,
-    totalChars: 13646,
+    totalChars: 13678,
   },
   architect: {
     sections: [

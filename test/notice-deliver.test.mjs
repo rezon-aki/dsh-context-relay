@@ -155,7 +155,7 @@ test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入
     type: 'user/message',
     seq: 3,
     data: {
-      content: [{ type: 'text', text: '[context-relay] phase 边界 · build → verify（phase 完成仍超线，非用户发言）· phase=verify band=warn used=40%\n按面板模式「继续」放行本次切换（模式保持）；phase 完成后仍超线，注意下一次继续方式。' }],
+      content: [{ type: 'text', text: '结论：阶段边界 · 构建 → 验证（本阶段完成时仍超线：上下文 40%，非用户发言）。\n影响：已放行本次切换；按面板模式「继续」放行本次切换（模式保持）；phase 完成后仍超线，注意下一次继续方式。\n需要你做什么：继续下一阶段；到下一个阶段边界前注意管理上下文。\n证据：面板「接力」chip 的实时用量' }],
       source: { kind: 'dsh-context-relay', form: 'notice', summary: '[context-relay] phase 边界 · band=warn · 完成仍超线（非用户发言）' },
     },
   }];

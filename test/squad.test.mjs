@@ -416,16 +416,16 @@ test('adopt：legacy 纳入 squad 后默认视图可见、可派活、可 reset�
 
 test('P0-D review 修复：到线兜底含「先 relay_status」；organize/relay 恢复 doc_lint 句；capacity 含面板模式', () => {
   const organize = sentinelText('build', { band: 'organize', ratio: 0.36 }, false, { defaultOperation: 'compress' });
-  assert.match(organize, /先 relay_status/);
-  assert.match(organize, /doc_lint 由插件自动跑（并入 brief\/evidence）/);
+  assert.match(organize, /先看当前档位与余量/);
+  assert.match(organize, /文档体检由插件自动跑（结果并入交接摘要）/);
   const relay = sentinelText('build', { band: 'relay', ratio: 0.46 }, false, { defaultOperation: null });
-  assert.match(relay, /先 relay_status/);
-  assert.match(relay, /doc_lint 由插件自动跑/);
+  assert.match(relay, /先看当前档位与余量/);
+  assert.match(relay, /文档体检由插件自动跑/);
   const warn = sentinelText('build', { band: 'warn', ratio: 0.31 }, false, {});
-  assert.match(warn, /先 relay_status/);
-  assert.doesNotMatch(warn, /doc_lint 由插件自动跑/, 'doc_lint 句只在 organize/relay 兜底档');
+  assert.match(warn, /先看当前档位与余量/);
+  assert.doesNotMatch(warn, /文档体检由插件自动跑/, '文档体检句只在 organize/relay 兜底档');
   const capacity = capacityNoticeText({ ratio: 0.56, threshold: 0.55 }, { defaultOperation: 'compress' });
-  assert.match(capacity, /先 relay_status/);
+  assert.match(capacity, /先看当前档位与余量/);
   assert.match(capacity, /面板模式=压缩继续/);
   assert.match(capacity, /不自动执行（不自动压缩\/不自动接力）/);
 });

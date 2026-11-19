@@ -328,7 +328,7 @@ test('冷启动/热重载：guard 丢失后首步汇总一次（focus+上下文+
   assert.equal(injected.length, 1, '重启后首步汇总一次');
   const text = injected[0].content[0].text;
   assert.match(text, /\[台账·build 0\/1\]/);
-  assert.match(text, /\[上下文\] band=organize/);
+  assert.match(text, /\[上下文\] 档位=organize/);
   assert.match(text, /\[队友\] 队友待处理 1：mate-1\(organize\)/);
   assert.ok(text.length <= 900, '汇总批次 ≤900，实际 ' + text.length);
   await step();
@@ -408,7 +408,7 @@ test('批次上限 900：超限先丢 [队友] 再丢 [上下文]，focus/闭环
   assert.doesNotMatch(text, /\[上下文\]/, '仍超限再丢 [上下文]');
   await step(); // 被丢弃的两类下一步补（不推进 guard → 不丢事件）
   assert.equal(injected.length, 2);
-  assert.match(injected[1].content[0].text, /\[上下文\] band=organize/);
+  assert.match(injected[1].content[0].text, /\[上下文\] 档位=organize/);
   assert.match(injected[1].content[0].text, /\[队友\] 队友待处理 1：mate-1\(organize\)/);
   await step();
   assert.equal(injected.length, 2, '补齐后静默');
@@ -453,10 +453,10 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   await step();
   assert.equal(injected.length, 1, '只有需要管理的队友提示一次（同一 step 一条 notice）');
   const text = injected[0].content[0].text;
-  assert.match(text, /\[派活·队友上下文\] mate-1 band=organize/);
+  assert.match(text, /\[派活·队友上下文\] mate-1 档位=organize/);
   assert.match(text, /relay_freshen\(\{reset:true/);
   assert.match(text, /team_note/);
-  assert.doesNotMatch(text, /mate-2 band=/);
+  assert.doesNotMatch(text, /mate-2 档位=/);
   const snapshot = readTeamContext(cwd, 'session-dispatch-lead');
   assert.deepEqual(snapshot.pending.map((row) => row.name), ['mate-1']);
   await step();
@@ -480,7 +480,7 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   await step();
   assert.equal(injected.length, 2, 'band 变化 → 再提示一次');
   assert.match(injected[1].content[0].text, /mate-1\(relay\)/);
-  assert.match(injected[1].content[0].text, /\[派活·队友上下文\] mate-1 band=relay/);
+  assert.match(injected[1].content[0].text, /\[派活·队友上下文\] mate-1 档位=relay/);
 
   // 同 step 单条 notice 优先级：到线 notice 与派活提示同 step → 只发 notice，派活提示下一步补（不丢）
   assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
@@ -493,7 +493,7 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   assert.doesNotMatch(injected[2].content[0].text, /\[派活·队友上下文\]/);
   await step();
   assert.equal(injected.length, 4, '下一步补派活提示（不丢）');
-  assert.match(injected[3].content[0].text, /\[派活·队友上下文\] mate-1 band=organize/);
+  assert.match(injected[3].content[0].text, /\[派活·队友上下文\] mate-1 档位=organize/);
 });
 
 test('派活判断点按 (target,band,status) 首次/变化才打断：同状态后续放行；band/status 变化再拦；退休代恒 deny', async () => {

@@ -144,7 +144,7 @@ test('P0-E 验收 3：54% 已有 relay 时无容量 notice；56% 容量 notice �
   await h.step();
   assert.equal(h.noticeTexts('容量保全').length, 1, '56% ≥ 55% → 容量上升沿注入一次');
   const text = h.noticeTexts('容量保全')[0];
-  assert.match(text, /ratio 56\.0%，阈值 55\.0%/);
+  assert.match(text, /56\.0%（容量线 55\.0%）/);
   assert.match(text, /最坏兜底/);
   assert.match(text, /不自动执行（不自动压缩\/不自动接力）/);
   // 同档不重复；回落重置后再次上升沿再提示一次。
@@ -160,9 +160,9 @@ test('P0-E 验收 4：到线与容量同 step 合并为一条 ≤900，文案同
   await h.step();
   assert.equal(h.injected.length, before + 1, '同 step 只注入一条（升 relay + 容量上升沿合并）');
   const text = h.injected.at(-1).content[0].text;
-  assert.match(text, /band=relay/);
+  assert.match(text, /容量最坏兜底/);
   assert.match(text, /容量保全/);
-  assert.match(text, /阈值 55\.0%/);
+  assert.match(text, /容量线 55\.0%/);
   assert.ok(text.length <= NOTICE_MAX, '合并后 ≤900 字符，实际 ' + text.length);
 });
 

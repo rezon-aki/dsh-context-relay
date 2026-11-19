@@ -153,8 +153,8 @@ const ccFact = (over = {}) => ({
 test('planNotices：context-check 分支（面板之后、台账之前）；claim keys；phase+task 合并 ≤900', () => {
   const plan = planNotices(facts({ contextCheck: ccFact() }));
   assert.equal(plan.notice.kind, 'context-check');
-  assert.match(plan.notice.text, /新 phase 开始 · discover → decide/);
-  assert.match(plan.notice.text, /先 relay_status/);
+  assert.match(plan.notice.text, /新阶段开始「探索 → 决策」/);
+  assert.match(plan.notice.text, /先看当前档位与余量/);
   assert.match(plan.notice.text, /四选一/);
   assert.deepEqual(plan.claims.contextCheck, { keys: ['phase:discover>decide#1'] });
   assert.ok(plan.notice.text.length <= NOTICE_MAX);
@@ -162,8 +162,8 @@ test('planNotices：context-check 分支（面板之后、台账之前）；clai
   const merged = planNotices(facts({
     contextCheck: ccFact({ task: { kind: 'goal', key: 'g1' }, keys: ['phase:discover>decide#1', 'task:goal#g1'] }),
   }));
-  assert.match(merged.notice.text, /create_goal/);
-  assert.match(merged.notice.text, /discover → decide/);
+  assert.match(merged.notice.text, /目标/);
+  assert.match(merged.notice.text, /探索 → 决策/);
   assert.deepEqual(merged.claims.contextCheck.keys, ['phase:discover>decide#1', 'task:goal#g1']);
   assert.ok(merged.notice.text.length <= NOTICE_MAX);
 });
@@ -238,9 +238,9 @@ test('sentinel：首个 pre-step 只 seed；phase 变化 1 条、同 phase 重�
   await bundle.step();
   assert.equal(bundle.injected.length, 1);
   const text = bundle.injected[0].content[0].text;
-  assert.match(text, /新 phase 开始 · discover → decide/);
+  assert.match(text, /新阶段开始「探索 → 决策」/);
   assert.match(text, /主路径自查/);
-  assert.match(text, /先 relay_status/);
+  assert.match(text, /先看当前档位与余量/);
   assert.match(text, /四选一/);
   session.setSeq(3);
   await bundle.step();
@@ -259,7 +259,7 @@ test('sentinel：ship → discover 标记「新任务开始」', async () => {
   session.setSeq(2);
   await bundle.step();
   assert.equal(bundle.injected.length, 1);
-  assert.match(bundle.injected[0].content[0].text, /新任务开始 · ship → discover/);
+  assert.match(bundle.injected[0].content[0].text, /新任务开始「交付 → 探索」/);
 });
 
 test('sentinel：ship 段首条真实用户消息 1 条/段；插件 notice 不算；同段后续不重复', async () => {
@@ -278,7 +278,7 @@ test('sentinel：ship 段首条真实用户消息 1 条/段；插件 notice 不�
   session.setSeq(3);
   await bundle.step();
   assert.equal(bundle.injected.length, 1);
-  assert.match(bundle.injected[0].content[0].text, /ship 后首条用户消息/);
+  assert.match(bundle.injected[0].content[0].text, /交付后首条用户消息/);
   session.log.push({ seq: 4, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '再做一点' }] } });
   session.setSeq(4);
   await bundle.step();
@@ -287,8 +287,8 @@ test('sentinel：ship 段首条真实用户消息 1 条/段；插件 notice 不�
 
 test('sentinel：create_goal 与 task_board_run 各 1 条（post-execute 入队，下一步投递）', async () => {
   for (const row of [
-    { name: 'create_goal', result: { goal: { id: 'g1' } }, label: 'create_goal' },
-    { name: 'task_board_run', result: { taskId: 't1' }, label: 'task_board_run' },
+    { name: 'create_goal', result: { goal: { id: 'g1' } }, label: '目标' },
+    { name: 'task_board_run', result: { taskId: 't1' }, label: '任务板' },
   ]) {
     resetShared();
     const cwd = mkdtempSync(join(tmpdir(), 'relay-cc-task-'));
@@ -320,8 +320,8 @@ test('sentinel：phase+task 同一步合并一条；overBudget 跨 phase 抑制'
   await bundle.step();
   assert.equal(bundle.injected.length, 1, 'phase+task 合并一条');
   const text = bundle.injected[0].content[0].text;
-  assert.match(text, /build → verify/);
-  assert.match(text, /task_board_run/);
+  assert.match(text, /构建 → 验证/);
+  assert.match(text, /任务板/);
 
   // overBudget：band=organize 时的 phase 变化不新增 context-check（边界 notice 负责动作）
   resetShared();
@@ -442,7 +442,7 @@ test('sentinel：不同事件间冷却 ≥3 步；blocked/cancel 与恢复同 ph
   session.setSeq(5);
   await bundle.step();
   assert.equal(bundle.injected.length, 2, '间隔达到 3 步后补发');
-  assert.match(bundle.injected[1].content[0].text, /task_board_run/);
+  assert.match(bundle.injected[1].content[0].text, /任务板/);
 
   // 出口不触发；恢复同 phase 不触发。
   resetShared();

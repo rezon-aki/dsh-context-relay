@@ -32,9 +32,11 @@ test('planNotices：Lead 升线 → 一条到线提醒（带台账行），claim
   const plan = planNotices(facts({ ledger: LEDGER_PENDING }));
   assert.equal(plan.rising, true);
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /\[context-relay\] band=organize/);
+  assert.match(plan.notice.text, /^结论：到线提醒（插件 notice，非用户发言）/);
   assert.match(plan.notice.text, /到线提醒（插件 notice，非用户发言）/);
-  assert.match(plan.notice.text, /\n工作台账：未闭合 2 \/ 共 3/);
+  assert.match(plan.notice.text, /工作台账：未闭合 2 \/ 共 3/);
+  assert.doesNotMatch(plan.notice.text, /band=/, '用户文案不带内部键');
+  assert.match(plan.notice.summary, /band=organize/);
   assert.match(plan.notice.summary, /relay 到线提醒/);
   assert.deepEqual(plan.claims.lastBand, { band: 'organize', compactionSeq: -1 });
   assert.ok(plan.notice.text.length <= NOTICE_MAX);
@@ -61,8 +63,9 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
     panelPrevious: undefined,
   }));
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^\[context-relay\] band=organize/);
+  assert.match(plan.notice.text, /^结论：队友会话·到线请示/);
   assert.match(plan.notice.text, /队友会话·到线请示/);
+  assert.doesNotMatch(plan.notice.text, /band=/);
   assert.match(plan.notice.text, /已自动向上一级（Lead）发出请示/);
   assert.doesNotMatch(plan.notice.text, /工作台账/, 'M-12：队友看不到 Lead 台账计数');
   assert.doesNotMatch(plan.notice.text, /relay_work_items/);
@@ -75,7 +78,8 @@ test('planNotices：容量上升沿与到线提醒合并为一条；单独时一
   assert.equal(merged.capacityRising, true);
   assert.equal(merged.notice.kind, 'phase', '与到线提醒同 step 合并（仍是一条）');
   assert.match(merged.notice.text, /容量保全/);
-  assert.match(merged.notice.text, /ratio 56\.0%，阈值 55\.0%/);
+  assert.match(merged.notice.text, /56\.0%（容量线 55\.0%）/);
+  assert.doesNotMatch(merged.notice.text, /band=/);
   assert.deepEqual(merged.claims.capacity, { used: 420000 });
   assert.ok(merged.notice.text.length <= NOTICE_MAX);
 
@@ -143,7 +147,8 @@ test('planNotices：台账批次（焦点 → 上下文 → 闭环 → 队友 �
   const dispatchIdx = text.indexOf('[派活·队友上下文]');
   assert.ok(focusIdx === 0 && bandIdx > focusIdx && closureIdx > bandIdx && teamIdx > closureIdx && dispatchIdx > teamIdx, text);
   assert.match(text, /\[闭环\] 上一步改动未落账：write\(x\.js\)/);
-  assert.match(text, /\[派活·队友上下文\] mate-2 band=organize/);
+  assert.match(text, /\[派活·队友上下文\] mate-2 档位=organize/);
+  assert.doesNotMatch(text, /band=/);
   assert.ok(plan.claims.guard !== undefined);
   assert.equal(plan.claims.guard.focus, plan.claims.guard.focus);
   assert.equal(plan.claims.dropDispatch, true);
@@ -175,10 +180,11 @@ test('planNotices：批次超 900 先丢 [队友] 再丢 [上下文]，焦点/�
 test('planNotices：指标不可用（M-14）一次性保守提示，claim basis 键', () => {
   // v0.10 C6/D-04：bandFor 对指标不可用显式返回 band=unavailable（不再静默 ok）——按生产形状喂入。
   const unavailable = { band: 'unavailable', used: undefined, window: undefined, ratio: undefined, basis: 'unavailable' };
-  assert.match(unavailableNoticeText(), /band=unavailable/);
+  assert.match(unavailableNoticeText(), /不当作 ok/);
+  assert.doesNotMatch(unavailableNoticeText(), /band=/);
   assert.equal(bandLineOf(unavailable, PANEL), '', 'unavailable 不混进台账 [上下文] 行（由 M-14 notice 表达）');
   assert.equal(bandLineOf({ band: 'ok' }, PANEL), '');
-  assert.equal(bandLineOf({ band: 'warn' }, PANEL), '[上下文] band=warn');
+  assert.equal(bandLineOf({ band: 'warn' }, PANEL), '[上下文] 档位=warn');
   const plan = planNotices(facts({
     state: unavailable,
     lastBand: 'ok',

@@ -11,6 +11,7 @@ import { createDelegationTools } from '../lib/agent/delegation-tools.js';
 import { ROUTER_DENY_TOOLS } from '../lib/agent/protocol.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
+import { internalKeysIn, renderFourPart } from '../lib/output.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
@@ -437,6 +438,10 @@ test('relay_status reports phase/band/advice', async () => {
   assert.equal(report.phase, 'discover');
   assert.equal(report.lead.band, 'ok');
   assert.match(report.text, /phase: discover/);
+  // w3 说人话：状态结果带用户四段 human；内部事实进 facts，不混进 human。
+  assert.deepEqual(Object.keys(report.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
+  assert.deepEqual(internalKeysIn(renderFourPart(report.human)), []);
+  assert.equal(report.facts.phase, 'discover');
   // 2026-10-25：organize 档 advice 只挡「开新 phase」，并要求收尾三清单
   const overSession = fakeSession({ id: 'session-advice-organize', seq: 0 });
   const over = fakeServices({ session: overSession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
@@ -477,7 +482,7 @@ test('relay_phase over budget: 面板四分支（continue / compress / handoff /
   assert.equal(panelStateOf('session-panel-continue').defaultOperation, 'continue', '模式持久不消费（下一个到线仍按「继续」）');
   assert.equal(cont.injected.length, 1);
   assert.match(cont.injected[0].source.summary, /phase 边界/);
-  assert.match(cont.injected[0].content[0].text, /phase 完成仍超线/);
+  assert.match(cont.injected[0].content[0].text, /本阶段完成时仍超线/);
   // 同 phase 重复声明不是「开新 phase」：不提醒、不动预设（退役自决字段写入被白名单丢弃）
   updatePanelState('session-panel-continue', { autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
   const same = await cont.call();
@@ -766,7 +771,7 @@ test('reminders: 升线提醒（同档不重复），回退后再升线仍提醒
   assert.ok(message.source.summary.length <= 120, 'summary chars ' + message.source.summary.length);
   assert.match(message.source.summary, /\[context-relay\] band=warn/);
   assert.match(message.content[0].text, /到线提醒（插件 notice，非用户发言）/);
-  assert.match(message.content[0].text, /接力 chip/, 'notice explains the composer panel');
+  assert.match(message.content[0].text, /接力」chip/, 'notice explains the composer panel');
   assert.match(message.content[0].text, /现在就该动手/, 'warn 是可执行建议，不是只告知');
   assert.match(message.content[0].text, /三选一/);
   assert.match(message.content[0].text, /压缩继续/, '三选一含压缩');
@@ -825,10 +830,10 @@ test('面板变更提醒（v0.5.1）：人类改模式/授权后下一次 pre-st
   assert.equal(injected.length, 1, '面板变更 → 一次提醒');
   const text = injected[0].content[0].text;
   assert.match(text, /面板已更新/);
-  assert.match(text, /模式=压缩 ·/);
-  assert.match(text, /autoCompress=on/);
+  assert.match(text, /阶段边界按「压缩继续」/);
+  assert.match(text, /压缩免审批：开/);
   assert.doesNotMatch(text, /autoChoose|autoDecision/, 'C10b：面板变更文案不再拼退役自决字段');
-  assert.match(text, /压缩免审=on（autoCompress）/);
+  assert.match(text, /压缩免审批：开/);
   assert.equal(injected[0].source.form, 'notice');
   assert.ok(injected[0].source.summary.length <= 120);
 
@@ -841,7 +846,7 @@ test('面板变更提醒（v0.5.1）：人类改模式/授权后下一次 pre-st
   await step();
   assert.equal(injected.length, 2, '升线 + 面板变更同一步只发到线提醒');
   assert.match(injected[1].content[0].text, /到线提醒（插件 notice，非用户发言）/);
-  assert.match(injected[1].content[0].text, /autoHandoff=on/, '到线提醒本身带全量面板状态');
+  assert.match(injected[1].content[0].text, /交接免审批=开/, '到线提醒本身带全量面板状态');
   await step();
   assert.equal(injected.length, 2, '被到线提醒覆盖的面板变更不得在下一步补发');
 });
@@ -964,7 +969,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   assert.equal(injected.length, 1, '3 consecutive pre-steps in one band -> exactly one inject');
   // Lead 文案保留：到线提醒 + 面板状态 + phase 优先指引（细节指向常驻协议）
   assert.match(injected[0].content[0].text, /到线提醒（插件 notice，非用户发言）/);
-  assert.match(injected[0].content[0].text, /接力 chip/);
+  assert.match(injected[0].content[0].text, /接力」chip/);
   assert.match(injected[0].content[0].text, /现在就该动手/);
 
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 };
@@ -984,12 +989,13 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   await preStepListener(applyAgent(subServices.services).events)({ agent: { session: sub, inject(message) { subInjected.push(message); } } }, async () => undefined);
   assert.equal(subInjected.length, 1);
   const text = subInjected[0].content[0].text;
-  assert.match(text, /^\[context-relay\] band=organize/);
+  assert.match(text, /^结论：队友会话·到线请示/);
+  assert.match(subInjected[0].source.summary, /band=organize/);
   assert.match(text, /队友会话·到线请示/);
   assert.match(text, /向上一级（Lead \/ 父 agent）请示/, 'no Team service -> tell it to send_message upward');
   assert.match(text, /回执 Lead/);
-  assert.match(text, /relay_organize/);
-  assert.match(text, /不自行 relay_organize\/relay_handoff/);
+  assert.match(text, /不自行压缩\/交接/);
+  assert.doesNotMatch(text, /relay_organize|relay_handoff/);
   assert.match(text, /不向人类提问/);
   assert.ok(!text.includes('向人类要一次 Go/No-go'), 'subagent must not be told to ask the human');
   assert.match(subInjected[0].source.summary, /队友会话到线请示/);
@@ -1056,8 +1062,8 @@ test('reminders: 队友 warn 档只本地提示、不 escalation（减少 Lead �
   await listener({ agent }, async () => undefined);
   assert.equal(sent.length, 0, 'warn 不 escalation');
   assert.equal(injected.length, 1);
-  assert.match(injected[0].content[0].text, /队友到 warn/);
-  assert.match(injected[0].content[0].text, /relay_checkpoint/);
+  assert.match(injected[0].content[0].text, /队友会话·到线提醒/);
+  assert.match(injected[0].content[0].text, /checkpoint/);
 });
 
 test('relay_phase: 队友会话超预算不消费面板预设、不问人类，改为向上级请示', async () => {
@@ -1262,6 +1268,10 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.match(result.summary, /定时任务 3→3 已迁移/);
   assert.match(result.summary, /队友 1→1 已中断/);
   assert.match(result.summary, /子智能体 2→1 已中断/);
+  // w3 说人话：handoff 结果带用户四段 human（sessionId 等内部字段只留结构化结果/facts）。
+  assert.deepEqual(Object.keys(result.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
+  assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
+  assert.equal(result.facts.sessionId, 'session-new');
   // handoff 文件追加交接清单 + 清理结果（首条消息有 handoffPath 指路）
   const handoffFile = readFileSync(result.handoffPath, 'utf8');
   assert.match(handoffFile, /## 交接清单（旧会话残留，自动盘点）/);
@@ -3154,7 +3164,7 @@ test('面板默认操作出现在到线提醒与 relay_status 建议里；autoCh
   assert.equal(injected.length, 1);
   const text = injected[0].content[0].text;
   assert.match(text, /模式=问我/, '退役后按未设模式展示');
-  assert.match(text, /authorizeNext=on/);
+  assert.match(text, /下一次操作授权=开/);
   assert.doesNotMatch(text, /autoChoose=on/, 'autoChoose 退役不再显示 on');
   assert.doesNotMatch(text, /autoChoose/, 'P2-2：模型可见面板行不再出现退役字段 autoChoose');
   assert.doesNotMatch(text, /已记录操作=/, 'autoDecision 退役后不再展示');
@@ -3428,6 +3438,10 @@ test('v0.9.0 P2：relay_phase 成功结果带人类可读 text，output.render �
   assert.ok(!result.text.startsWith('{'), 'text 不是 JSON 包络');
   const rendered = tool.output.render({}, result);
   assert.deepEqual(rendered, [{ type: 'text', text: result.text }], 'render 直接返回 text（模型唯一可见通道）');
+  // w3 说人话：phase 结果带用户四段 human；内部事实（band/headroom）只留 facts。
+  assert.deepEqual(Object.keys(result.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
+  assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
+  assert.equal(result.facts.phase, 'build');
   assert.ok(!rendered[0].text.startsWith('{'), 'render 非 JSON');
   // 防御性 fallback：无 text 的旧值仍回 JSON（不丢结构化事实）。
   assert.equal(tool.output.render({}, { phase: 'build' })[0].text, JSON.stringify({ phase: 'build' }));
@@ -4830,7 +4844,7 @@ test('v0.3.3 到线提醒：Lead notice（warn/organize）带 relay_recommend �
   const step = () => listener({ agent }, async () => undefined);
   await step(); // warn
   assert.equal(injected.length, 1);
-  assert.match(injected[0].content[0].text, /relay_recommend/);
+  assert.doesNotMatch(injected[0].content[0].text, /relay_recommend/, '用户文案不贴工具名');
   // v0.3.4 P2-4：推荐段用面板档位长 label（与 client 推荐行一致）。
   assert.match(injected[0].content[0].text, /模型推荐=接力新会话/);
   assert.match(injected[0].content[0].text, /干净上下文更适合下一阶段/);
@@ -4840,7 +4854,7 @@ test('v0.3.3 到线提醒：Lead notice（warn/organize）带 relay_recommend �
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 };
   await step(); // organize
   assert.equal(injected.length, 2);
-  assert.match(injected[1].content[0].text, /relay_recommend/);
+  assert.doesNotMatch(injected[1].content[0].text, /relay_recommend/);
   assert.match(injected[1].content[0].text, /模型推荐=接力新会话\(/);
   assert.ok(injected[1].content[0].text.includes(longReason.slice(0, 60)), '提醒展示理由前 60 字');
   assert.equal(injected[1].content[0].text.includes(longReason.slice(0, 61)), false, '提醒不展示第 61 字');

@@ -1114,7 +1114,8 @@ test('sentinelText：台账非空 pending>0 时 Lead 正文末尾追加台账行
   const state = { band: 'organize' };
   const ledger = { exists: true, counts: { total: 5, pending: 2, doing: 1, blocked: 1, open: 0, done: 3 } };
   const leadText = sentinelText('build', state, false, undefined, undefined, ledger);
-  assert.match(leadText, /\n工作台账：未闭合 2 \/ 共 5（relay_work_items 查看\/更新；phase 边界前收口）$/);
+  assert.match(leadText, /工作台账：未闭合 2 \/ 共 5（阶段边界前收口）/);
+  assert.doesNotMatch(leadText, /band=/, '用户文案不带内部键');
   assert.doesNotMatch(leadText, /更新于 \d+ 分钟前|已停滞/, '不再按时间提示台账新鲜度');
   // M-12：depth-1 队友工具面没有 relay_work_items，显式传 ledger 也不渲染台账行（不再教用被裁工具/展示 Lead 计数）。
   const subText = sentinelText('build', state, true, undefined, { sent: true }, ledger);
