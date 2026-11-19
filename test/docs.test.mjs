@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  buildDocIndex, checkSessionDocs, docIndexDigest, DOC_LIMITS, parseFrontmatter, readDoc, renderDocIndex, searchDocs,
+  buildDocIndex, checkSessionDocs, docIndexDigest, DOC_LIMITS, parseFrontmatter, parseRelations, readDoc, relatedDocs, renderDocIndex, searchDocs,
 } from '../lib/docs.js';
 
 const NL = String.fromCharCode(10);
@@ -99,13 +99,13 @@ test('fixture 1,280 份：0 条不可达、0 条无命令省略、raw/reports �
     for (let i = 0; i < 300; i += 1) w(join(r, 'research', 'r-' + i + '.md'), ...fm('研究 ' + i));
     for (let i = 0; i < 80; i += 1) w(join(r, 'reports', 'task-' + i + '.md'), '# 回执 ' + i);
     // 1,280 份的预算压力下也带 AOCI 标记与 legend/health：pin 一份带 constraints 的架构稿。
-    w(join(r, 'architecture', 'a-0.md'), '---', 'title: 架构 0', 'role: 架构 0', 'layer: L2', 'when: 需要时', 'constraints: 先读 docs/a.md; 版本 v1', '---', '# 架构 0');
+    w(join(r, 'architecture', 'a-0.md'), '---', 'title: 架构 0', 'role: 架构 0', 'layer: L2', 'when: 需要时', 'constraints: 先读 docs/a.md; 版本 v1', 'relations: supersedes: architecture/a-1.md', '---', '# 架构 0');
     const index = buildDocIndex(cwd);
     assert.equal(index.all.length, 1280);
     const rendered = renderDocIndex(index, { pins: ['architecture/a-0.md'] });
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    assert.match(rendered.text, /读法：L1 先读 \/ L2 按需；! 约束 · A 契约/, 'legend 在预算压力下仍保留');
-    assert.match(rendered.text, /`architecture\/a-0\.md`[^\n]*· !2 · /, '折叠档位仍渲染 constraints 标记');
+    assert.match(rendered.text, /读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系/, 'legend 在预算压力下仍保留');
+    assert.match(rendered.text, /`architecture\/a-0\.md`[^\n]*· !2 →1 · /, '折叠档位仍渲染 constraints/relations 标记');
     assert.match(rendered.text, /索引 [\d.]+KB\/2\.00KB · L1 \d+ \/ L2 \d+ \/ raw \d+/, 'health 行给层计数');
     const prefixes = [...rendered.text.matchAll(/relay_doc list prefix=([^\s`]+)/g)].map((match) => match[1]);
     assert.ok(prefixes.includes('architecture') && prefixes.includes('decisions') && prefixes.includes('research'), '三组都可展开：' + prefixes.join(','));
@@ -138,7 +138,7 @@ test('AOCI 语义层：constraints/contracts 计数渲染 !n / An，none 不标�
     const rendered = renderDocIndex(index);
     const lineOf = (text, rel) => text.split(NL).find((line) => line.includes(BT + rel + BT)) ?? '';
     assert.match(lineOf(rendered.text, 'architecture/with.md'), /· !3 A1 · /);
-    assert.match(rendered.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约$/m);
+    assert.match(rendered.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系$/m);
     assert.match(rendered.text, /^索引 \d+\.\d{2}KB\/2\.00KB · L1 1 \/ L2 2 \/ raw 1$/m);
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
     const pinned = renderDocIndex(index, { pins: ['architecture/none.md'] });
@@ -148,7 +148,61 @@ test('AOCI 语义层：constraints/contracts 计数渲染 !n / An，none 不标�
     const big = renderDocIndex(buildDocIndex(cwd));
     assert.ok(big.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + big.bytes);
     assert.ok(big.level === 'B' || big.level === 'C', '降级到 ' + big.level);
-    assert.match(big.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约$/m);
+    assert.match(big.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系$/m);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('AOCI relations：解析前缀/白名单/≤8；related 一跳出+入边；lint 坏指针与自环 WARN', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-relations-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (extra = []) => ['---', 'role: 架构', 'layer: L2', 'when: 改前', 'constraints: none', ...extra, '---', '# 文档'];
+    w(join(r, 'architecture', 'a.md'), ...fm(['relations: supersedes: architecture/b.md, implements architecture/c.md; evidence_for: research/e.md']));
+    w(join(r, 'architecture', 'b.md'), ...fm(['relations: architecture/a.md']));
+    w(join(r, 'architecture', 'c.md'), ...fm());
+    w(join(r, 'research', 'e.md'), ...fm());
+    w(join(r, 'architecture', 'bad.md'), ...fm(['relations: missing.md, ../escape.md']));
+    w(join(r, 'architecture', 'self.md'), ...fm(['relations: architecture/self.md']));
+    // frontmatter 解析：类型前缀（: 或空格）、none、去重、≤8 白名单。
+    assert.deepEqual(parseRelations('supersedes: docs/a.md, implements docs/b.md; evidence_for: docs/c.md'), [
+      { type: 'supersedes', target: 'docs/a.md' },
+      { type: 'implements', target: 'docs/b.md' },
+      { type: 'evidence_for', target: 'docs/c.md' },
+    ]);
+    assert.deepEqual(parseRelations('none'), [], 'relations: none = 显式无关系');
+    assert.deepEqual(parseRelations('docs/a.md; docs/a.md'), [{ type: '', target: 'docs/a.md' }], '同类型去重');
+    assert.equal(parseRelations(Array.from({ length: 10 }, (_, i) => 'docs/x' + i + '.md').join(', ')).length, 8, 'relations ≤8');
+    assert.equal(parseRelations('/etc/passwd, ~/x.md, ../x.md')[0].invalid, true, '白名单外的路径标 invalid（lint 提示）');
+    const index = buildDocIndex(cwd);
+    const a = index.all.find((entry) => entry.relPath === 'architecture/a.md');
+    assert.equal(a.relationsCount, 3);
+    assert.deepEqual(a.relations.map(({ type, target }) => [type, target]), [
+      ['supersedes', 'architecture/b.md'],
+      ['implements', 'architecture/c.md'],
+      ['evidence_for', 'research/e.md'],
+    ]);
+    const related = relatedDocs(cwd, 'architecture/a.md');
+    assert.equal(related.ok, true);
+    assert.deepEqual(related.out.map((edge) => [edge.type, edge.path, edge.exists]), [
+      ['supersedes', 'architecture/b.md', true],
+      ['implements', 'architecture/c.md', true],
+      ['evidence_for', 'research/e.md', true],
+    ]);
+    assert.deepEqual(related.in, [{ source: 'architecture/b.md', type: '' }], '入边来自反向索引');
+    // 一跳即停：b 的出边只回 a，a 的其它关系不递归进 b 的查询。
+    const fromB = relatedDocs(cwd, 'architecture/b.md');
+    assert.deepEqual(fromB.out.map((edge) => edge.path), ['architecture/a.md']);
+    assert.deepEqual(fromB.in, [{ source: 'architecture/a.md', type: 'supersedes' }]);
+    assert.equal(relatedDocs(cwd, '.scratch/context-relay/architecture/a.md').path, 'architecture/a.md', '接受 relay 前缀路径');
+    assert.equal(relatedDocs(cwd, 'architecture/nope.md').code, 'not-found');
+    assert.equal(relatedDocs(cwd, '../outside.md').code, 'invalid-path');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.ok(check.warnings.some((line) => line.includes('关系坏指针') && line.includes('architecture/bad.md') && line.includes('不存在')));
+    assert.ok(check.warnings.some((line) => line.includes('关系坏指针') && line.includes('self.md') && line.includes('自环')));
+    assert.ok(!check.warnings.some((line) => line.includes('architecture/a.md →')), '正常关系不报');
+    const { docLint } = await import('../lib/lint.js');
+    const docs = docLint({ workspaceRoot: cwd, sessionDocs: true }).checks.find((item) => item.name === 'docs');
+    assert.match(docs.detail, /关系坏指针/, 'doc_lint 的 docs 检查透出 relations advisory');
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
@@ -235,7 +289,7 @@ test('checkSessionDocs：architecture/decisions 新文档缺 constraints 只 WAR
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
-test('relay_doc 工具：index/list/read/search/lint 五个动作可用且有界', async () => {
+test('relay_doc 工具：index/list/read/search/related/lint 六个动作可用且有界', async () => {
   const { createRelayTools } = await import('../lib/agent/tools.js');
   const fx = fixture();
   try {
@@ -267,6 +321,15 @@ test('relay_doc 工具：index/list/read/search/lint 五个动作可用且有界
     const search = await docTool.execute({ action: 'search', query: '理由' }, exec);
     assert.equal(search.ok, true);
     assert.ok(search.matches.length >= 2);
+    // AOCI R：related 一跳出/入边（fixture 追加两份互引文档），坏路径结构化失败。
+    w(join(fx.r, 'docs', 'related-a.md'), '---', 'role: 关联 A', 'layer: L2', 'when: 需要时', 'relations: supersedes: docs/related-b.md', '---', '# A');
+    w(join(fx.r, 'docs', 'related-b.md'), '---', 'role: 关联 B', 'layer: L2', 'when: 需要时', 'relations: docs/related-a.md', '---', '# B');
+    const related = await docTool.execute({ action: 'related', path: 'docs/related-a.md' }, exec);
+    assert.equal(related.ok, true);
+    assert.deepEqual(related.out.map((edge) => [edge.type, edge.path]), [['supersedes', 'docs/related-b.md']]);
+    assert.deepEqual(related.in, [{ source: 'docs/related-b.md', type: '' }]);
+    assert.match(related.text, /out: supersedes docs\/related-b\.md/);
+    assert.equal((await docTool.execute({ action: 'related', path: 'docs/nope.md' }, exec)).code, 'not-found');
     const lint = await docTool.execute({ action: 'lint' }, exec);
     assert.equal(lint.action, 'lint');
     assert.match(lint.text, /relay_doc lint: (PASS|WARN)/);
