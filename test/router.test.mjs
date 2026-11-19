@@ -13,6 +13,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
+import { SUBAGENT_ASK_USER_DENY, TEAMMATE_DOC_DENY, WORKER_RELAY_DENY } from '../lib/plane/roles.js';
 import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
@@ -76,6 +77,10 @@ function makeAgent(header, calls, sections = [], options = {}) {
           callback({ systemPrompt: { section(definition) { sections.push(definition); return () => {}; } } });
           return { dispose() {} };
         }
+        if (services.length === 1 && services[0] === 'skills') {
+          callback({ skills: { register(definition) { (options.skills ?? []).push(definition.name); return () => {}; } } });
+          return { dispose() {} };
+        }
         throw new Error('unexpected inject services: ' + JSON.stringify(services));
       },
     },
@@ -86,6 +91,11 @@ function makeAgent(header, calls, sections = [], options = {}) {
 function agentListener(f) {
   return f.listeners.find((entry) => entry.name === 'agent/created');
 }
+
+/** w5 角色 deny 期望（顺序 = roles.js 表内 deny 组顺序）。 */
+const TEAMMATE_DENY = [...LEAD_ONLY_TOOLS, ...TEAMMATE_DOC_DENY, ...SUBAGENT_ASK_USER_DENY];
+const ARCHITECT_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_ASK_USER_DENY];
+const WORKER_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY];
 
 test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执契约齐全', () => {
   const text = ROUTER_PROTOCOL_TEXT;
@@ -425,7 +435,7 @@ test('v0.9.0 单一模式：agent/created 恒安装——非 root 裁 lead-only�
     const calls = [];
     const sections = [];
     await listener.listener({ agent: makeAgent(header, calls, sections) });
-    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], '直接队友只裁 lead-only：' + JSON.stringify(header));
+    assert.deepEqual(calls, TEAMMATE_DENY, '直接队友裁 lead-only + doc + ask_user：' + JSON.stringify(header));
     assert.equal(sections[0]?.text, TEAMMATE_PROTOCOL_TEXT, '直接队友装紧凑队友协议：' + JSON.stringify(header));
   }
   // depth≥2 才是普通子代理：裁 lead-only + 额外隐藏 relay_phase + 影子协议。
@@ -433,7 +443,7 @@ test('v0.9.0 单一模式：agent/created 恒安装——非 root 裁 lead-only�
     const calls = [];
     const sections = [];
     await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, calls, sections) });
-    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理应裁 lead-only + relay_phase');
+    assert.deepEqual(calls, WORKER_DENY, '普通子代理裁 lead-only + relay_phase + status/doc + ask_user');
     assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
   }
   // root → 恒裁 Router deny 清单 + 注入 Router/团队段（relay_phase 保留）
@@ -458,7 +468,7 @@ test('v0.2.17 B：非 root 工具裁剪 fail-open——单名未注册跳过、�
   // 单个工具名未注册 → 其余仍裁
   const partial = [];
   await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, partial, [], { restrictThrows: new Set(['relay_organize']) }) });
-  assert.deepEqual(partial, ['relay_handoff', 'relay_recommend', 'relay_work_items', ...SUBAGENT_ONLY_HIDDEN_TOOLS], '未知工具名跳过，其余仍裁（含 D）');
+  assert.deepEqual(partial, WORKER_DENY.filter((name) => name !== 'relay_organize'), '未知工具名跳过，其余仍裁（含 D）');
   // 全部失败 ≠ 平台缺单个工具：必须 warn，不能静默 fail-open
   await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, [], [], { restrictThrows: new Set([...LEAD_ONLY_TOOLS]) }) });
   assert.ok(f.warns.some((line) => line.includes('worker restrict: no tools restricted')), '全部 restrict 失败应 warn');
@@ -473,7 +483,7 @@ test('v0.2.17 C：非 root 非队友 → 同名影子覆盖 context-relay:protoc
   const calls = [];
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS]);
+  assert.deepEqual(calls, WORKER_DENY);
   assert.equal(sections.length, 1);
   assert.equal(sections[0].name, 'context-relay:protocol', '必须与 preset 层同名才能影子覆盖');
   assert.equal(sections[0].order, 10150, 'order 沿用 preset 段顺序');
@@ -486,7 +496,7 @@ test('v0.2.17 C：直接队友装紧凑队友协议（同名影子覆盖），�
   const calls = [];
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1 }, calls, sections) });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], '队友也禁用 lead-only 工具（到线/交接交回 Lead）');
+  assert.deepEqual(calls, TEAMMATE_DENY, '队友禁用 lead-only + doc + ask_user（到线/交接交回 Lead）');
   assert.ok(!calls.includes('relay_phase'), 'D：队友保留 relay_phase（内含队友分相拒绝/请示逻辑）');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '队友协议用同名 section 影子覆盖');
   assert.equal(sections[0].text, TEAMMATE_PROTOCOL_TEXT, '队友拿紧凑队友协议（不再用 10KB 全量协议）');
@@ -528,7 +538,7 @@ test('depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2
   const teammateSections = [];
   const teammate = makeAgent({ origin: 'subagent', delegationDepth: 1 }, teammateCalls, teammateSections);
   await listener.listener({ agent: teammate });
-  assert.deepEqual(teammateCalls, [...LEAD_ONLY_TOOLS], '直接队友只裁 lead-only（保留 relay_phase）');
+  assert.deepEqual(teammateCalls, TEAMMATE_DENY, '直接队友裁 lead-only + doc + ask_user（保留 relay_phase）');
   assert.ok(!teammateCalls.includes('bash'), '不裁 Router 执行类工具');
   assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '直接队友只装紧凑协议（不再叠 team-worker 段）');
   assert.equal(teammateSections[0].text, TEAMMATE_PROTOCOL_TEXT);
@@ -538,7 +548,7 @@ test('depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2
   const sections = [];
   const deep = makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections);
   await listener.listener({ agent: deep });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理只裁 lead-only + relay_phase');
+  assert.deepEqual(calls, WORKER_DENY, '普通子代理裁 lead-only + relay_phase + status/doc + ask_user');
   assert.ok(!calls.includes('bash'), '不裁 Router 执行类工具');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '普通子代理只注入 worker 影子');
   assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
@@ -655,7 +665,7 @@ test('v0.2.17 D：普通子代理额外隐藏 relay_phase——各 membership �
     const calls = [];
     const sections = [];
     await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
-    assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '普通子代理应裁三项（' + item.label + '）');
+    assert.deepEqual(calls, WORKER_DENY, '普通子代理应裁 lead-only + phase + status/doc + ask_user（' + item.label + '）');
     assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议照装（' + item.label + '）');
     assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT, '影子文本不变（' + item.label + '）');
   }
@@ -667,7 +677,7 @@ test('v0.2.17 D：队友只裁 organize/handoff（relay_phase 保留、装紧凑
   const calls = [];
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 1 }, calls, sections) });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], '队友只裁 lead-only 工具，D 不生效');
+  assert.deepEqual(calls, TEAMMATE_DENY, '队友裁 lead-only + doc + ask_user，phase 保留');
   assert.ok(!calls.includes('relay_phase'), '队友保留 relay_phase（分相/请示逻辑在执行层）');
   assert.equal(sections[0]?.text, TEAMMATE_PROTOCOL_TEXT, '队友装紧凑队友协议');
   // root：恒裁 Router deny 清单 + 装 Router/团队段——relay_phase 对所有身份可见
@@ -692,7 +702,7 @@ test('v0.7.1 创建瞬间架构师识别：pending 标记认领（不依赖 suba
   const sections = [];
   const architect = makeAgent({ origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1 }, calls, sections);
   await listener.listener({ agent: architect });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS], '架构师只裁 lead-only + relay_phase');
+  assert.deepEqual(calls, ARCHITECT_DENY, '架构师裁 lead-only + relay_phase + ask_user');
   assert.deepEqual(architect.registered, ['relay_checkpoint'], '架构师只拿 checkpoint，不拿 freshen');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
   assert.equal(sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT, 'pending 命中 → 架构师独立协议');
@@ -741,7 +751,7 @@ test('v0.2.17 D：fail-open——relay_phase 未注册时只 warn，B 与影子�
   const calls = [];
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections, { restrictThrows: new Set(['relay_phase']) }) });
-  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS], 'relay_phase 未注册 → 跳过，B 仍生效');
+  assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY], 'relay_phase 未注册 → 跳过，其余仍裁');
   assert.ok(f.warns.some((line) => line.includes('subagent restrict: no tools restricted')), 'D 全部失败应 warn（不静默）');
   assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议不受 D 失败影响');
   // agent.ctx 缺失：两段 restrict 均只 warn、不抛（不阻断会话创建）

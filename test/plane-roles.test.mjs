@@ -10,7 +10,10 @@ import {
   LEAD_ONLY_TOOLS,
   PROTOCOL_SECTION_NAME,
   ROLES,
+  SUBAGENT_ASK_USER_DENY,
   SUBAGENT_ONLY_HIDDEN_TOOLS,
+  TEAMMATE_DOC_DENY,
+  WORKER_RELAY_DENY,
   delegationDepthOf,
   roleOfAgent,
 } from '../lib/plane/roles.js';
@@ -25,13 +28,14 @@ import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 
 const sessionAgent = (header, extra = {}) => ({ session: { header, ...extra } });
 
-test('ROLES 覆盖四角色：deny/sections/tools/seed 形状齐全，工具组名 → agent.js 可解析', () => {
+test('ROLES 覆盖四角色：deny/sections/tools/skills/seed 形状齐全，工具组名 → agent.js 可解析', () => {
   assert.deepEqual(Object.keys(ROLES).sort(), ['architect', 'lead', 'teammate', 'worker']);
   const knownGroups = new Set(['lead', 'delegation', 'teammate', 'checkpoint']);
   for (const [role, table] of Object.entries(ROLES)) {
     assert.ok(Array.isArray(table.deny), role + ' deny 是数组');
     assert.ok(Array.isArray(table.sections), role + ' sections 是数组');
     assert.ok(Array.isArray(table.tools), role + ' tools 是数组');
+    assert.ok(Array.isArray(table.skills), role + ' skills 是数组');
     for (const group of table.deny) {
       assert.equal(typeof group.label, 'string', role + ' deny.label');
       assert.ok(Array.isArray(group.names) && group.names.length > 0, role + ' deny.names 非空');
@@ -46,6 +50,9 @@ test('ROLES 覆盖四角色：deny/sections/tools/seed 形状齐全，工具组�
   }
   assert.equal(ROLES.lead.seed, true, 'root Lead 需要默认档种子');
   for (const role of ['teammate', 'architect', 'worker']) assert.equal(ROLES[role].seed, false, role + ' 不种默认档');
+  // w5 角色技能：human-loop 只给 Lead（skills 无 deny，全局注册会对子智能体也可见）。
+  assert.deepEqual([...ROLES.lead.skills], ['human-loop']);
+  for (const role of ['teammate', 'architect', 'worker']) assert.deepEqual([...ROLES[role].skills], [], role + ' 不装配 human-loop');
 });
 
 test('协议文本单一真源：roles 段直接引用 protocol.js / worker.js（不复制文本）', () => {
@@ -62,13 +69,20 @@ test('协议文本单一真源：roles 段直接引用 protocol.js / worker.js�
   }
 });
 
-test('deny 清单：root 只裁执行类；队友只裁 lead-only；架构师/worker 再裁 relay_phase', () => {
+test('deny 清单：root 只裁执行类；队友裁 lead-only + doc + ask_user；架构师裁 lead-only + phase + ask_user；worker 再裁 status/doc', () => {
   assert.deepEqual(ROLES.lead.deny.map((group) => group.names), [ROUTER_DENY_TOOLS]);
   assert.deepEqual([...LEAD_ONLY_TOOLS], ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items']);
   assert.deepEqual([...SUBAGENT_ONLY_HIDDEN_TOOLS], ['relay_phase']);
-  assert.deepEqual(ROLES.teammate.deny.map((group) => group.names), [LEAD_ONLY_TOOLS]);
-  for (const role of ['architect', 'worker']) {
-    assert.deepEqual(ROLES[role].deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS]);
+  assert.deepEqual([...SUBAGENT_ASK_USER_DENY], ['ask_user_question']);
+  assert.deepEqual([...TEAMMATE_DOC_DENY], ['relay_doc']);
+  assert.deepEqual([...WORKER_RELAY_DENY], ['relay_status', 'relay_doc']);
+  assert.deepEqual(ROLES.teammate.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, TEAMMATE_DOC_DENY, SUBAGENT_ASK_USER_DENY]);
+  assert.deepEqual(ROLES.architect.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, SUBAGENT_ASK_USER_DENY]);
+  assert.deepEqual(ROLES.worker.deny.map((group) => group.names), [LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS, WORKER_RELAY_DENY, SUBAGENT_ASK_USER_DENY]);
+  // 不变量：ask_user 不在 Lead 的 deny 里；所有非 Lead 角色都裁掉它。
+  assert.ok(!ROLES.lead.deny.some((group) => group.names.includes('ask_user_question')));
+  for (const role of ['teammate', 'architect', 'worker']) {
+    assert.ok(ROLES[role].deny.some((group) => group.names.includes('ask_user_question')), role + ' 必须裁掉 ask_user_question');
   }
   // 旧导出名从 agent.js 继续可用（router.test 等消费），且与单一真源同值。
   assert.deepEqual([...LEGACY_LEAD_ONLY], [...LEAD_ONLY_TOOLS]);
@@ -132,11 +146,13 @@ test('表驱动装配仍等价旧行为：apply+agent/created 的 root/队友 de
   assert.ok(created !== undefined, 'agent/created 监听存在');
   const calls = [];
   const agentSections = [];
+  const agentSkills = [];
   const agent = {
     session: { header: {} },
     ctx: {
       inject(services, callback) {
         if (services[0] === 'tools') { callback({ tools: { restrict(filter) { calls.push(filter.deny[0]); return () => {}; }, register() { return () => {}; } } }); return { dispose() {} }; }
+        if (services[0] === 'skills') { callback({ skills: { register(definition) { agentSkills.push(definition.name); return () => {}; } } }); return { dispose() {} }; }
         callback({ systemPrompt: { section(definition) { agentSections.push(definition); return () => {}; } } });
         return { dispose() {} };
       },
@@ -144,6 +160,8 @@ test('表驱动装配仍等价旧行为：apply+agent/created 的 root/队友 de
   };
   await created.listener({ agent });
   assert.deepEqual(calls, [...ROLES.lead.deny[0].names], 'root deny 来自角色表');
+  assert.deepEqual(agentSkills, ['human-loop'], 'Lead 在 agent scope 装配 human-loop（来自角色表 skills）');
+  assert.ok(!calls.includes('ask_user_question'), 'Lead 保留提问工具');
   assert.deepEqual(agentSections.map((section) => section.name), ROLES.lead.sections.map((section) => section.name));
   assert.deepEqual(agentSections.map((section) => section.text), ROLES.lead.sections.map((section) => section.text));
 });

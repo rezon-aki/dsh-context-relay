@@ -68,6 +68,7 @@ function agentScope({ id, header }) {
   const registered = new Map();
   const restricted = [];
   const sections = [];
+  const skills = [];
   const agent = {
     session: { id, header, seq: 0 },
     ctx: {
@@ -85,12 +86,16 @@ function agentScope({ id, header }) {
           callback({ systemPrompt: { section(definition) { sections.push(definition); return () => {}; } } });
           return { dispose() {} };
         }
+        if (services.length === 1 && services[0] === 'skills') {
+          callback({ skills: { register(definition) { skills.push(definition.name); return () => {}; } } });
+          return { dispose() {} };
+        }
         throw new Error('unexpected agent-scope inject: ' + JSON.stringify(services));
       },
     },
     inject() {},
   };
-  return { agent, registered, restricted, sections };
+  return { agent, registered, restricted, sections, skills };
 }
 
 /** 工具 schema 字符口径（与 agent.test.mjs P2-19 一致）：desc 字符 + parameters JSON 字符。 */
@@ -132,6 +137,7 @@ async function assembleAll() {
     presetTools: preset.tools,
     allTools,
     measured: Object.fromEntries(Object.entries(scopes).map(([role, entry]) => [role, entry.measured])),
+    skills: Object.fromEntries(Object.entries(scopes).map(([role, entry]) => [role, entry.scope.skills])),
   };
 }
 
@@ -232,7 +238,9 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符；
  * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测；
  * w1 设计门回显/深度模板后 lead 协议 +534、architect 协议 +77，relay_phase schema 同步实测；
- * w3 说人话后 protocol 回执句 +11、router 回执段 +7、teammate 协议 +32（仍 ≤7200/≤2000/≤1300 字符预算）。
+ * w3 说人话后 protocol 回执句 +11、router 回执段 +7、teammate 协议 +32（仍 ≤7200/≤2000/≤1300 字符预算）；
+ * w5 角色注入裁剪后：teammate 裁 relay_doc+ask_user（-1,255 schema）、architect 裁 ask_user、
+ * worker 只留 doc_lint（1,948→257 schema）；human-loop 不再全局注册，只在 Lead 的 agent scope 注册。
  */
 const ROLE_SNAPSHOT = {
   lead: {
@@ -263,12 +271,12 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 1308,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_doc', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
-    tools: ['relay_status', 'relay_phase', 'relay_doc', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
-    toolDescChars: 1885,
-    toolSchemaChars: 12370,
-    totalChars: 13678,
+    tools: ['relay_status', 'relay_phase', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
+    toolDescChars: 1580,
+    toolSchemaChars: 11115,
+    totalChars: 12423,
   },
   architect: {
     sections: [
@@ -278,7 +286,7 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 783,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'ask_user_question'],
     roleTools: ['relay_checkpoint'],
     tools: ['relay_status', 'relay_doc', 'doc_lint', 'relay_checkpoint'],
     toolDescChars: 1099,
@@ -293,20 +301,23 @@ const ROLE_SNAPSHOT = {
       ['context-relay:architect', 0],
     ],
     sectionChars: 386,
-    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase'],
+    denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'relay_doc', 'ask_user_question'],
     roleTools: [],
-    tools: ['relay_status', 'relay_doc', 'doc_lint'],
-    toolDescChars: 761,
-    toolSchemaChars: 1920,
-    totalChars: 2306,
+    tools: ['doc_lint'],
+    toolDescChars: 110,
+    toolSchemaChars: 257,
+    totalChars: 643,
   },
 };
 
 test('C11 A-07/A-09：4 角色装配实测快照（section 求值 + restrict + 注册工具，非常量求和）', async () => {
-  const { measured } = await assembleAll();
+  const { measured, skills } = await assembleAll();
   for (const role of Object.keys(ROLE_SNAPSHOT)) {
     assert.deepEqual(measured[role], ROLE_SNAPSHOT[role], role + ' 角色装配实测快照漂移（角色表/协议段/工具面改动必须更新快照并复核预算）');
   }
+  // w5 技能面：human-loop 只给 Lead（agent scope），子智能体不装配（skills 无 deny，全局会对所有会话可见）。
+  assert.deepEqual(skills.lead, ['human-loop'], 'Lead 技能面在 agent scope 注册 human-loop');
+  for (const role of ['teammate', 'architect', 'worker']) assert.deepEqual(skills[role], [], role + ' 不装配 human-loop');
   // A-07：TEAMMATE 协议段长度预算（≤1,300 字符；快照已钉 1,261，这里保留可读的预算上限语义）。
   const protocolChars = (role) => measured[role].sections.find(([name]) => name === 'context-relay:protocol')[1];
   assert.ok(protocolChars('teammate') <= 1300, 'TEAMMATE 协议段超预算: ' + protocolChars('teammate'));

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
 import { clearPlaneMemory, disposeAllPlanes, disposePlane, ensureAgentPlane, isPlaneTracked, planeStatusOf } from '../lib/plane/ensure.js';
-import { LEAD_ONLY_TOOLS, ROLES, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/plane/roles.js';
+import { LEAD_ONLY_TOOLS, ROLES, SUBAGENT_ASK_USER_DENY, SUBAGENT_ONLY_HIDDEN_TOOLS, TEAMMATE_DOC_DENY, WORKER_RELAY_DENY } from '../lib/plane/roles.js';
 import { ARCHITECT_WORKER_PROTOCOL_TEXT, ROUTER_DENY_TOOLS, TEAMMATE_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 
@@ -63,7 +63,7 @@ function liveSession(id = 'session-plane', cwd = '/tmp') {
  * options.noDispose=true 时模拟不可逆 composition（inject 结果无 dispose）。
  */
 function scopedAgent({ sessionId = 'session-plane', header = {}, noDispose = false, restrictThrows = new Set(), injectThrows = false, getService } = {}) {
-  const state = { restricted: [], registered: [], sections: [], disposed: [] };
+  const state = { restricted: [], registered: [], sections: [], skills: [], disposed: [] };
   const fiber = (kind) => (noDispose ? {} : {
     dispose() { state.disposed.push(kind); },
   });
@@ -91,6 +91,10 @@ function scopedAgent({ sessionId = 'session-plane', header = {}, noDispose = fal
           callback({ systemPrompt: { section(definition) { state.sections.push(definition); return () => {}; } } });
           return fiber('systemPrompt');
         }
+        if (services.length === 1 && services[0] === 'skills') {
+          callback({ skills: { register(definition) { state.skills.push(definition.name); return () => {}; } } });
+          return fiber('skills');
+        }
         throw new Error('unexpected inject ' + JSON.stringify(services));
       },
     },
@@ -100,20 +104,24 @@ function scopedAgent({ sessionId = 'session-plane', header = {}, noDispose = fal
 
 const planeOf = (agent) => planeStatusOf(agent);
 
+/** 角色技能定义（fake）：名字即注册名；host skills 无 deny，按 scope 注册（w5）。 */
+const testSkillOf = (name) => ({ name, description: '测试技能', content: '# 测试', invocation: { modelInvocable: true, userInvocable: true } });
+
 test('ensureAgentPlane 幂等：重复调用只装一次（restrict/注册/section/seed 均不重复）', () => {
   resetShared();
   const { agent, state } = scopedAgent({ sessionId: 'session-plane-idem' });
   let seeds = 0;
-  const runtime = { toolsOf: (group) => (group === 'lead' ? [{ name: 'relay_team_status' }] : []), seed: () => { seeds += 1; } };
+  const runtime = { toolsOf: (group) => (group === 'lead' ? [{ name: 'relay_team_status' }] : []), skillOf: testSkillOf, seed: () => { seeds += 1; } };
   const first = ensureAgentPlane(agent, runtime);
   assert.equal(first.ok, true);
   assert.equal(first.role, 'lead');
   assert.equal(first.installed, true);
   assert.equal(seeds, 1, 'root seed 只执行一次');
-  const before = { restricted: state.restricted.length, registered: state.registered.length, sections: state.sections.length };
+  assert.deepEqual(state.skills, ['human-loop'], 'Lead 在 agent scope 装配 human-loop（全局不再注册）');
+  const before = { restricted: state.restricted.length, registered: state.registered.length, sections: state.sections.length, skills: state.skills.length };
   const second = ensureAgentPlane(agent, runtime);
   assert.equal(second.idempotent, true, '第二次直接短路');
-  assert.deepEqual([state.restricted.length, state.registered.length, state.sections.length], [before.restricted, before.registered, before.sections], '重复安装不得重复注入');
+  assert.deepEqual([state.restricted.length, state.registered.length, state.sections.length, state.skills.length], [before.restricted, before.registered, before.sections, before.skills], '重复安装不得重复注入');
   assert.equal(seeds, 1, '重复安装不重复 seed');
   assert.deepEqual(planeOf(agent), { role: 'lead', installed: true, degradations: [] });
 });
@@ -126,23 +134,62 @@ test('ensureAgentPlane 按角色表装配：teammate/architect/worker 的 deny/s
   };
   const teammate = scopedAgent({ sessionId: 'session-plane-teammate', header: { origin: 'subagent', delegationDepth: 1 } });
   assert.equal(ensureAgentPlane(teammate.agent, runtime).role, 'teammate');
-  assert.deepEqual(teammate.state.restricted, [...LEAD_ONLY_TOOLS]);
+  assert.deepEqual(teammate.state.restricted, [...LEAD_ONLY_TOOLS, ...TEAMMATE_DOC_DENY, ...SUBAGENT_ASK_USER_DENY], '队友裁 lead-only + doc + ask_user');
   assert.deepEqual(teammate.state.registered, ['relay_checkpoint', 'relay_freshen']);
+  assert.deepEqual(teammate.state.skills, [], '队友不装配 human-loop（角色技能只给 Lead）');
   assert.equal(teammate.state.sections[0].text, TEAMMATE_PROTOCOL_TEXT);
 
   const architectRuntime = { ...runtime, isArchitect: () => true };
   const architect = scopedAgent({ sessionId: 'session-plane-arch', header: { origin: 'subagent', parentSession: 'lead', delegationDepth: 1 } });
   assert.equal(ensureAgentPlane(architect.agent, architectRuntime).role, 'architect');
-  assert.deepEqual(architect.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS]);
+  assert.deepEqual(architect.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_ASK_USER_DENY], '架构师裁 lead-only + phase + ask_user');
   assert.deepEqual(architect.state.registered, ['relay_checkpoint'], '架构师只拿 checkpoint');
+  assert.deepEqual(architect.state.skills, [], '架构师不装配 human-loop');
   assert.equal(architect.state.sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT);
 
   const worker = scopedAgent({ sessionId: 'session-plane-worker', header: { origin: 'subagent', delegationDepth: 2 } });
   const workerResult = ensureAgentPlane(worker.agent, runtime);
   assert.equal(workerResult.role, 'worker');
-  assert.deepEqual(worker.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS]);
+  assert.deepEqual(worker.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...WORKER_RELAY_DENY, ...SUBAGENT_ASK_USER_DENY], 'worker 裁 lead-only + phase + status/doc + ask_user');
   assert.deepEqual(worker.state.registered, [], 'worker 不注册角色工具');
+  assert.deepEqual(worker.state.skills, [], 'worker 不装配 human-loop');
   assert.deepEqual(worker.state.sections.map((section) => section.name), ['context-relay:protocol']);
+});
+
+test('w5 ask_user_question：non-lead 用 agent-scope restrict 裁掉；restrict 失败只 warn 不抛', () => {
+  resetShared();
+  const runtime = { toolsOf: () => [], isArchitect: () => false };
+  for (const header of [
+    { origin: 'subagent', delegationDepth: 1 },
+    { origin: 'subagent', delegationDepth: 2 },
+  ]) {
+    const agent = scopedAgent({ sessionId: 'session-plane-ask-' + header.delegationDepth, header });
+    assert.equal(ensureAgentPlane(agent.agent, runtime).ok, true);
+    assert.ok(agent.state.restricted.includes('ask_user_question'), '非 Lead 必须裁掉提问工具：depth=' + header.delegationDepth);
+  }
+  // restrict 不识别该工具名（旧内核/preset 未装工具）→ 全部失败只 warn + degradation，不阻断安装。
+  const failing = scopedAgent({
+    sessionId: 'session-plane-ask-fail',
+    header: { origin: 'subagent', delegationDepth: 1 },
+    restrictThrows: new Set(['ask_user_question']),
+  });
+  assert.doesNotThrow(() => ensureAgentPlane(failing.agent, runtime));
+  assert.ok(!failing.state.restricted.includes('ask_user_question'), '失败的工具名不进入已裁名单');
+  assert.equal(planeOf(failing.agent).installed, true, 'ask_user 裁剪失败不阻断平面安装');
+  assert.ok(planeOf(failing.agent).degradations.some((entry) => entry.seam === 'tools' && /subagent ask_user restrict: no tools restricted/.test(entry.reason)));
+});
+
+test('w5 技能服务缺失：Lead 的 human-loop 注册失败只降级，不阻断工具/协议段', () => {
+  resetShared();
+  const target = scopedAgent({
+    sessionId: 'session-plane-skills-missing',
+    header: {},
+    getService: (name) => (name === 'skills' ? undefined : {}),
+  });
+  assert.doesNotThrow(() => ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }));
+  assert.deepEqual(target.state.skills, [], 'skills 服务缺失时没有注册');
+  assert.equal(planeOf(target.agent).installed, false, '角色所需 effect 未全部装上');
+  assert.ok(planeOf(target.agent).degradations.some((entry) => entry.seam === 'skills' && entry.level === 'unavailable'), '技能降级可见');
 });
 
 test('M-02 主路径 · apply 时枚举 live agents 回填：relay agent 装上、非 relay agent 不动', () => {
@@ -263,14 +310,14 @@ test('反向切换（preset 从 relay 切走）：代际 dispose 卸载 agent-sc
   });
   apply(host.ctx, { presetId: 'relay-long', relayPresetIds: ['relay-long'] });
   host.event('agent-created');
-  ensureAgentPlane(agent.agent, { toolsOf: () => [] });
+  ensureAgentPlane(agent.agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(planeOf(agent.agent).installed, true);
   composedId = 'ptc';
   const cleanup = host.effect('plane dispose on preset leave');
   assert.ok(cleanup !== undefined, '代际卸载 cleanup 已注册');
   cleanup.dispose();
   assert.deepEqual(planeOf(agent.agent), { role: 'lead', installed: false, degradations: [] }, '可逆卸载：干净摘除，无降级');
-  assert.deepEqual(agent.state.disposed.sort(), ['systemPrompt', 'tools'], '注入 fiber 被 dispose（restrict/注册/影子段撤销）');
+  assert.deepEqual(agent.state.disposed.sort(), ['skills', 'systemPrompt', 'tools'], '注入 fiber 被 dispose（restrict/注册/影子段/技能撤销）');
 });
 
 test('反向切换仍绑定另一代 relay（迁移期 id 别名互切）：保留平面不误卸', () => {
@@ -282,7 +329,7 @@ test('反向切换仍绑定另一代 relay（迁移期 id 别名互切）：保�
     agentPresets: { composedPreset: () => composedId },
   });
   apply(host.ctx, { presetId: 'relay-long', relayPresetIds: ['relay-long', 'relay'] });
-  ensureAgentPlane(agent.agent, { toolsOf: () => [] });
+  ensureAgentPlane(agent.agent, { toolsOf: () => [], skillOf: testSkillOf });
   const cleanup = host.effect('plane dispose on preset leave');
   composedId = 'relay';
   cleanup.dispose();
@@ -296,7 +343,7 @@ test('反向切换仍绑定另一代 relay（迁移期 id 别名互切）：保�
 test('不可逆 composition：注入 fiber 无 dispose → 卸载记 degradation（不静默）', () => {
   resetShared();
   const target = scopedAgent({ sessionId: 'session-irreversible', header: {}, noDispose: true });
-  ensureAgentPlane(target.agent, { toolsOf: () => [] });
+  ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(planeOf(target.agent).installed, true);
   const result = disposePlane(target.agent, 'preset-left');
   assert.equal(result.ok, true);
@@ -323,13 +370,13 @@ test('fail-open 降级：ctx 缺失 / restrict 全部失败 / 服务缺失 → d
   assert.ok(status.degradations.some((entry) => entry.seam === 'systemPrompt' && entry.level === 'unavailable'));
   // 2) restrict 全部失败：installed 仍为 true（effect 注入成功），但降级可见。
   const target = scopedAgent({ sessionId: 'session-degraded', header: {}, restrictThrows: new Set(ROUTER_DENY_TOOLS) });
-  const rootResult = ensureAgentPlane(target.agent, { toolsOf: () => [] });
+  const rootResult = ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(rootResult.installed, true);
   const degraded = planeOf(target.agent);
   assert.ok(degraded.degradations.some((entry) => entry.seam === 'tools' && /no tools restricted/.test(entry.reason)));
   // 3) inject 抛错：不抛到调用方，降级可见。
   const throwing = scopedAgent({ sessionId: 'session-inject-throw', header: {}, injectThrows: true });
-  assert.doesNotThrow(() => ensureAgentPlane(throwing.agent, { toolsOf: () => [] }));
+  assert.doesNotThrow(() => ensureAgentPlane(throwing.agent, { toolsOf: () => [], skillOf: testSkillOf }));
   assert.equal(planeOf(throwing.agent).installed, false);
   assert.ok(planeOf(throwing.agent).degradations.some((entry) => entry.seam === 'tools' && /skipped/.test(entry.reason)));
   // 4) 未知 agent 句柄：disposePlane 返回结构化 not-installed，不抛。
@@ -343,7 +390,7 @@ test('半装成（一个 seam 服务缺失）也进入状态机：installed=fals
     header: {},
     getService: (name) => (name === 'systemPrompt' ? { section() {} } : undefined),
   });
-  const result = ensureAgentPlane(target.agent, { toolsOf: () => [] });
+  const result = ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(result.installed, false, 'tools seam 缺失 → 未完全装好');
   assert.deepEqual(target.state.sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], '可用的 seam 照装（root 两段）');
   assert.ok(planeOf(target.agent).degradations.some((entry) => entry.seam === 'tools' && entry.level === 'unavailable'));
@@ -361,16 +408,16 @@ test('半装成后重试：先撤旧 agent-scope 注册再重装（不叠加 res
     header: {},
     getService: (name) => (name === 'tools' ? (toolsAvailable ? {} : undefined) : {}),
   });
-  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [] }).installed, false);
+  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).installed, false);
   assert.equal(target.state.sections.length, 2);
   toolsAvailable = true;
-  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [] }).installed, true);
+  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).installed, true);
   assert.deepEqual(target.state.restricted, [...ROUTER_DENY_TOOLS], '重试只裁一次');
   assert.ok(!target.state.disposed.includes('tools'), '第一次安装 tools 被跳过、无旧 tools fiber 需撤');
   assert.ok(target.state.disposed.includes('systemPrompt'), '重装前撤掉旧 fiber（真实系统同名 section 覆盖 → 净效果仍 2 段）');
   assert.equal(target.state.sections.length, 4, 'fake 记录只增不减：旧 2 段 + 重装 2 段（对应真实系统 2 段）');
   const before = [...target.state.restricted];
-  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [] }).idempotent, true, '装好后幂等短路');
+  assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).idempotent, true, '装好后幂等短路');
   assert.deepEqual(target.state.restricted, before);
 });
 
@@ -378,14 +425,14 @@ test('disposeAllPlanes 遍历会话记录：多 agent 一起清理，failed 可�
   resetShared();
   const a = scopedAgent({ sessionId: 'session-all-a', header: {} });
   const b = scopedAgent({ sessionId: 'session-all-b', header: {}, noDispose: true });
-  ensureAgentPlane(a.agent, { toolsOf: () => [] });
-  ensureAgentPlane(b.agent, { toolsOf: () => [] });
+  ensureAgentPlane(a.agent, { toolsOf: () => [], skillOf: testSkillOf });
+  ensureAgentPlane(b.agent, { toolsOf: () => [], skillOf: testSkillOf });
   const result = disposeAllPlanes({ reason: 'preset-left' });
   assert.deepEqual(result.disposed.sort(), ['session-all-a']);
   assert.deepEqual(result.failed.sort(), ['session-all-b']);
   assert.equal(planeOf(a.agent).installed, false);
   assert.ok(planeOf(b.agent).degradations.some((entry) => /uninstall incomplete/.test(entry.reason)));
   // 未安装的 agent 不在遍历范围。
-  const never = ensureAgentPlane(scopedAgent({ sessionId: 'session-all-never' }).agent, { toolsOf: () => [] });
+  const never = ensureAgentPlane(scopedAgent({ sessionId: 'session-all-never' }).agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(never.installed, true);
 });
