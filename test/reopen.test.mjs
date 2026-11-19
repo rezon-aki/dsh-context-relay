@@ -20,7 +20,7 @@ const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定', fidelity: '实现忠实，无偏移', attention: '不打扰' };
 const SHIP_GATE = { review: 'fresh 独立审查：需求已定、实现忠实', report: '结论：完成\n影响：无\n需要你做什么：无需\n证据位置：x:1' };
-const DESIGN_GATE = { path: '.scratch/context-relay/architecture/ctx-hardening.md', user_approved: true };
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/ctx-hardening.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 const REOPEN = { reason: '用户提出返修：补边界用例', user_approved: true };
 
 function resetSharedState() {

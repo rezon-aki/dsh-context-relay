@@ -23,7 +23,7 @@ const CONTRACT_CHECK = { requirement: '需求已定：用户要两条契约；�
 /** 进 ship 的用户门（新上下文独立审查 + 大白话汇报；宿主只校验非空）。 */
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针。 */
-const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进，别再扩大范围', not_doing: ['不发布 npm', '不改本机配置'] };
 
 /**
  * 每个测试前重置进程级共享状态（handoff 发布箱 + 侧栏 live 设置 + 面板状态 Map）。
@@ -4325,7 +4325,8 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // → 实测 10540，预算按实测+~1.5% 上调到 10700（#68：只调预算，不删语义/约束）。
   // v0.11 P0-C：relay_phase 新增 reopen{reason,user_approved}（设计 §4.4 预计 +250B）→ 实测 10966。
   // w2（relay-audit §2.5.2）：relay_phase 新增 risk{tier,reason,paths,lines,public_surface,data_format,permissions,irreversible,external,user_visible} + diff_hash → 合计 12531，预算按实测+~1.3% 上调到 12700。
-  assert.ok(parameterChars <= 12700, '参数 schema 总字符 <=12700（w2 实测 12531），实际 ' + parameterChars);
+  // w1（relay-docs-v2 §2.5 P5）：design_gate 新增 ask_ref/not_doing 回显字段 → 合计 12988，预算按实测+~0.9% 上调到 13100。
+  assert.ok(parameterChars <= 13100, '参数 schema 总字符 <=13100（w1 实测 12988），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -5081,4 +5082,32 @@ test('w2 reopen：T0/T1 只需 reason，不要求 user_approved；T2 仍强制',
   await call2({ phase: 'verify', contract_check: CONTRACT_CHECK });
   await call2({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '审查', report: '汇报' } });
   await assert.rejects(call2({ phase: 'build', reopen: { reason: '修复' }, risk: { tier: 'T2', reason: 'schema' } }), /user_approved/, 'T2 reopen 仍要求用户批准');
+});
+
+test('w1 设计门回显：T2 缺 ask_ref/not_doing 零副作用拒绝；齐全通过并回显', async () => {
+  resetSharedState();
+  const session = fakeSession({ id: 'session-w1-design-echo', seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  const risk = { tier: 'T2', reason: '工具 schema' };
+  const base = { path: '.scratch/context-relay/architecture/w1.md', user_approved: true };
+  // 缺 ask_ref / 缺 not_doing / 超 300 字 / 空清单 / 超 10 条 / 空条目 → 拒绝
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, not_doing: ['不发布'] } }), /ask_ref/);
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, ask_ref: '用户确认' } }), /not_doing/);
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, ask_ref: '字'.repeat(301), not_doing: ['不发布'] } }), /300/);
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, ask_ref: '用户确认', not_doing: [] } }), /1–10/);
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, ask_ref: '用户确认', not_doing: Array.from({ length: 11 }, (_, index) => '不做' + index) } }), /1–10/);
+  await assert.rejects(call({ phase: 'build', risk, design_gate: { ...base, ask_ref: '用户确认', not_doing: ['ok', '  '] } }), /非空/);
+  // 拒绝零副作用：phase 仍是 discover（没有切 phase/写台账）。
+  const status = await tools.get('relay_status').execute({}, { agent });
+  assert.equal(status.phase, 'discover', '拒绝后 phase 未变');
+  // 齐全 → 放行并回显 ask_ref / not_doing
+  const askRef = '用户原话：就按这个设计做，不扩展';
+  const built = await call({ phase: 'build', risk, design_gate: { ...base, ask_ref: askRef, not_doing: ['不发布 npm', '不改本机配置'] }, contract_check: CONTRACT_CHECK });
+  assert.equal(built.phase, 'build');
+  assert.equal(built.previous, 'discover');
+  assert.equal(built.design.ask_ref, askRef);
+  assert.deepEqual(built.design.not_doing, ['不发布 npm', '不改本机配置']);
+  assert.match(built.text, /ask_ref 16 字 · not_doing 2 条/);
 });

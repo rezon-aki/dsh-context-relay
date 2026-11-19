@@ -57,13 +57,20 @@ disable-model-invocation: true
 
 ## 两段式用户门（设计门 + 实现↔设计对齐；最小注意力最大影响，2026-11-16 补充裁决）
 
-- **第一段：设计门（开工前，显式停）**：把设计（架构 / 改动面 / 验收口径 / 风险）交用户确认；用户确认后才允许开工。产品面：**首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true}`**（path = 用户确认过的设计文档路径），缺失时 `relay_phase` **零副作用拒绝**；结果回显 `design`。没确认的设计不动代码。
+- **第一段：设计门（开工前，显式停）**：把设计（架构 / 改动面 / 验收口径 / 风险）交用户确认；用户确认后才允许开工。产品面：**T2 首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true, ask_ref, not_doing}`**（path = 用户确认过的设计文档路径；ask_ref = 逐字用户原话 ≤300 字；not_doing = 1–10 条不做清单），缺失任一 `relay_phase` **零副作用拒绝**；结果回显 `design`（含 ask_ref 字数 / not_doing 条数）。没确认的设计不动代码。
 - **第二段：实现↔设计对齐（执行中 / 验收，独立审查）**：`ship` 是唯一的验收声明——只能从 `verify` 进；Lead 会话 `relay_phase({phase:'ship', user_gate:{review, report, questions?, verification?}})`：**实现者自查有盲区**——用**新会话 / 新队友 / 新子智能体**（`subagent` fresh context；**不要用 `subagent_fork`**）做独立审查。**Lead 必须给全上下文索引**：① 用户原话需求+边界（逐字）② 实现索引（file:line）+ 验证证据（测试/命令结果）③ 设计文档/决策入口 ④ 已知边界/未验证项。**审查范围 = 只做「需求 ↔ 设计与实现」对齐**（找偏移/劣化/偷懒/缺失），**不重跑技术验证、不重读第三方源码**；**最多 1 轮**（P0/P1 修完只看 diff 复核），预算 ≤10 个工具调用/≤5 分钟；审查超时或未完成不算通过，可续审/换人复审，不得静默当通过。把审查者身份 + 发现写进 `review`；`report` 大白话汇报（需求 → 实现 + 证据 → 审查结论 → 边界/取舍/没做到）；`questions?` 每条必带 `recommendation`（**不设题数上限**）。**宿主只强制 review/report 非空、不校验内容对错**；**不弹审批弹窗**；`handoff` 不是验收。
 - **验收只做最小必要（重型须授权）**：默认 = 目标模块测试 + 单次独立 diff 审查 +（必要时）一次语法/静态检查；`user_gate.verification{tier:'minimal'|'heavy', approved_by_user?, items[]}`——全量测试矩阵/真机端到端/大样本采样/多轮独立审查（>1 轮）/跨环境矩阵/性能压测/重复复跑默认不做，`tier='heavy'` 无 `approved_by_user:true` 即拒。
 - **边界问题即发现即报**：discover/decide/build 遇到会改变结果/边界/代价的歧义、假设、实现与原意偏离 → 大白话汇报 + 提问（一次问清、附推荐与默认；**不限题数**）；不替用户拍板、不默默假设。用户起初未必知道最终形态，这是正常的——边发现边对齐。
 - **人类注意力最小高影响**：只在会改变用户可见结果/边界/不可逆处打扰；每 phase ≤1 次非 P0 同步；问题一次批量问清（推荐+默认+后果，**不限题数**）；答案写进 phase brief/handoff（下一会话不再问）；能面板点选的不出问答；P0/不可逆随时。
 - **工作时自检（ship 必填）**：模型进 ship 前必须记录 `contract_check{requirement, fidelity, attention}`（其他 phase 可选、缺失不告警）——① 需求是否已定：本阶段对应用户哪条需求、语义/边界定了没、还差的歧义是什么（定了写「已确定」）；② 实现是否忠实：本阶段有没有偏移/劣化/偷懒/缺失（无写「无」）；③ 注意力最小高影响：接下来是否需要用户注意力、凭什么是那一次（不需要写「不打扰」）。答不出就别 ship。
 - **队友不做验收声明**：ship 的用户门是 Lead 的事；队友把结论/边界/未决项回执 Lead，由 Lead 汇报用户并过门；队友不跑 Lead 的 phase/验收流程、不声明 ship 完成。
+
+### 设计深度模板（篇幅只作 advisory，不硬校验）
+
+- **T0 文档/琐碎**：不写独立设计稿；phase goal 写一段「改什么 / 怎么验」，并给 risk.reason。
+- **T1 局部代码**：设计写进 phase goal/exit_criteria，≤1 页（改动面 / 做法 / 验收 / 回滚）。
+- **T2 高风险**：七段 ≤3 页——①需求对齐（用户原话）②技术路线 ③模块与接口 ④数据与协议 ⑤风险与取舍 ⑥待决策 ⑦实现步骤与验收；提案 ≤5 条（每条带推荐/默认/回滚）。
+- **设计门回显**：T2 的 `design_gate` 必填 `ask_ref`（逐字用户原话 ≤300 字）和 `not_doing`（1–10 条不做清单）；缺任一零副作用拒绝。页数/提案超限只由 `doc_lint` 给 advisory WARN，不拒绝。
 
 ## composer 面板（输入框下方「接力」chip）
 

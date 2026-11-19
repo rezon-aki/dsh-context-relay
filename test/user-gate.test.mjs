@@ -22,7 +22,7 @@ import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 
 const CONTRACT_CHECK = { requirement: '需求已定：C9 用户门两段式；边界：只改 relay 协议/工具/测试', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '不打扰用户（无最小高影响点）' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
-const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 
 function resetSharedState() {
   delete globalThis[Symbol.for('dsh-context-relay.handoffs')];
@@ -106,7 +106,7 @@ test('设计门：discover→build 带 design_gate{path,user_approved:true} 放�
   const result = await h.call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   assert.equal(result.phase, 'build');
   assert.equal(result.previous, 'discover');
-  assert.deepEqual(result.design, { path: DESIGN_GATE.path, user_approved: true }, '结果回显 design（path+已确认）');
+  assert.deepEqual(result.design, DESIGN_GATE, '结果回显 design（path+已确认+ask_ref+not_doing）');
   assert.match(result.text, /^design: 设计门已过（用户已确认）· /m);
   assert.equal((await h.status()).phase, 'build');
 });

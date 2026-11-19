@@ -25,7 +25,7 @@ const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
-const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 const thresholds = thresholdsFromPercent(35);
 
 /** 每个测试前重置进程级共享状态（与 agent.test.mjs 同口径，避免跨测试污染）。 */

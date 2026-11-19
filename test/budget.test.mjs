@@ -30,7 +30,7 @@ const CONTRACT_CHECK = {
   attention: '本阶段不打扰用户（无最小高影响点）',
 };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
-const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true };
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 
 function tmpCwd() {
   return mkdtempSync(join(tmpdir(), 'relay-budget-'));

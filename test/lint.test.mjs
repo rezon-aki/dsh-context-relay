@@ -331,3 +331,31 @@ test('formatDocLint counts UTF-8 bytes for CJK details and truncates safely', ()
   // 上限小于截断标记本身时返回空串，仍然守住字节上限
   assert.ok(Buffer.byteLength(formatDocLint({ level: 'PASS', checks: [] }, 10), 'utf8') <= 10);
 });
+
+test('design-depth advisory：活跃设计稿超篇幅 / 提案 >5 / 缺回显或不做只 WARN；合规稿 PASS', () => {
+  const bad = workspace();
+  const badDir = join(bad, '.scratch', 'context-relay', 'architecture');
+  mkdirSync(badDir, { recursive: true });
+  const proposals = Array.from({ length: 6 }, (_, index) => '| P' + (index + 1) + ' | 提案' + index + ' |').join('\n');
+  writeFileSync(join(badDir, 'long.md'), '# 长设计\n' + '字'.repeat(5000) + '\n' + proposals + '\n');
+  const result = docLint({ workspaceRoot: bad, sessionDocs: true });
+  const depth = result.checks.find((check) => check.name === 'design-depth');
+  assert.ok(depth, 'sessionDocs=true 时应含 design-depth');
+  assert.equal(depth.level, 'soft', '只 WARN，不硬失败');
+  assert.equal(depth.ok, false);
+  assert.match(depth.detail, /约 [0-9]+ 页/);
+  assert.match(depth.detail, /提案 6 条/);
+  assert.match(depth.detail, /缺用户原话回显/);
+  assert.match(depth.detail, /缺不做清单/);
+  assert.equal(result.level, 'WARN', 'advisory + git unknown 只到 WARN，不 FAIL');
+  // 默认 docLint（sessionDocs=false）不跑昂贵检查
+  assert.equal(docLint({ workspaceRoot: bad }).checks.some((check) => check.name === 'design-depth'), false);
+
+  const good = workspace();
+  const goodDir = join(good, '.scratch', 'context-relay', 'architecture');
+  mkdirSync(goodDir, { recursive: true });
+  writeFileSync(join(goodDir, 'design.md'), '# 设计\n用户原话：按这个做\n不做：不发布\n| P1 | 提案 |\n' + '字'.repeat(800));
+  const goodDepth = docLint({ workspaceRoot: good, sessionDocs: true }).checks.find((check) => check.name === 'design-depth');
+  assert.ok(goodDepth, '合规工作区也应有 design-depth');
+  assert.equal(goodDepth.ok, true, goodDepth.detail);
+});

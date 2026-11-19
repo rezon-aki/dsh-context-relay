@@ -176,7 +176,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [397, 6837],
+  relay_phase: [370, 7167],
   relay_organize: [314, 651],
   relay_doc: [305, 950],
   doc_lint: [110, 147],
@@ -191,8 +191,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（v0.11 P0-B: desc 5,491 / params 17,431；P0-C reopen schema 后 params 17,857 / schema 23,348）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 19549, schema: 25040 };
+/** 15 工具 schema 合计（w1 后：desc 5,464 / params 19,879 / schema 25,343；含 w2 risk 与 w1 design_gate 回显字段）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5464, params: 19879, schema: 25343 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -230,28 +230,29 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   toolDescChars/toolSchemaChars = 可见工具的 desc / desc+params JSON 合计；
  *   totalChars = sectionChars + toolSchemaChars（每请求常驻注入总量）。
  * 值来源：C11 实测（C9/C10 之后）；v0.11 P0-E 容量线独立配置后 lead 协议 +41 字符；
- * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测。
+ * v0.11 P0-B 小队纪律 + relay_team_status manage schema 后 lead 段/工具面同步实测；
+ * w1 设计门回显/深度模板后 lead 协议 +534、architect 协议 +77，relay_phase schema 同步实测。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 6552],
+      ['context-relay:protocol', 7086],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1840],
       ['context-relay:architect', 693],
       ['context-relay:router', 1992],
       ['context-relay:team-lead', 624],
     ],
-    sectionChars: 11716,
+    sectionChars: 12250,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [
       'relay_status', 'relay_recommend', 'relay_phase', 'relay_organize', 'relay_doc', 'doc_lint', 'relay_work_items', 'relay_handoff',
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
-    toolDescChars: 4737,
-    toolSchemaChars: 22127,
-    totalChars: 33843,
+    toolDescChars: 4710,
+    toolSchemaChars: 22430,
+    totalChars: 34680,
   },
   teammate: {
     sections: [
@@ -264,24 +265,24 @@ const ROLE_SNAPSHOT = {
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: ['relay_status', 'relay_phase', 'relay_doc', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
-    toolDescChars: 1912,
-    toolSchemaChars: 12067,
-    totalChars: 13343,
+    toolDescChars: 1885,
+    toolSchemaChars: 12370,
+    totalChars: 13646,
   },
   architect: {
     sections: [
-      ['context-relay:protocol', 691],
+      ['context-relay:protocol', 768],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 0],
       ['context-relay:architect', 0],
     ],
-    sectionChars: 706,
+    sectionChars: 783,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase'],
     roleTools: ['relay_checkpoint'],
     tools: ['relay_status', 'relay_doc', 'doc_lint', 'relay_checkpoint'],
     toolDescChars: 1099,
     toolSchemaChars: 3465,
-    totalChars: 4171,
+    totalChars: 4248,
   },
   worker: {
     sections: [
