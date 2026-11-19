@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { classifyRisk, confirmKeyOf, denyKeyOf, docsHashOf, isDocItem, isDocPath, reviewKeyOf } from '../lib/risk.js';
 
 test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知保守 T2', () => {
-  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10 }).tier, 'T0');
-  assert.equal(classifyRisk({ paths: ['README.md'], lines: 3 }).tier, 'T0');
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10, reason: 'docs' }).tier, 'T0');
+  assert.equal(classifyRisk({ paths: ['README.md'], lines: 3, reason: 'docs' }).tier, 'T0');
   assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 40 }).tier, 'T1', '文档 >20 行 → 至少 T1');
   assert.equal(classifyRisk({ paths: ['lib/a.js'], lines: 5 }).tier, 'T1', 'lib 代码 → 至少 T1');
   assert.equal(classifyRisk({ paths: ['package.json'] }).tier, 'T2', '公共面 → T2');
@@ -14,6 +14,13 @@ test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知�
   assert.match(classifyRisk({ tier: 'T0', reason: 'docs' }).reasons.join(';'), /actual diff evidence/);
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'] }).tier, 'T1', 'T0 缺 lines → T1');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 10 }).tier, 'T0', 'T0 带实际 diff（仅文档 ≤20 行）通过');
+  // fix-p1b：证据校验在派生之后——派生 T0 同样要显式 paths+lines+reason，缺任一降 T1。
+  assert.equal(classifyRisk({ paths: ['docs/a.md'] }).tier, 'T1', '派生 T0 缺 lines+reason → T1');
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10 }).tier, 'T1', '派生 T0 缺 reason → T1');
+  assert.match(classifyRisk({ paths: ['docs/a.md'], lines: 10 }).reasons.join(';'), /actual diff evidence/);
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], reason: 'docs' }).tier, 'T1', '派生 T0 缺 lines → T1');
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10, reason: 'docs' }).tier, 'T0', '派生 T0 带 paths+lines+reason 通过');
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10, reason: 'docs' }).source, 'derived');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['lib/x.js'] }).tier, 'T1', '自动升级优先于声明');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['scripts/x.mjs'], lines: 3 }).tier, 'T1', 'T0 声明不能覆盖非文档路径');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 3, userVisible: true }).tier, 'T2', '用户可见 → T2');
@@ -23,7 +30,7 @@ test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知�
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], publicSurface: true }).tier, 'T2');
   assert.equal(classifyRisk({ paths: ['docs/a.md'], irreversible: true }).tier, 'T2');
   assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 400 }).tier, 'T2');
-  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10 }).source, 'derived');
+  assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10, reason: 'docs' }).source, 'derived');
   assert.equal(classifyRisk({ tier: 'T1', reason: '单模块' }).source, 'declared');
   assert.ok(classifyRisk({ paths: ['docs/a.md'], lines: 10 }).reasons.length > 0);
   assert.equal(isDocPath('docs/a.md'), true);

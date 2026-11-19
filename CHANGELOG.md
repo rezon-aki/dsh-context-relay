@@ -12,7 +12,7 @@
 - **T2 设计门必须回显**：首次进 build 的 `design_gate` 除 path/user_approved 外必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条不做清单），缺任一零副作用拒绝；只带旧字段的调用会被拒。doc_lint 对超 3 页、超 5 条提案、缺回显只给 advisory WARN。
 - **用户可见文案四段化**：notice、失败返回与 `relay_status`/`relay_phase`/`relay_handoff` 结果统一「结论 / 影响 / 需要你做什么 / 证据」（`human`），内部键与原始值只进 `facts`/结构化字段；`band=`、`autoCompress` 等不再出现在正文；throw 拒绝同样四段（code/facts 只进 `error.code`/`error.facts`）。依赖旧前缀（如 `relay_phase refused (code)`）的脚本请改看 `error.code`。
 - **文档索引默认 A 层、目录成组**：L0 只单列「在役」（pin / 最新交接与阶段 brief / 进度 / 经验）与决策文档，其余按目录成组（份数 + 1–3 个代表 + `relay_doc list prefix=<目录>`）；raw/reports/archive 永不单列。2KB 仍是 advisory 护栏，超限按 A→B→C 降级。
-- **角色裁剪**：human-loop 技能只在 relay Lead 的 agent scope 注册（非 relay 会话不再提供）；worker 裁掉 `relay_status`/`relay_doc`，teammate 裁掉 `relay_doc`；`ask_user_question` 只给 Lead。
+- **角色裁剪**：human-loop 技能只在 relay Lead 的 agent scope 注册（非 relay 会话不再提供）；`doc_lint` 与 `ask_user_question` 只给 Lead；teammate/worker 保留 `relay_doc`，架构师/worker 裁 `relay_status`，worker 另裁 `relay_phase`。
 - **npm 包**：`files` 新增 `scripts/`（`scripts/docs-metrics.mjs` 随包发布）。
 
 ### 风险分级与门禁矩阵（C2）
@@ -42,8 +42,8 @@
 ### 角色注入裁剪（D）
 
 - 全局技能只保留 context-relay 与 doc-governance；human-loop 仅注册到 relay Lead 的 agent scope。
-- 队友/worker 工具面按角色裁剪（worker 只余 doc_lint；teammate 裁掉 `relay_doc`）；`ask_user_question` 通过 agent-scope restrict 只给 Lead，失败降级为 warning + degradation，不阻断平面安装。
-- 预算快照同步（worker 工具 schema 1,920→257；teammate 12,370→11,115）。
+- 子智能体工具面按角色裁剪（`doc_lint` 只给 Lead；teammate/worker 保留 `relay_doc`，架构师/worker 裁 `relay_status`，worker 另裁 `relay_phase`）；`ask_user_question` 通过 agent-scope restrict 只给 Lead，失败降级为 warning + degradation，不阻断平面安装。
+- 预算快照同步（worker 工具 schema 1,920→1,305；teammate 12,370→12,509；architect 2,850）。
 
 ### AOCI 语义层（B / R）
 

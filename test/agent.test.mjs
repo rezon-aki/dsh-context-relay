@@ -5122,6 +5122,18 @@ test('P1-3 风险判档：T0 只给 reason 降 T1；userVisible 升 T2 强制设
   const uvTools = applyAgent(fakeServices({ session: uv }).services).tools;
   const call2 = (args) => uvTools.get('relay_phase').execute(args, { agent: { session: uv, options: {} } });
   await assert.rejects(call2({ phase: 'build', risk: { tier: 'T0', reason: 'README 文案', paths: ['README.md'], lines: 2, user_visible: true } }), /设计门/, 'userVisible 升 T2 → 设计门强制');
+  // fix-p1b：证据校验移到派生之后——只传 paths 的派生探针不再落 T0。
+  const dv = fakeSession({ id: 'session-p1-risk-derived', seq: 0 });
+  const dvTools = applyAgent(fakeServices({ session: dv }).services).tools;
+  const callDv = (args) => dvTools.get('relay_phase').execute(args, { agent: { session: dv, options: {} } });
+  const derived = await callDv({ phase: 'build', risk: { paths: ['docs/a.md'] } });
+  assert.equal(derived.risk.tier, 'T1', '派生 T0 缺 lines/reason → T1（不豁免设计门/独立审查）');
+  assert.ok(derived.risk.reasons.some((reason) => /actual diff evidence/.test(reason)), '派生降档原因可审计');
+  const dvOk = fakeSession({ id: 'session-p1-risk-derived-ok', seq: 0 });
+  const dvOkTools = applyAgent(fakeServices({ session: dvOk }).services).tools;
+  const callDvOk = (args) => dvOkTools.get('relay_phase').execute(args, { agent: { session: dvOk, options: {} } });
+  const derivedOk = await callDvOk({ phase: 'build', risk: { paths: ['docs/a.md'], lines: 3, reason: '只改文档' } });
+  assert.equal(derivedOk.risk.tier, 'T0', '派生 T0 带 paths+lines+reason 仍放行');
 });
 
 
