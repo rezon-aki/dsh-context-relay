@@ -2,6 +2,67 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计草稿、验收、审计与研究记录不随发布提供（公开架构/迁移文档见 docs/design）。
 
+## v0.12.0 (2026-11-19)
+
+「说人话 + 按风险配门禁 + 按需取文档」：在 v0.11.1 上补齐六块短板——统一四段式用户文案与内部键隔离、验证风险分级 T0/T1/T2 与门禁矩阵、T2 设计门回显与设计深度模板、文档索引 v2（在役/决策单列 + 目录折叠 + A/B/C 分层 + 注入计量）、角色注入裁剪（human-loop 与 ask_user 只给 Lead）、AOCI 语义层（constraints/contracts/relations）。工具数与协议不变（仍 15 个工具），无数据迁移。
+
+### 行为变更（升级前必读）
+
+- **验证风险分级默认生效**：`relay_phase` 新增 `risk{tier,reason,paths,lines,public_surface,data_format,permissions,irreversible,external,user_visible}`；不传则按改动面自动判档（未知保守 T2，T0 缺 reason 降 T1）。T0（文档/≤20 行）免 `exit_criteria`、免设计门、免 `user_gate`（含独立审查与汇报）与契约自检；T1（局部代码）免设计门，ship 留 report + 一次 diff 审查；T2（公开面/数据格式/权限/不可逆/>300 行）全门照旧。结果返回 `risk` 与被免的门（`gateWaived`）。
+- **T2 设计门必须回显**：首次进 build 的 `design_gate` 除 path/user_approved 外必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条不做清单），缺任一零副作用拒绝；只带旧字段的调用会被拒。doc_lint 对超 3 页、超 5 条提案、缺回显只给 advisory WARN。
+- **用户可见文案四段化**：notice、失败返回与 `relay_status`/`relay_phase`/`relay_handoff` 结果统一「结论 / 影响 / 需要你做什么 / 证据」（`human`），内部键与原始值只进 `facts`/结构化字段；`band=`、`autoCompress` 等不再出现在正文；throw 拒绝同样四段（code/facts 只进 `error.code`/`error.facts`）。依赖旧前缀（如 `relay_phase refused (code)`）的脚本请改看 `error.code`。
+- **文档索引默认 A 层、目录成组**：L0 只单列「在役」（pin / 最新交接与阶段 brief / 进度 / 经验）与决策文档，其余按目录成组（份数 + 1–3 个代表 + `relay_doc list prefix=<目录>`）；raw/reports/archive 永不单列。2KB 仍是 advisory 护栏，超限按 A→B→C 降级。
+- **角色裁剪**：human-loop 技能只在 relay Lead 的 agent scope 注册（非 relay 会话不再提供）；worker 裁掉 `relay_status`/`relay_doc`，teammate 裁掉 `relay_doc`；`ask_user_question` 只给 Lead。
+- **npm 包**：`files` 新增 `scripts/`（`scripts/docs-metrics.mjs` 随包发布）。
+
+### 风险分级与门禁矩阵（C2）
+
+- 新增 `lib/risk.js`（纯函数判档）：文档级或 ≤20 行 → T0；触碰 lib 代码或 >20 行 → ≥T1；公开面、数据格式、权限、不可逆、外部动作或 >300 行 → T2；信号未知按 T2 保守处理。
+- 门禁按档：设计门只 T2；ship 的 user_gate T0 免、T1 要 report + 一次 diff 审查、T2 全；`contract_check` 只 T2 强制；reopen 仅 T2 要求 `user_approved`；done-gate 对 T0 全部、T1 文档条目自动确认（`lead_confirm.auto`），显式 false 仍整表拒绝。
+- 去重缓存：同 `reviewKey`（requirement+designPath+diffHash）空 review 复用、换 diffHash 必须重审；doc_lint 按 `docsHash` 10 分钟缓存并支持 T0 `cheapOnly`；派活 ack 用 `denyKey`（含 phase）。
+
+### 设计回显与设计深度（P5）
+
+- T2 设计门在结果与 text 回显 `ask_ref` 字数与 `not_doing` 条数；缺任一、超 300 字、空数组/超 10 条均零副作用拒绝。
+- 设计深度模板进常驻协议与 SKILL：T0 一段（改什么 / 怎么验 + risk.reason）、T1 ≤1 页（改动面 / 做法 / 验收 / 回滚）、T2 七段 ≤3 页、提案 ≤5 条。
+- doc_lint 新增 `design-depth` 软检查（仅会话文档、非 cheapOnly）：>3 页 / 提案 >5 / 缺回显 / 缺不做 → WARN，不阻断。
+
+### 说人话（C1）
+
+- 新增 `lib/output.js`：四段渲染、内部键黑名单（band/headroomTo/dispatchId/revision/code:/seq/autoCompress 等）、失败/到线/阶段/交接文案生成。
+- 8 类 notice（到线/容量/边界/面板/自查/不可用/恢复/平面）统一四段；`fail()` 返回式报错 ≤300 字四段；回执协议明确「头 3 行是机器契约、不贴用户」。
+- 新增黑名单单测锁定可见文案；面板 chip/popover/水缸/设置文案中文化，phase 显示「阶段交接摘要」等中文标题，内部键不再进可见文案与 title。
+
+### 文档索引 v2（P1–P3）
+
+- 选择：单列在役（pin / 最近 3 次交接 / 2 份 brief / progress / lessons）与决策文档（decisions，或 frontmatter constraints/contracts 且显式 role/when）；其余按目录成组；`relay_doc list prefix=<目录>` 展开。
+- 层级：默认 A 层；2KB 只当护栏，超限 A→B→C（折叠/分组），每份文档仍 ≤2 次调用可达。
+- 计量：index/read/search 写 `.scratch/context-relay/metrics/<session>.ndjson`（≤200 行，不存正文/query），`relay_status.docs` 出摘要；`scripts/docs-metrics.mjs` 提供周报骨架（`node scripts/docs-metrics.mjs --since 7d`）。
+
+### 角色注入裁剪（D）
+
+- 全局技能只保留 context-relay 与 doc-governance；human-loop 仅注册到 relay Lead 的 agent scope。
+- 队友/worker 工具面按角色裁剪（worker 只余 doc_lint；teammate 裁掉 `relay_doc`）；`ask_user_question` 通过 agent-scope restrict 只给 Lead，失败降级为 warning + degradation，不阻断平面安装。
+- 预算快照同步（worker 工具 schema 1,920→257；teammate 12,370→11,115）。
+
+### AOCI 语义层（B / R）
+
+- frontmatter 新增 `constraints` / `contracts`（单行、`;`/`；` 分隔、`none` 即 0）；L0 仅在计数 >0 时给 `!n` / `An` 标记，并把 `none` 从「带决策」判定中排除。
+- L0 头部固定两行 legend/health（「读法：L1 先读 / L2 按需；! 约束 · A 契约 · → 关系」与「索引 x/2.00KB · L1 n / L2 n / raw n」）；超预算先丢 health、再折叠，legend 保留。
+- frontmatter 新增 `relations`（`,`/`;` 分隔、≤8、可带 supersedes/implements/evidence_for 前缀）；L0 尾部 `→n`；`relay_doc related <path>` 返回出边+入边（一跳即停）；doc_lint 对不存在/越界/自环给 advisory WARN。
+- 新文档（显式 frontmatter 的 architecture/decisions）缺 `constraints` → docs WARN；research/report 与无 frontmatter 的旧文档豁免。
+
+### 兼容与回退
+
+- 工具数与名称不变（15）；panel/roster/work-items/文档格式不变，无数据迁移。
+- 旧 T2 `design_gate` 调用需补 `ask_ref`/`not_doing`；依赖旧 notice 文案或 `relay_phase refused (...)` 前缀的脚本改看 `human` 与 `error.code`。
+- L0 默认视图从「尽量单列」变为「在役/决策单列 + 目录分组」，找历史文档用 `relay_doc list prefix=` 展开。
+
+### 验证与未验证
+
+- 验证：全量测试 **971/971** 通过（`node --test test/*.test.mjs`）、`npm run check` exit 0、`npm pack --dry-run` 产出 `dsh-context-relay-0.12.0.tgz` 且包含 `scripts/`。
+- 未验证：真机重载后的面板渲染与 notice 文案、真实会话的 organize/handoff 注入链路、roles/ask_user 的宿主 catalog 效果；风险档只在进程内继承（重启后保守回退 T2）；周报阈值与默认层尚无真实样本；T0/T1 设计深度只做 advisory 模板，无硬校验。
+
 ## v0.11.1 (2026-11-19)
 
 文档版：README「专职架构师」段（中英）各加一张架构师模型选择截图（`docs/images/architect-model-menu.png`，GitHub 绝对 URL，保证 npm 页面也能渲染）；开头 tagline 刷新并同步英文（补上「可独立配置模型/思考强度的架构师」与「token 预算无上限」一行提示）。

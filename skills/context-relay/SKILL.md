@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Context Relay 操作手册
 
+> **v0.12.0 新增**：① **风险分级**——T0/T1/T2 与门禁矩阵（T0 文档改动免设计门/独立审查，T2 全门，未知保守 T2）；② **设计回显**——T2 设计门必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条），T0 一段 / T1 一页 / T2 七段；③ **说人话**——notice/报错/结果统一四段 `human`，内部键只进 `facts`/结构化字段；④ **文档索引 v2**——在役/决策单列 + 目录分组、A/B/C 分层、legend/health 与注入计量；⑤ **角色裁剪**——human-loop 与 `ask_user_question` 只给 Lead，worker/teammate 工具面再裁；⑥ **语义层**——`constraints`/`contracts`/`relations` 标记与 `relay_doc related` 一跳。
+>
 > **v0.11.0 更新**：① **主动管理**——新 phase/新任务起点自查；到线四档（起点主动 / warn 现在动手 / organize·relay 兜底 / capacity 55% 最坏兜底），warn 不再推荐继续。② **固定小队**——默认上限 8（含架构师）、spawn 默认关、换人=reset 全清复用、`relay_team_status manage` 做 retire/adopt，默认视图只 squad。③ **ship 受控 reopen**——ship→build/verify 必须显式 `reopen{reason,user_approved:true}`，ship→discover 标 newTask。④ **容量线独立**——`settings.capacityThreshold` 默认 55%。⑤ **宿主压缩兜底**——host 归因写最小恢复快照+一次 notice（unknown 只日志）。
 >
 > **v0.10.0 更新**：① **两段式用户门**——首次进 build 强制 `design_gate{path, user_approved:true}`（缺失零副作用拒绝）；`contract_check` 只在 **ship 必填**；ship 的 `user_gate.verification` 分 `minimal`/`heavy`，heavy 须用户明确授权；实现↔设计对齐由新上下文独立审查、与其他验收并行。② **单模式收口**——classic `relay` 别名与全部兼容字段/旧阈值已删除；v0.9.0 未单独发布，其批次行为并入本版。③ **preset 可切换**——首轮前/会话中切到 Relay 会自动回填 Lead 平面（`relay_status.plane` 自检），「切换需新会话」已过时。④ **notice/台账语义**——`[闭环]` 只认 write/edit/apply_patch，只读工具不清 pending；同 phase 传 items 显式拒（补分点用 `relay_work_items`）；面板 schemaVersion=3，旧授权一次性失效。⑤ **文档系统 v2 不变**——字节/条数上限只做 advisory，超界归档或完整落盘加指针。

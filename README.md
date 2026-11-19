@@ -1,5 +1,7 @@
 # dsh-context-relay
 
+[![tests](https://img.shields.io/badge/tests-971%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
+
 > 以官方子智能体为基础的双层架构 agent套件，leader负责专职对接用户+团队管理，文档治理+链式记忆，维持最小必要上下文+按需调取文档，全团队保持低上下文高效工作，偏移实现、偷懒实现矫正/验证，人机交互优化，测试验证只用最小必要+重型验证测试需用户同意，可独立配置模型和思考强度的超低上下文无污染无负担专职敲定工程实现的架构师，“你的token预算无上限”开关用一句提示词强化dsh41f的思考深度。
 
 [English](README.en.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [变更记录](CHANGELOG.md) · [迁移说明](docs/design/MIGRATION.md) · MIT
@@ -55,6 +57,7 @@
 - **版本要求**：DSH `>=0.2.2-rc.2`（只支持这一代内核）、Node.js `>=20`；目前只在 DSH Web 环境验证过，headless 未验证。
 - **v0.10.0 是破坏性版本**：旧的 classic `relay` 别名、双模式配置、旧配置键都已删除，面板授权契约版本升到 3（升级后旧授权一次性失效，模式和架构师设置保留）。升级前先看[迁移说明](docs/design/MIGRATION.md)。
 - **v0.11.0 调整默认值**：容量线 55%（独立配置）、spawn 默认关、默认只显示当前小队、ship 后返修需显式 reopen、宿主压缩兜底；完整变更见 [CHANGELOG.md](CHANGELOG.md) 与迁移说明。
+- **v0.12.0 细化行为（无迁移）**：按风险配门禁（T0 文档改动可免设计门与独立审查，T2 全门）、T2 设计门回显用户原话与不做清单、输出统一四段式、文档索引 A/B/C 分层与注入计量、按角色裁剪工具与技能、constraints/contracts/relations 语义层；完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 安装
 
@@ -136,10 +139,13 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 验收默认只做最小必要：跑目标测试 + 一次独立 diff 审查 +（必要时）一次语法检查。全量回归、真机验证、大样本、多轮审查这类「重型验证」默认不做，需要你明确同意。
 
+- **按风险配门禁**：改动分 T0（文档/琐碎）、T1（局部代码）、T2（公开面/数据格式/权限/不可逆或大改）。T0 可跳过设计门与独立审查，T1 保留一次 diff 审查，T2 全门照旧；分级可以随 `relay_phase` 的 `risk` 显式指定，也可以自动判定（未知按 T2 保守处理）。
+
 ### 汇报与提问
 
 - 对你说人话：不贴命令输出、日志、长 diff，不堆内部字段和术语；术语第一次出现会解释。
 - 交付前的汇报四段：结论 → 影响 → 需要你做什么 → 证据位置，默认不超过 600 字。
+- **提醒与报错也用同一个四段**：到线提醒、失败返回、状态与交接结果都按「结论 / 影响 / 需要你做什么 / 证据」组织；内部字段只留在机器侧（`facts`/结构化结果），不往你眼前堆，也不进面板标题。
 - 能自己查清的事实先查清，只把真正需要你拍板的问题一次问清（带推荐、默认、后果）。
 - 不可逆、对外、付费、凭据、删除这类动作，先报备「做什么、为什么、怎么撤」，拿到明确同意才动。
 
@@ -147,6 +153,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 - **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认关闭**，优先复用现有人手；没有可用队员时，让现有队员清空复用、把历史成员纳入小队（adopt），或 phase 边界交接重建。
 - **Lead 只做调度**：拆活、派活、验收；具体实现交给队友。队友会收到一张标准派活单：目标、必读材料、能改哪些文件、怎么验收、回执放哪。
+- **按角色裁剪**：human-loop 技能只注册给接力 Lead；worker 不再拿到 `relay_status`/`relay_doc`，teammate 不再拿到 `relay_doc`；需要人拍板的问题（`ask_user_question`）只给 Lead。工具名与参数不变。
 - **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
 - **不会一直催队友**：队友的回执会自动送达，Lead 不会空转轮询（省 token）。
 
@@ -248,6 +255,8 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ## 升级与卸载
 
+**v0.12.0 是行为细化版（无数据迁移）**：风险分级门禁、T2 设计门回显、四段式输出、文档索引 v2、角色裁剪与 constraints/relations 语义层；旧 T2 `design_gate` 调用需补 `ask_ref`/`not_doing`，工具数与数据格式不变。
+
 **v0.11.0 是默认值/行为变更版（无数据迁移）**：容量线 85%→55% 独立配置、spawn 默认关、默认只显示 squad、到线四档语义、ship 返修需 reopen、宿主压缩兜底；回退映射见[迁移说明](docs/design/MIGRATION.md)。
 
 **v0.10.0 是破坏性版本**（从 0.8.x 直接升）：`panel.json` 的 `schemaVersion` 升到 3，旧文件里的会话授权一次性失效（自动压缩/自动交接/授权下一次需要重新开启；模式和架构师设置保留）；classic `relay` 别名、`routerMode`/`legacyPresetCompat`、`config.thresholds`、cth/autoChoose/autoDecision/handoffPreset、`relay_phase` 的 `next_operation` 等旧接口全部删除。旧的 classic 会话打开后，在模式选择器里切到 Relay 即可回填。完整清单和升级步骤见[迁移说明](docs/design/MIGRATION.md)，逐版本记录见 [CHANGELOG.md](CHANGELOG.md)。
@@ -263,7 +272,7 @@ npm run check   # 全部入口语法检查
 
 没有构建步骤：host 和 client 都是手写 ESM；开发时可以热注入，发布为 bundle（`cordis.patch.yml`）。
 
-主要目录：`lib/policy.js`（策略单源）、`lib/seams.js`（官方 seam 契约）、`lib/plane/`（角色表与幂等 reconcile）、`lib/storage.js`（原子写/锁）、`lib/panel-store.js`（面板状态）、`lib/agent.js` + `lib/agent/*`（preset 平面与工具）、`lib/agent/notice/`（提醒规划/投递）、`lib/index.js`（Host 平面/HTTP）、`lib/client.js`（Web UI）、`lib/preset-base.js`（PTC preset 资产）、`skills/`（随包技能）。
+主要目录：`lib/policy.js`（策略单源）、`lib/risk.js`（风险分级与门禁键）、`lib/output.js`（四段式文案）、`lib/docs-policy.js` + `lib/docs-metrics.js`（文档索引 v2 与注入计量）、`lib/skills.js`（角色技能注册）、`lib/seams.js`（官方 seam 契约）、`lib/plane/`（角色表与幂等 reconcile）、`lib/storage.js`（原子写/锁）、`lib/panel-store.js`（面板状态）、`lib/agent.js` + `lib/agent/*`（preset 平面与工具）、`lib/agent/notice/`（提醒规划/投递）、`lib/index.js`（Host 平面/HTTP）、`lib/client.js`（Web UI）、`lib/preset-base.js`（PTC preset 资产）、`skills/`（随包技能）。
 
 ## 进阶参考（给想深入的人）
 
@@ -286,7 +295,7 @@ npm run check   # 全部入口语法检查
 | `relay_work_items` | 读写 Lead 自己的工作台账（无参数=读；整表替换可带乐观锁）。 |
 | `relay_recommend` | Lead 把模型建议写进面板（只做提示，不改变你的决定权）。 |
 | `doc_lint` | 文档体检（配额/违禁措辞/索引/git），输出 ≤2KB。 |
-| `relay_doc` | 会话文档的分层与索引：`index` / `list` / `read` / `search` / `lint`。 |
+| `relay_doc` | 会话文档的分层与索引：`index` / `list` / `read` / `search` / `lint` / `related`。 |
 | `relay_dispatch` | Lead 取分点 → 复用或新建 worker → 发标准派活单（目标/必读/写范围/验收/回执）。 |
 | `relay_collect` | Lead 短等回执（≤120s），只读回执头 + 摘要，校验新鲜度后把分点置 done/blocked。 |
 | `relay_team_status` | 团队体检（默认只当前小队）：健康/档位/检查点/派活计数/reset 结果；`include_legacy`/`include_retired` 查看历史；`manage` 做 retire/adopt；状态没变的重复查询会被拒绝。 |
@@ -299,7 +308,10 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 
 ### 文档分层与注入边界
 
-- 跨会话文档分三层：L0 索引（自动生成、带「何时读」）→ L1（交接单/阶段材料/进度/经验，新会话先读）→ L2（架构/设计/决策，按需取）；`relay_doc` 负责读和查，`doc_lint` 负责体检。
+- 跨会话文档分三层：L0 索引（自动生成、带「何时读」）→ L1（交接单/阶段材料/进度/经验，新会话先读）→ L2（架构/设计/决策，按需取）；`relay_doc` 负责读和查（`index`/`list`/`read`/`search`/`lint`/`related`），`doc_lint` 负责体检。
+- L0 只单列「在役」文档（pin / 最新交接 / 进度 / 经验）与决策文档，其余按目录成组（份数 + 1–3 个代表 + `relay_doc list prefix=<目录>` 展开）；索引头部两行 legend/health，超 2KB 护栏按 A→B→C 降级。
+- 语义标记：frontmatter 的 `constraints`/`contracts` 在条目上给 `!n`/`An`，`relations` 给 `→n`；`relay_doc related <path>` 一次看全出边+入边，`doc_lint` 对坏指针给 advisory WARN。
+- 注入有计量：`index`/`read`/`search` 写 `.scratch/context-relay/metrics/<session>.ndjson`（≤200 行，不含正文），`relay_status.docs` 看摘要，`scripts/docs-metrics.mjs` 出周报骨架。
 - 字节/条数上限只做建议：超了自动归档或把完整内容落盘、消息里给指针，不拒绝也不丢数据；常驻注入保持有界（协议 + 15 个工具 schema + 4 个角色装配都有预算断言）。
 - 每个 step 最多一条提醒（到线/阶段边界优先，正文有上限）；投递成功才去重，失败下一步重试；正文统一脱敏。
 

@@ -1,5 +1,7 @@
 # dsh-context-relay
 
+[![tests](https://img.shields.io/badge/tests-971%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
+
 > An agent suite with a two-layer architecture built on official subagents: a Leader dedicated to interfacing with you and managing the team; document governance and chained memory; only the minimum necessary context, with documents fetched on demand; the whole team working efficiently at low context; implementation drift and corner-cutting corrected and verified; human interaction tuned; and only the minimum necessary verification — heavy testing only with your consent; plus a dedicated architect with independently configurable model and reasoning effort, ultra-low-context, contamination-free and burden-free, who finalizes the engineering implementation; and the "your token budget is unlimited" switch, whose one-line hint strengthens dsh41f's depth of thought.
 
 [中文](README.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [Changelog](CHANGELOG.md) · [Migration](docs/design/MIGRATION.md) · MIT
@@ -55,6 +57,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - **Version requirements:** DSH `>=0.2.2-rc.2` (this kernel generation only), Node.js `>=20`. It has only been verified in the DSH Web environment; headless is untested.
 - **v0.10.0 is a breaking release.** The old classic `relay` alias, the dual-mode configuration and the old config keys are all gone, and the panel authorization contract moves to version 3 (old authorizations expire once after the upgrade; mode and architect settings are kept). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
 - **v0.11.0 changes defaults:** capacity 55% (independently configured), spawn off, squad-only display by default, explicit reopen for post-delivery repair, and host-compaction fallback. See [CHANGELOG.md](CHANGELOG.md) and the migration guide.
+- **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), four-part plain-language output, a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -136,10 +139,13 @@ Every phase has a clear start and a clear finish. Two things have to line up bef
 
 Acceptance stays minimal by default: run the target tests, do one independent diff review, and (if needed) one syntax check. Heavy verification — a full regression suite, real-device runs, large samples, several review rounds — isn't done by default and needs your explicit approval.
 
+- **Gates follow risk:** changes are graded T0 (docs/trivial), T1 (local code) or T2 (public surface / data format / permissions / irreversible / large change). T0 may skip the design gate and the independent review; T1 keeps one diff review; T2 keeps every gate. You can set the tier explicitly with `relay_phase`'s `risk`, or let it be classified automatically (unknown signals fall back to T2).
+
 ### Reports and questions
 
 - It talks to you in plain language: no command output, logs or long diffs, no piles of internal fields and jargon; a term is explained the first time it appears.
 - A report before delivery has four parts: conclusion → impact → what you need to do → where the evidence is, and stays within 600 characters by default.
+- **Notices and errors use the same four parts:** line notices, failure returns and status/handoff results are all organised as conclusion / impact / what you need to do / evidence; internal fields stay on the machine side (`facts`/structured results) and never appear in panel titles.
 - Anything the agent can check for itself, it checks first; only the questions that genuinely need your call come to you, all at once, with a recommendation, a default and the consequences.
 - Irreversible, external, paid, credential or delete actions are announced first — what will be done, why, and how to undo it — and only happen after an explicit yes.
 
@@ -147,6 +153,7 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 
 - **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate, adopt a historical member, or rebuild the team at a phase boundary.
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
+- **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead; workers no longer receive `relay_status`/`relay_doc`, and teammates no longer receive `relay_doc`; questions meant for a human (`ask_user_question`) go to the Lead only. Tool names and parameters are unchanged.
 - **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
 - **It doesn't hover over teammates:** reports arrive automatically, so the Lead doesn't spin in a polling loop — which saves tokens.
 
@@ -248,6 +255,8 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 
 ## Upgrade and uninstall
 
+**v0.12.0 refines behaviour (no data migration):** risk-tier gates, the T2 design-gate echo, four-part output, the v2 document index, role trimming and the constraints/relations semantic layer; old T2 `design_gate` calls now need `ask_ref`/`not_doing`. Tool count and data formats are unchanged.
+
 **v0.11.0 changes defaults/behaviour (no data migration):** capacity 85%→55% independently configured, spawn off, squad-only display by default, four-tier line semantics, explicit reopen for post-delivery repair, and host-compaction fallback. Rollback mapping is in the [migration guide](docs/design/MIGRATION.md).
 
 **v0.10.0 is a breaking release** (upgrading straight from 0.8.x): `panel.json`'s `schemaVersion` moves to 3, so authorizations in the old file expire once (auto-compact / auto-handoff / next-operation authorizations need to be turned on again; mode and architect settings are kept); the classic `relay` alias, `routerMode`/`legacyPresetCompat`, `config.thresholds`, cth/autoChoose/autoDecision/handoffPreset and `next_operation` on `relay_phase` are all removed. Open an old classic session and switch it to Relay in the mode picker to backfill it. The full list and the upgrade steps are in the [migration guide](docs/design/MIGRATION.md); per-release notes are in [CHANGELOG.md](CHANGELOG.md).
@@ -263,7 +272,7 @@ npm run check   # syntax check for every entry point
 
 There's no build step: the host and the client are hand-written ESM; you can hot-inject while developing, and it ships as a bundle (`cordis.patch.yml`).
 
-Main directories: `lib/policy.js` (the single source for policy), `lib/seams.js` (the official kernel extension contracts), `lib/plane/` (role table and idempotent reconcile), `lib/storage.js` (atomic writes and locks), `lib/panel-store.js` (panel state), `lib/agent.js` + `lib/agent/*` (the preset plane and its tools), `lib/agent/notice/` (notice planning and delivery), `lib/index.js` (host plane / HTTP), `lib/client.js` (Web UI), `lib/preset-base.js` (PTC preset assets), `skills/` (bundled skills).
+Main directories: `lib/policy.js` (the single source for policy), `lib/risk.js` (risk tiers and gate keys), `lib/output.js` (four-part wording), `lib/docs-policy.js` + `lib/docs-metrics.js` (v2 document index and injection metrics), `lib/skills.js` (role-based skill registration), `lib/seams.js` (the official kernel extension contracts), `lib/plane/` (role table and idempotent reconcile), `lib/storage.js` (atomic writes and locks), `lib/panel-store.js` (panel state), `lib/agent.js` + `lib/agent/*` (the preset plane and its tools), `lib/agent/notice/` (notice planning and delivery), `lib/index.js` (host plane / HTTP), `lib/client.js` (Web UI), `lib/preset-base.js` (PTC preset assets), `skills/` (bundled skills).
 
 ## Advanced reference (for the curious)
 
@@ -286,7 +295,7 @@ Deeper design and implementation notes live in:
 | `relay_work_items` | Read or write the Lead's own work ledger (no args = read; a whole-list replace may carry an optimistic lock). |
 | `relay_recommend` | The Lead writes a model suggestion into the panel (a hint only; it never takes the decision away from you). |
 | `doc_lint` | Documentation check (quota / banned wording / index / git), at most 2KB of output. |
-| `relay_doc` | Layers and index for session documents: `index` / `list` / `read` / `search` / `lint`. |
+| `relay_doc` | Layers and index for session documents: `index` / `list` / `read` / `search` / `lint` / `related`. |
 | `relay_dispatch` | The Lead takes a point → reuses or creates a worker → sends the standard brief (goal / must-read / write scope / acceptance / report path). |
 | `relay_collect` | The Lead waits briefly for reports (≤120s), reads only the report head and summary, checks freshness, then marks the point done or blocked. |
 | `relay_team_status` | Team health check (current squad only by default): health / band / checkpoints / dispatch counts / reset results; `include_legacy`/`include_retired` reveal history; `manage` does retire/adopt; a repeat query with nothing changed is refused. |
@@ -299,7 +308,10 @@ HTTP (available only after local GUI authentication): `GET/PUT /context-relay/se
 
 ### Document layers and what gets injected
 
-- Cross-session documents have three layers: an L0 index (generated automatically, each entry with "when to read") → L1 (handover sheets / phase material / progress / lessons — what a new session reads first) → L2 (architecture / design / decisions — fetched on demand). `relay_doc` handles reading and searching; `doc_lint` does the health check.
+- Cross-session documents have three layers: an L0 index (generated automatically, each entry with "when to read") → L1 (handover sheets / phase material / progress / lessons — what a new session reads first) → L2 (architecture / design / decisions — fetched on demand). `relay_doc` handles reading and searching (`index`/`list`/`read`/`search`/`lint`/`related`); `doc_lint` does the health check.
+- The L0 index single-lists only the documents in use (pins / latest handoffs / progress / lessons) and decision documents; everything else is grouped by directory (count + 1–3 representatives + `relay_doc list prefix=<dir>` to expand). Its header carries two legend/health lines, and the 2KB guardrail degrades A→B→C.
+- Semantic marks: frontmatter `constraints`/`contracts` show as `!n`/`An`, `relations` as `→n`; `relay_doc related <path>` shows all outgoing and incoming edges in one hop, and `doc_lint` reports dangling links as advisory WARNs.
+- Injections are metered: `index`/`read`/`search` write `.scratch/context-relay/metrics/<session>.ndjson` (≤200 lines, no bodies), `relay_status.docs` summarises it, and `scripts/docs-metrics.mjs` produces a weekly-report skeleton.
 - Byte and item caps are advisory: on overflow the content is archived automatically, or written out in full to disk with a pointer in the message — nothing is refused and nothing is lost; what stays in context is kept bounded (the resident protocol, the 15 tool schemas and all 4 role assemblies are covered by budget assertions).
 - At most one notice per step (line and phase-boundary notices take priority, and the body has a cap); a notice is deduplicated only after it was delivered successfully, and a failed one is retried on the next step; all notice bodies are redacted.
 
