@@ -34,7 +34,7 @@ test('parseFrontmatter：解析 meta/body；无 frontmatter 原样返回', () =>
   assert.equal(plain.body, '# 无 frontmatter');
 });
 
-test('buildDocIndex/renderDocIndex：L1/L2 分层、raw 不入索引、relPath 渲染、digest 稳定', () => {
+test('buildDocIndex/renderDocIndex：选择后在役/带决策单列、其余按目录折叠、relPath 渲染、digest 稳定', () => {
   const fx = fixture();
   try {
     const index = buildDocIndex(fx.cwd);
@@ -47,18 +47,20 @@ test('buildDocIndex/renderDocIndex：L1/L2 分层、raw 不入索引、relPath �
     assert.deepEqual(l2, ['docs/decisions.md']);
     const rendered = renderDocIndex(index);
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes);
-    assert.match(rendered.text, /先读（L1）/);
-    assert.match(rendered.text, /按需（L2）/);
+    assert.match(rendered.text, /### 在役（先读）/);
+    assert.match(rendered.text, /### 带决策/);
+    assert.match(rendered.text, /### 折叠（按目录，展开即取全）/);
     assert.match(rendered.text, /docs\/decisions\.md/);
     assert.ok(!rendered.text.includes('.scratch/context-relay/docs/decisions.md'), '索引用 relay 相对路径');
-    assert.match(rendered.text, /另有 1 份历史产物未入索引/);
+    // raw/reports 永不单列：只以组行（计数 + 命令）出现。
+    assert.match(rendered.text, /reports\/ — 1 份（代表：`reports\/task-1\.md`）· `relay_doc list prefix=reports` 展开/);
     assert.equal(rendered.digest, docIndexDigest(rendered.text));
     assert.equal(docIndexDigest('a'), docIndexDigest('a'));
     assert.notEqual(docIndexDigest('a'), docIndexDigest('b'));
   } finally { fx.cleanup(); }
 });
 
-test('renderDocIndex：超预算按目录折叠成组行（不丢条目、每条省略带命令）', () => {
+test('renderDocIndex：其余按目录成组（不丢条目、每条省略带命令）；level B/C 是显式机制', () => {
   const fx = fixture();
   try {
     for (let i = 0; i < 40; i += 1) {
@@ -67,15 +69,23 @@ test('renderDocIndex：超预算按目录折叠成组行（不丢条目、每条
     const index = buildDocIndex(fx.cwd);
     const rendered = renderDocIndex(index);
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    assert.equal(rendered.truncated, true);
+    assert.equal(rendered.truncated, true, '有折叠组即计入 folded');
     assert.ok(rendered.omitted > 0);
     assert.match(rendered.text, /relay_doc list prefix=docs/);
-    assert.match(rendered.text, /41 份（代表：/);
-    assert.equal(index.all.filter((entry) => entry.relPath.startsWith('docs/')).length, 41, '组内 41 份都经 prefix=docs 可达');
+    assert.match(rendered.text, /docs\/ — 40 份（代表：/);
+    assert.equal(index.all.filter((entry) => entry.relPath.startsWith('docs/')).length, 41, '组内 41 份都经 prefix=docs 可达（decisions 单列另有其行）');
     for (const line of rendered.text.split(NL)) {
       if (/未显示|已折叠|另有|份（代表/.test(line)) assert.match(line, /relay_doc/, '省略必须带展开命令：' + line);
     }
     assert.ok(!rendered.text.includes('索引超预算已截断'), '不再用无命令的 clip 兜底');
+    // 层级机制：B 只留 pin 单列 + 组行；C = pin + 一行计数（仍带 include=all 命令）。
+    const b = renderDocIndex(index, { level: 'B' });
+    assert.equal(b.level, 'B');
+    assert.match(b.text, /### 折叠（按目录，展开即取全）/);
+    assert.doesNotMatch(b.text, /### 带决策/);
+    const c = renderDocIndex(index, { level: 'C' });
+    assert.equal(c.level, 'C');
+    assert.match(c.text, /其余 \d+ 份文档 \/ \d+ 个目录已折叠：`relay_doc list include=all` 展开/);
   } finally { fx.cleanup(); }
 });
 
