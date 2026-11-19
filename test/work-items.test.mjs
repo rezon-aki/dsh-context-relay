@@ -908,3 +908,36 @@ test('createPhaseItems：标题 → id（中文回退 point、冲突加后缀）
   const validated = validateWorkItems(created);
   assert.equal(validated.ok, true, JSON.stringify(validated));
 });
+
+
+test('w2 风险 done-gate：T0 自动确认；T1 文档条目自动；T1 代码条目仍 3×true；T2 仍门禁', async () => {
+  const cwd = tempCwd();
+  const phase = (tier) => ({ phase: 'build', risk: { tier, source: 'declared', reasons: ['test'] } });
+  const write = (items, tier) => writeWorkItems(cwd, { items, currentPhase: phase(tier) });
+  const confirm = (title, evidence) => ({ title, status: 'done', evidence });
+  // T0：无 lead_confirm + evidence → 自动确认（auto:T0 + confirmKey）。
+  const t0 = await write([{ id: 'd1', ...confirm('改 README', ['README.md:1']) }], 'T0');
+  assert.equal(t0.ok, true, JSON.stringify(t0));
+  const saved0 = readWorkItems(cwd).items.find((item) => item.id === 'd1');
+  assert.equal(saved0.lead_confirm.auto, 'T0');
+  assert.deepEqual([saved0.lead_confirm.no_drift, saved0.lead_confirm.no_missing, saved0.lead_confirm.no_regression], [true, true, true]);
+  assert.match(saved0.lead_confirm.confirmKey, /^[0-9a-f]{16}$/);
+  // T1：文档条目 evidence 即 done。
+  const before1 = readWorkItems(cwd).items;
+  const t1 = await write([...before1, { id: 'd2', ...confirm('补设计文档', ['docs/x.md:1']) }], 'T1');
+  assert.equal(t1.ok, true, JSON.stringify(t1));
+  assert.equal(readWorkItems(cwd).items.find((item) => item.id === 'd2').lead_confirm.auto, 'T1');
+  // T1：代码条目仍需 3×true。
+  const before2 = readWorkItems(cwd).items;
+  const code = await write([...before2, { id: 'c1', ...confirm('改 lib 函数', ['lib/x.js:1']) }], 'T1');
+  assert.equal(code.ok, false);
+  assert.equal(code.code, 'done-gate');
+  // T2：文档条目也必须 3×true。
+  const before3 = readWorkItems(cwd).items;
+  const strict = await write([...before3, { id: 'c2', ...confirm('改 README', ['README.md:1']) }], 'T2');
+  assert.equal(strict.ok, false);
+  assert.equal(strict.code, 'done-gate');
+  // 显式不完整确认在 T0 也不被自动覆盖（审计事实保留）。
+  const explicit = await write([{ id: 'd3', ...confirm('改 README', ['README.md:1']), lead_confirm: { no_drift: true } }], 'T0');
+  assert.equal(explicit.ok, false, '显式不完整确认不自动补');
+});

@@ -4323,8 +4323,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // 实测 9970，预算按实测+130 上调到 10100（C11 注入预算快照重定基线；仍逐条受 ≤400/单行约束）。
   // v0.10.x 完成确认门：relay_work_items 条目新增 lead_confirm{no_drift,no_missing,no_regression} 结构化 schema
   // → 实测 10540，预算按实测+~1.5% 上调到 10700（#68：只调预算，不删语义/约束）。
-  // v0.11 P0-C：relay_phase 新增 reopen{reason,user_approved}（设计 §4.4 预计 +250B）→ 实测 10966，预算按实测+~1.2% 上调到 11100。
-  assert.ok(parameterChars <= 11100, '参数 schema 总字符 <=11100（v0.11 P0-C 实测 10966），实际 ' + parameterChars);
+  // v0.11 P0-C：relay_phase 新增 reopen{reason,user_approved}（设计 §4.4 预计 +250B）→ 实测 10966。
+  // w2（relay-audit §2.5.2）：relay_phase 新增 risk{tier,reason,paths,lines,public_surface,data_format,permissions,irreversible,external,user_visible} + diff_hash → 合计 12531，预算按实测+~1.3% 上调到 12700。
+  assert.ok(parameterChars <= 12700, '参数 schema 总字符 <=12700（w2 实测 12531），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -4981,4 +4982,103 @@ test('v081 relay_doc forwards byteOffset and validates nonnegative integers', as
  const first=await doc.execute({action:'read',path:'long.md'},{agent:{session}});assert.equal(first.ok,true,JSON.stringify(first));assert.ok(first.nextByteOffset>0);
  const next=await doc.execute({action:'read',path:'long.md',byteOffset:first.nextByteOffset},{agent:{session}});assert.equal(next.ok,true);assert.equal(next.byteOffset,first.nextByteOffset);
  for(const byteOffset of [-1,1.5,'1'])assert.equal((await doc.execute({action:'read',path:'long.md',byteOffset},{agent:{session}})).code,'invalid-byte-offset');
+});
+
+
+test('w2 风险分级：T0 文档改动免设计门/独立审查/契约三问并可 ship；T2 仍强制', async () => {
+  resetSharedState();
+  const session = fakeSession({ id: 'session-risk-t0', seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  const built = await call({ phase: 'build', risk: { tier: 'T0', reason: '只改 docs 文案' } });
+  assert.equal(built.phase, 'build');
+  assert.equal(built.risk.tier, 'T0');
+  assert.ok(built.gateWaived.includes('design_gate'), 'T0 免设计门');
+  const verified = await call({ phase: 'verify' });
+  assert.equal(verified.risk.tier, 'T0', '未传 risk 时继承本会话档位');
+  const shipped = await call({ phase: 'ship' });
+  assert.equal(shipped.phase, 'ship');
+  assert.ok(shipped.gateWaived.includes('user_gate'), 'T0 免 user_gate');
+  assert.ok(shipped.gateWaived.includes('independent_review'), 'T0 免独立审查');
+  assert.ok(shipped.gateWaived.includes('contract_check'), 'T0 免契约三问');
+  assert.equal(shipped.risk.tier, 'T0');
+
+  // T2：显式声明 → 设计门/user_gate 全强制。
+  const t2 = fakeSession({ id: 'session-risk-t2', seq: 0 });
+  const t2agent = { session: t2, options: {} };
+  const t2tools = applyAgent(fakeServices({ session: t2 }).services).tools;
+  const call2 = (args) => t2tools.get('relay_phase').execute(args, { agent: t2agent });
+  await assert.rejects(call2({ phase: 'build', risk: { tier: 'T2', reason: 'public schema' } }), /design gate/, 'T2 仍要求设计门');
+  const built2 = await call2({ phase: 'build', risk: { tier: 'T2', reason: 'public schema' }, design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  assert.equal(built2.risk.tier, 'T2');
+  await call2({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await assert.rejects(call2({ phase: 'ship', contract_check: CONTRACT_CHECK }), /user_gate/, 'T2 仍要求 user_gate');
+  // 无 risk 声明的新会话默认保守 T2（缺 design_gate 被拒）。
+  const dflt = fakeSession({ id: 'session-risk-default', seq: 0 });
+  const dfltTools = applyAgent(fakeServices({ session: dflt }).services).tools;
+  await assert.rejects(dfltTools.get('relay_phase').execute({ phase: 'build' }, { agent: { session: dflt, options: {} } }), /design gate/, '无信号默认 T2');
+});
+
+test('w2 风险分级：T1 设计进 phase goal、ship 做一次 diff 审查、不做契约三问', async () => {
+  resetSharedState();
+  const session = fakeSession({ id: 'session-risk-t1', seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  const built = await call({ phase: 'build', goal: '单模块改动，验收=目标单测通过', risk: { tier: 'T1', reason: '单模块可逆', paths: ['lib/a.js'], lines: 40 } });
+  assert.equal(built.risk.tier, 'T1');
+  assert.ok(built.gateWaived.includes('design_gate'), 'T1 不要求单独设计稿（设计写进 goal）');
+  await call({ phase: 'verify' });
+  await assert.rejects(call({ phase: 'ship', diff_hash: 'd1', user_gate: { report: '四段汇报' } }), /review/, 'T1 需要一次 diff 审查');
+  const shipped = await call({ phase: 'ship', diff_hash: 'd1', user_gate: { report: '四段汇报', review: 'diff 审查：无偏移/劣化/偷懒/缺失' } });
+  assert.equal(shipped.phase, 'ship');
+  assert.ok(shipped.gateWaived.includes('contract_check'), 'T1 不做契约三问');
+});
+
+test('w2 去重键：同 reviewKey（requirement+designPath+diffHash）只审一次，同 diff 复用结论', async () => {
+  resetSharedState();
+  const session = fakeSession({ id: 'session-risk-dedupe', seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', risk: { tier: 'T2', reason: 'schema' }, design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  const first = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '独立审查：无问题', report: '汇报一' } });
+  assert.match(first.user_gate.reviewKey, /^[0-9a-f]{16}$/);
+  await call({ phase: 'build', reopen: { reason: '修一处小问题', user_approved: true }, risk: { tier: 'T2', reason: 'schema' } });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  const reused = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '', report: '汇报二' } });
+  assert.equal(reused.phase, 'ship');
+  assert.ok(reused.gateWaived.includes('independent_review'), '同 reviewKey 复用上次审查结论');
+  assert.equal(reused.user_gate.reviewKey, first.user_gate.reviewKey);
+  // 换 diffHash → 新 key，空 review 被拒（必须重新审）。
+  await call({ phase: 'build', reopen: { reason: '再修一处', user_approved: true }, risk: { tier: 'T2', reason: 'schema' } });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h2', user_gate: { review: '', report: '汇报三' } }), /review/, 'diff 变了必须重新审查');
+});
+
+
+test('w2 reopen：T0/T1 只需 reason，不要求 user_approved；T2 仍强制', async () => {
+  resetSharedState();
+  const session = fakeSession({ id: 'session-risk-reopen', seq: 0 });
+  const { tools } = applyAgent(fakeServices({ session }).services);
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', risk: { tier: 'T0', reason: '只改 docs' } });
+  await call({ phase: 'verify' });
+  await call({ phase: 'ship' });
+  const reopened = await call({ phase: 'build', reopen: { reason: '修一处文档' } });
+  assert.equal(reopened.phase, 'build');
+  assert.equal(reopened.reopen.userApproved, false);
+  assert.ok(reopened.gateWaived.includes('reopen.user_approved'), 'T0 reopen 免用户批准');
+  // T2：同流程 reopen 缺 user_approved 被严格拒绝。
+  const t2 = fakeSession({ id: 'session-risk-reopen-t2', seq: 0 });
+  const t2Tools = applyAgent(fakeServices({ session: t2 }).services).tools;
+  const t2Agent = { session: t2, options: {} };
+  const call2 = (args) => t2Tools.get('relay_phase').execute(args, { agent: t2Agent });
+  await call2({ phase: 'build', risk: { tier: 'T2', reason: 'schema' }, design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call2({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await call2({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '审查', report: '汇报' } });
+  await assert.rejects(call2({ phase: 'build', reopen: { reason: '修复' }, risk: { tier: 'T2', reason: 'schema' } }), /user_approved/, 'T2 reopen 仍要求用户批准');
 });
