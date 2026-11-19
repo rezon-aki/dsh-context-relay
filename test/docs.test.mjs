@@ -98,10 +98,15 @@ test('fixture 1,280 份：0 条不可达、0 条无命令省略、raw/reports �
     for (let i = 0; i < 300; i += 1) w(join(r, 'decisions', 'd-' + i + '.md'), ...fm('决策 ' + i));
     for (let i = 0; i < 300; i += 1) w(join(r, 'research', 'r-' + i + '.md'), ...fm('研究 ' + i));
     for (let i = 0; i < 80; i += 1) w(join(r, 'reports', 'task-' + i + '.md'), '# 回执 ' + i);
+    // 1,280 份的预算压力下也带 AOCI 标记与 legend/health：pin 一份带 constraints 的架构稿。
+    w(join(r, 'architecture', 'a-0.md'), '---', 'title: 架构 0', 'role: 架构 0', 'layer: L2', 'when: 需要时', 'constraints: 先读 docs/a.md; 版本 v1', '---', '# 架构 0');
     const index = buildDocIndex(cwd);
     assert.equal(index.all.length, 1280);
-    const rendered = renderDocIndex(index);
+    const rendered = renderDocIndex(index, { pins: ['architecture/a-0.md'] });
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
+    assert.match(rendered.text, /读法：L1 先读 \/ L2 按需；! 约束 · A 契约/, 'legend 在预算压力下仍保留');
+    assert.match(rendered.text, /`architecture\/a-0\.md`[^\n]*· !2 · /, '折叠档位仍渲染 constraints 标记');
+    assert.match(rendered.text, /索引 [\d.]+KB\/2\.00KB · L1 \d+ \/ L2 \d+ \/ raw \d+/, 'health 行给层计数');
     const prefixes = [...rendered.text.matchAll(/relay_doc list prefix=([^\s`]+)/g)].map((match) => match[1]);
     assert.ok(prefixes.includes('architecture') && prefixes.includes('decisions') && prefixes.includes('research'), '三组都可展开：' + prefixes.join(','));
     const reachable = (rel) => rendered.text.includes('`' + rel + '`')
@@ -113,6 +118,37 @@ test('fixture 1,280 份：0 条不可达、0 条无命令省略、raw/reports �
       if (/未显示|已折叠|另有|份（代表/.test(line)) assert.match(line, /relay_doc/, '无命令省略：' + line);
     }
     for (const line of rendered.text.split(NL)) assert.ok(!/^- `reports\//.test(line), 'raw 单列：' + line);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('AOCI 语义层：constraints/contracts 计数渲染 !n / An，none 不标；L0 legend/health 有界', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-aoci-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (extra = []) => ['---', 'role: 架构', 'layer: L2', 'when: 改前', ...extra, '---', '# 文档'];
+    w(join(r, 'architecture', 'with.md'), ...fm(['constraints: 先读 docs/decisions.md; 预算 2KB; 不改工具名', 'contracts: index 返回 digest']));
+    w(join(r, 'architecture', 'none.md'), ...fm(['constraints: none']));
+    w(join(r, 'handoff-1.md'), '# 交接');
+    w(join(r, 'reports', 'task-1.md'), '# 回执');
+    const index = buildDocIndex(cwd);
+    const withEntry = index.all.find((entry) => entry.relPath === 'architecture/with.md');
+    assert.equal(withEntry.constraintsCount, 3);
+    assert.equal(withEntry.contractsCount, 1);
+    assert.equal(index.all.find((entry) => entry.relPath === 'architecture/none.md').constraintsCount, 0);
+    const rendered = renderDocIndex(index);
+    const lineOf = (text, rel) => text.split(NL).find((line) => line.includes(BT + rel + BT)) ?? '';
+    assert.match(lineOf(rendered.text, 'architecture/with.md'), /· !3 A1 · /);
+    assert.match(rendered.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约$/m);
+    assert.match(rendered.text, /^索引 \d+\.\d{2}KB\/2\.00KB · L1 1 \/ L2 2 \/ raw 1$/m);
+    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
+    const pinned = renderDocIndex(index, { pins: ['architecture/none.md'] });
+    assert.doesNotMatch(lineOf(pinned.text, 'architecture/none.md'), /![0-9]|A[0-9]/, 'none 不渲染标记');
+    // 预算压力：每条决策都带 3 条 constraints，标记不挤爆 2KB（降级 A→B）。
+    for (let i = 0; i < 120; i += 1) w(join(r, 'decisions', 'd-' + i + '.md'), ...fm(['constraints: a; b; c']));
+    const big = renderDocIndex(buildDocIndex(cwd));
+    assert.ok(big.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + big.bytes);
+    assert.ok(big.level === 'B' || big.level === 'C', '降级到 ' + big.level);
+    assert.match(big.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约$/m);
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
@@ -174,6 +210,29 @@ test('checkSessionDocs：缺 frontmatter / 坏指针 / 超 L1 advisory 都给 wa
     const empty = checkSessionDocs({ workspaceRoot: mkdtempSync(join(tmpdir(), 'relay-docs-empty-')) });
     assert.equal(empty.ok, true);
   } finally { fx.cleanup(); }
+});
+
+test('checkSessionDocs：architecture/decisions 新文档缺 constraints 只 WARN；none/research/无 frontmatter 豁免', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-schema-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (role, extra = []) => ['---', 'role: ' + role, 'layer: L2', 'when: 改前', ...extra, '---', '# 文档'];
+    w(join(r, 'architecture', 'missing.md'), ...fm('架构'));
+    w(join(r, 'architecture', 'none.md'), ...fm('架构二', ['constraints: none']));
+    w(join(r, 'architecture', 'legacy.md'), '# 无 frontmatter 旧文档');
+    w(join(r, 'research', 'r.md'), ...fm('调研'));
+    w(join(r, 'reports', 'task.md'), '# 回执');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.ok(check.warnings.some((line) => line.includes('architecture/missing.md') && line.includes('constraints: none')));
+    for (const rel of ['architecture/none.md', 'architecture/legacy.md', 'research/r.md', 'reports/task.md']) {
+      assert.ok(!check.warnings.some((line) => line.includes('architecture/decisions 新文档缺 constraints') && line.includes(rel)), rel);
+    }
+    const { docLint } = await import('../lib/lint.js');
+    const lint = docLint({ workspaceRoot: cwd, sessionDocs: true });
+    const docs = lint.checks.find((item) => item.name === 'docs');
+    assert.equal(docs.ok, false, 'schema advisory 让 docs 检查 WARN');
+    assert.match(docs.detail, /缺 constraints/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
 test('relay_doc 工具：index/list/read/search/lint 五个动作可用且有界', async () => {
