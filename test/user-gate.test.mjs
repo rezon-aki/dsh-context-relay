@@ -19,6 +19,7 @@ import { apply } from '../lib/agent.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf } from '../lib/panel-store.js';
 import { clearDeriveMemory } from '../lib/agent/derive.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
+import { internalKeysIn } from '../lib/output.js';
 
 const CONTRACT_CHECK = { requirement: '需求已定：C9 用户门两段式；边界：只改 relay 协议/工具/测试', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '不打扰用户（无最小高影响点）' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
@@ -84,7 +85,7 @@ test('设计门：首次进 build 缺 design_gate → 拒绝且零副作用（�
   const before = panelStateOf(h.session.id);
   const error = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK }).then(() => undefined, (err) => err);
   assert.ok(error instanceof Error);
-  assert.match(error.message, /refused \(design gate\)/);
+  assert.match(error.message, /设计门/);
   assert.match(error.message, /design_gate/);
   assert.match(error.message, /零副作用/);
   assert.equal((await h.status()).phase, 'discover', '拒绝不切 phase');
@@ -96,7 +97,7 @@ test('设计门：首次进 build 缺 design_gate → 拒绝且零副作用（�
 test('设计门：design_gate 无效（空 path / user_approved 非 true / 非对象）→ 拒绝且零副作用', async () => {
   const h = harness('session-design-invalid');
   for (const gate of [{ path: '  ', user_approved: true }, { path: 'docs/design.md', user_approved: false }, { path: 'docs/design.md' }, 'docs/design.md', null]) {
-    await assert.rejects(h.call({ phase: 'build', design_gate: gate, contract_check: CONTRACT_CHECK }), /refused \(design gate\)/, JSON.stringify(gate));
+    await assert.rejects(h.call({ phase: 'build', design_gate: gate, contract_check: CONTRACT_CHECK }), /design_gate/, JSON.stringify(gate));
   }
   assert.equal((await h.status()).phase, 'discover');
 });
@@ -114,7 +115,7 @@ test('设计门：discover→build 带 design_gate{path,user_approved:true} 放�
 test('设计门：decide→build 同样必须带（决策后开工前仍要用户确认设计）', async () => {
   const h = harness('session-design-decide');
   await h.call({ phase: 'decide', contract_check: CONTRACT_CHECK, exit_criteria: '设计稿经用户确认' });
-  await assert.rejects(h.call({ phase: 'build', contract_check: CONTRACT_CHECK }), /refused \(design gate\)/);
+  await assert.rejects(h.call({ phase: 'build', contract_check: CONTRACT_CHECK }), /设计门/);
   const ok = await h.call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   assert.equal(ok.phase, 'build');
   assert.equal(ok.previous, 'decide');
@@ -143,7 +144,7 @@ test('验收分级：heavy 无 approved_by_user → ship 拒绝且零副作用',
   await reachVerify(h);
   const before = panelStateOf(h.session.id);
   for (const verification of [{ tier: 'heavy' }, { tier: 'heavy', approved_by_user: false }, { tier: 'bogus' }, { approved_by_user: true }, null]) {
-    await assert.rejects(h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { ...SHIP_GATE, verification } }), /refused \(verification\)/, JSON.stringify(verification));
+    await assert.rejects(h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { ...SHIP_GATE, verification } }), /验收方式不合规/, JSON.stringify(verification));
   }
   assert.equal((await h.status()).phase, 'verify', '拒绝不切 phase');
   assert.deepEqual(panelStateOf(h.session.id), before, '拒绝不写面板');
@@ -169,7 +170,7 @@ test('验收分级：items 非法（非数组/空串/超过 8 条）拒绝', asy
   const h = harness('session-verify-items');
   await reachVerify(h);
   for (const items of ['not-array', [''], ['  '], Array.from({ length: 9 }, (_, i) => 'item-' + i)]) {
-    await assert.rejects(h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { ...SHIP_GATE, verification: { tier: 'minimal', items } } }), /refused \(verification\)/);
+    await assert.rejects(h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { ...SHIP_GATE, verification: { tier: 'minimal', items } } }), /验收方式不合规/);
   }
 });
 
@@ -214,4 +215,16 @@ test('contract_check：ship 必填——缺失即拒，带齐放行', async () =
   await assert.rejects(h.call({ phase: 'ship', user_gate: SHIP_GATE }), /contract_check/);
   const shipped = await h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
   assert.equal(shipped.phase, 'ship');
+});
+
+test('relay_phase 拒绝统一四段 human：结论/影响/需要你做什么/证据，无内部键，code 只进结构化字段', async () => {
+  const h = harness('session-refusal-human');
+  const error = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK }).then(() => undefined, (err) => err);
+  assert.ok(error instanceof Error);
+  for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) assert.ok(error.message.includes(label), '缺 ' + label);
+  assert.deepEqual(internalKeysIn(error.message), [], '用户文案不含内部键');
+  assert.equal(error.code, 'design gate');
+  assert.ok(error.facts.detail.startsWith('relay_phase refused (design gate)'), '原始细节只进 facts');
+  assert.ok(error.human.conclusion.includes('设计'), 'human 四段可被 UI 复用');
+  assert.equal((await h.status()).phase, 'discover', '拒绝零副作用（不切 phase）');
 });

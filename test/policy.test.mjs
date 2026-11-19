@@ -147,7 +147,9 @@ test('formatStatus is layered and shows default 30/35/45', () => {
 
 test('buildPhaseBrief normalizes phase and lists sections', () => {
   const md = buildPhaseBrief({ phase: 'verify', goal: 'validate', exitCriteria: ['tests green'], evidence: ['docs/SPEC.md'] });
-  assert.match(md, /# Phase Brief · verify/);
+  assert.match(md, /# 阶段交接摘要 · 验证/);
+  assert.match(md, /\n\n结论：本阶段「验证」已收口/, '首段结论先行');
+  assert.doesNotMatch(md, /Phase Brief/);
   assert.match(md, /## 退出条件/);
   assert.match(md, /docs\/SPEC\.md/);
 });

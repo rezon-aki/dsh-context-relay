@@ -767,7 +767,7 @@ test('relay_freshen：Lead 拒绝/低 band 拒绝；官方压缩 + brief 注入 
     assert.match(ok.briefPath, new RegExp('team/' + LEAD + '/impl/freshen-'));
     assert.ok(existsSync(ok.briefPath));
     const brief = readFileSync(ok.briefPath, 'utf8');
-    assert.match(brief, /Phase Brief · build/);
+    assert.match(brief, /阶段交接摘要 · 构建/);
     assert.match(brief, /决定 A/);
     assert.match(brief, /链式召回/);
     assert.match(brief, /压缩后手动召回/, 'brief 文件同样保留手动召回段');

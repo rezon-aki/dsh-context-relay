@@ -586,7 +586,7 @@ test('relay_phase → ship：台账未闭合 strict 拒绝（user_gate 校验之
   updatePanelState(session.id, { autoDecision: null });
   await assert.rejects(
     call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE, next_operation: 'compress' }),
-    /relay_phase refused \(work items\): .*work ledger is not closed/,
+    (error) => /工作台账还没收口/.test(error.message) && /work ledger is not closed/.test(error.message),
     '未闭合项拒绝 ship',
   );
   assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf(session.id), 'autoDecision'), false, '拒绝路径零副作用：不写退役自决字段');
@@ -596,7 +596,7 @@ test('relay_phase → ship：台账未闭合 strict 拒绝（user_gate 校验之
   writeLedger(cwd, [{ id: 'branch-a', title: '分支 A', status: 'done' }], { rev: 2 });
   await assert.rejects(
     call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }),
-    /relay_phase refused \(work items\): .*require evidence/,
+    (error) => /工作台账还没收口/.test(error.message) && /require evidence/.test(error.message),
     'done 项必须有 evidence',
   );
 
@@ -670,8 +670,8 @@ test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻
   const gateCall = (args) => gateTools.get('relay_phase').execute(args, { agent: gateAgent });
   await gateCall({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   await gateCall({ phase: 'verify', contract_check: CONTRACT_CHECK });
-  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '  ', report: 'x' } }), /user gate/);
-  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: 'fresh review', report: '' } }), /user gate/);
+  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '  ', report: 'x' } }), /验收汇报/);
+  await assert.rejects(gateCall({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: 'fresh review', report: '' } }), /验收汇报/);
   assert.equal((await gateTools.get('relay_status').execute({}, { agent: gateAgent })).phase, 'verify', '硬门拒绝不切 phase');
 });
 
@@ -731,7 +731,7 @@ test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；item
   assert.equal(toBuild.ledger.planned, 4, 'build 既有 3 条 + 新分点');
   assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build');
   // build→verify：b1/b3/point 未收口 → strict 拒绝，零副作用（currentPhase 不变）
-  await assert.rejects(() => call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /refused \(work items, phase open\)/);
+  await assert.rejects(() => call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /工作台账还没收口/);
   assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build');
   // 显式 carry → 放行；条目 phase 改到 verify 并记 carriedFrom
   const toVerify = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, carry: ['b1', 'b3', 'point'], items: ['验收'] });
@@ -765,7 +765,7 @@ test('relay_phase：phase=null 未收口条目不能绕过 strict 关 phase 闸�
   const { tools } = applyAgent(fakeServices({ session }).services, { workItemsPhaseGate: 'strict' });
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
-  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /refused \(work items, phase open\)/, 'phase=null 条目纳入 strict 关闸');
+  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /工作台账还没收口/, 'phase=null 条目纳入 strict 关闸');
   assert.equal(readLedgerFile(cwd).currentPhase.phase, 'build', '拒绝零副作用（currentPhase 不变）');
   const carried = await call({ phase: 'verify', contract_check: CONTRACT_CHECK, carry: ['n1'] });
   assert.equal(carried.phase, 'verify');
@@ -785,11 +785,11 @@ test('relay_phase：items 只在主链跨 phase 登记（C7/A-02）——同 pha
   // 同 phase 带 items：显式拒绝（旧版静默丢弃 → 模型以为已登记）；错误给 relay_work_items 指路。
   await assert.rejects(
     call({ phase: 'build', contract_check: CONTRACT_CHECK, items: ['迟到分点'] }),
-    (error) => /refused \(items\)/.test(error.message) && /本次 phase 未切换/.test(error.message) && /relay_work_items/.test(error.message),
+    (error) => /分点登记/.test(error.message) && /本次 phase 未切换/.test(error.message) && /relay_work_items/.test(error.message),
     '同 phase items 必须显式拒绝',
   );
   assert.deepEqual(readLedgerFile(cwd), before, '同 phase items 拒绝：台账零副作用');
-  await assert.rejects(call({ phase: 'build', items: [] }), /refused \(items\)/, '同 phase 空 items 也显式拒绝');
+  await assert.rejects(call({ phase: 'build', items: [] }), /分点登记/, '同 phase 空 items 也显式拒绝');
   // 出口不登记分点。
   await assert.rejects(call({ phase: 'blocked', exit_reason: '等用户', contract_check: CONTRACT_CHECK, items: ['x'] }), /出口不登记分点/);
   assert.deepEqual(readLedgerFile(cwd), before, '出口 items 拒绝：台账零副作用');

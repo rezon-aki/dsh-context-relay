@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { budgetGate, formatStatus, normalizeBudgetPlan, normalizeThresholds, phaseBudget } from '../lib/policy.js';
+import { internalKeysIn } from '../lib/output.js';
 
 /** v0.10.0 C10 删 legacy 阈值导出后，测试用等价固定阈值对象（35/40/50 + token 兜底）。 */
 const DEFAULT_THRESHOLDS = normalizeThresholds({ warnRatio: 0.35, organizeRatio: 0.4, relayRatio: 0.5 });
@@ -304,9 +305,13 @@ test('relay_phase warn 档缺 budget_plan：拒绝且零副作用（phase/面板
     contract_check: CONTRACT_CHECK,
     lessons: [{ text: '拒绝路径零副作用', evidence: 'test/budget.test.mjs' }],
   }));
-  assert.match(error.message, /budget plan/);
   assert.match(error.message, /budget_plan/);
   assert.match(error.message, /先估计|先做预算可行性估计/);
+  // relay-audit §2.4：拒绝统一四段 human，内部键只进 error.code/facts（用户文案干净）。
+  for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) assert.ok(error.message.includes(label), '缺 ' + label);
+  assert.deepEqual(internalKeysIn(error.message), [], '拒绝文案不含内部键');
+  assert.equal(error.code, 'budget plan');
+  assert.ok(error.facts.detail.startsWith('relay_phase refused (budget plan)'), '原始技术细节只进 facts');
 
   const report = await h.status();
   assert.equal(report.phase, 'discover', '拒绝不切换 phase');
@@ -520,7 +525,7 @@ test('relay_phase 队友会话 warn 档 action=relay：lead-only，请示 Lead �
     contract_check: CONTRACT_CHECK,
     budget_plan: { action: 'relay', can_finish: false },
   }));
-  assert.match(error.message, /lead-only/);
+  assert.match(error.message, /队友不自行/);
   assert.match(error.message, /Lead/);
   assert.match(error.message, /send_message/);
   assert.match(error.message, /split/, '同时给出拆票备选');

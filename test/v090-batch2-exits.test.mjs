@@ -124,7 +124,7 @@ test('relay_phase 出口：缺 exit_reason 拒绝且零副作用（不切 phase�
   const ledgerBefore = readLedgerFile(cwd);
   const before = panelStateOf(session.id);
   for (const bad of [{ phase: 'blocked' }, { phase: 'cancel', exit_reason: '   ' }, { phase: 'blocked', exit_reason: 'x'.repeat(201) }]) {
-    await assert.rejects(call({ ...bad, contract_check: CONTRACT_CHECK }), /refused \(exit\)/);
+    await assert.rejects(call({ ...bad, contract_check: CONTRACT_CHECK }), /退出原因/);
   }
   assert.deepEqual(panelStateOf(session.id), before, '拒绝路径零副作用：面板不变');
   assert.equal((await bundle.tools.get('relay_status').execute({}, { agent })).phase, 'build', '拒绝不切 phase');
@@ -184,7 +184,7 @@ test('relay_phase 出口旁路：出口不触发 phase/分点闸门、不写台�
   await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   // 主链验证：此时切 verify 会被 strict 分点闸门拒绝（证明台账确有未收口项）。
   writeLedger(cwd, [{ id: 'b1', title: '未收口', status: 'doing', next: 'x', phase: 'build' }], { rev: 2, currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 2 } });
-  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /work items, phase open/);
+  await assert.rejects(call({ phase: 'verify', contract_check: CONTRACT_CHECK }), /工作台账还没收口/);
   const before = readLedgerFile(cwd);
   const blocked = await call({ phase: 'blocked', exit_reason: '等外部依赖', contract_check: CONTRACT_CHECK });
   assert.equal(blocked.phase, 'blocked', '出口不触发分点闸门');

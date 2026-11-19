@@ -103,7 +103,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 - L0 虚拟索引自动生成（最新交接/brief/进度/经验 + 深文档按 when/role 定位），不持久化、避免双写。
 - 分层：L1 先读（handoff/brief/progress/lessons）、L2 按需（architecture/docs/decisions/research）、raw 原始（reports/archive）；frontmatter 契约 title/role/layer/when/owner/updated，缺省可工作。
-- `relay_doc` 五个动作 index / list / read / search / lint；read 支持 section/offset、单次有界并返回 `nextOffset`；search 只回 `path:line` 摘要；lint 是 advisory 体检（缺 frontmatter / 坏指针 / 超大 / L1 超阈值）。
+- `relay_doc` 六个动作 index / list / read / search / related / lint；read 支持 section/offset、单次有界并返回 `nextOffset`；search 只回 `path:line` 摘要；related 只回一跳出/入关系（不递归、不渲染整图）；lint 是 advisory 体检（缺 frontmatter / 坏指针 / 超大 / L1 超阈值 / 关系坏指针·自环）。
 - 上限只 advisory：超界归档、完整落盘加指针，不丢数据；`doc_lint` 配额只 WARN 不拦。
 - 交接与压缩 brief 自动带索引；检索纪律写进协议与 skill（先索引后正文、消息不贴长文、细节落 L2）。
 

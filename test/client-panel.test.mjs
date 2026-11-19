@@ -311,15 +311,21 @@ test('RelayPanel：授权 hint/title 用权威句（B-P2-15：不再写「本次
   const handoffOption = optionTitles.find((title) => title.includes('接力新会话'));
   assert.ok(handoffOption, '应有「接力新会话」选项');
   assert.match(handoffOption, /模式只决定做什么/);
-  assert.match(handoffOption, /免审看 autoHandoff\/授权下一次/);
+  assert.match(handoffOption, /免审看交接免审批\/授权下一次/);
   assert.ok(!handoffOption.includes('本次免审批'));
   // 授权按钮 title：免审只来自 authorizeNext（一次性，操作成功后消费），不写旧的「接力/二次压缩」
   const auth = byClass(instance.tree, 'relay-v3-auth')[0];
   assert.ok(auth);
-  assert.match(String(auth.props.title), /下一次 relay 操作仍需官方审批/);
+  assert.match(String(auth.props.title), /下一次接力操作仍需官方审批/);
   assert.match(String(auth.props.title), /操作成功后消费/);
   // popover 内可见权威句（单一真源；v0.9.0 #26/#53：模式与授权不随接力继承）
-  assert.match(textOf(popover), /模式在本会话持久（不消费），只决定到线时「做什么」，不产生审批豁免；免审只来自 autoCompress \/ autoHandoff \/ authorizeNext（一次性，操作成功后消费）；模式与授权不随接力继承。/);
+  assert.match(textOf(popover), /模式在本会话持久（不消费），只决定到线时「做什么」，不产生审批豁免；免审只来自压缩免审批 \/ 交接免审批 \/ 授权下一次（一次性，操作成功后消费）；模式与授权不随接力继承。/);
+  // relay-audit §2.4 C1-e：popover 可见正文与 chip title 不得出现内部键。
+  assert.equal(/band=|autoCompress|autoHandoff|authorizeNext|\bphase\b/.test(textOf(popover)), false, 'popover 可见正文不含内部键');
+  const chipTitle = String(byClass(instance.tree, 'relay-v3-chip')[0].props.title);
+  assert.match(chipTitle, /阶段 构建/);
+  assert.equal(/band |phase |autoCompress|autoHandoff/.test(chipTitle), false, 'chip title 不含内部键');
+  assert.match(String(byClass(instance.tree, 'relay-v3-dot')[0].props.title), /下一次接力操作/);
   // 整个 bundle 不得再出现旧口径短语
   assert.equal(/本次免审批|视为已授权|pre-authorize|handoffPreAuthorized|接力\/二次压缩/.test(source), false, 'client bundle 不得再出现旧授权口径');
 });
@@ -627,7 +633,11 @@ test('RelayPanel：三个水缸行 = 纯 CSS 多元素注水（无 canvas）；�
   const tankButtons = () => byClass(instance.tree, 'relay-v3-tank')
     .filter((node) => String(node.props.className).split(' ').includes('relay-v3-tank'));
   const tanks = tankButtons();
-  assert.equal(tanks.length, 3, '三个水缸按钮（autoCompress / autoHandoff / 新会话注入预算无上限）');
+  assert.equal(tanks.length, 3, '三个水缸按钮（压缩免审批 / 交接免审批 / 新会话注入预算无上限）');
+  const tankTexts = tanks.map((node) => textOf(node));
+  assert.ok(tankTexts[0].includes('压缩免审批（本会话）'), '水缸标签用中文（不贴 autoCompress）');
+  assert.ok(tankTexts[1].includes('交接免审批（本会话）'), '水缸标签用中文（不贴 autoHandoff）');
+  assert.equal(tankTexts.some((text) => /autoCompress|autoHandoff/.test(text)), false, '水缸行可见文案不含内部键');
   assert.equal(byClass(instance.tree, 'relay-v3-check').length, 0, '去掉勾选框');
   assert.match(String(tanks[0].props.className), /relay-v3-tank-blue/, '压缩自动授权=蓝');
   assert.match(String(tanks[1].props.className), /relay-v3-tank-green/, '新会话自动授权=绿');
@@ -756,7 +766,8 @@ test('RelayPanel：默认模式 = 冷峻哥特肋骨穹顶表盘（radiogroup + 
   assert.equal(checked.length, 1, '单选：任一时刻只有一个档位');
   assert.match(JSON.stringify(checked[0].children), /压缩继续/, 'compress = 压缩继续（第 3 档）');
   assert.equal(needleTransform(instance), 'rotate(180deg)', '指针 180° 指向第 3 档');
-  assert.match(textOf(instance.tree), /先 relay_organize 再重试 phase/, '读出行显示当前档 hint');
+  assert.match(textOf(instance.tree), /先压缩当前阶段，再重试切换/, '读出行显示当前档 hint');
+  assert.equal(/relay_organize|\bphase\b/.test(textOf(instance.tree)), false, '读出行/面板正文不含内部键');
   // 元件齐全（v3「石肋星盘」）：多边形石墙/同心券环/放射肋/穹顶网格/尖拱山花冠/尖顶饰/飞扶壁/束柱 + 照准仪指针。
   // byClass 用子串匹配（'...-pip' 也会匹配 '...-pips' 容器）→ 计数断言一律按 class token 精确匹配。
   const exactClass = (className) => byClass(instance.tree, className).filter((node) => String(node.props.className).split(' ').includes(className));
@@ -1740,12 +1751,12 @@ test('C15：panel 与工作台账共用一条 4s 轮询（单定时器 + 每 tic
   assert.equal(tick.filter((call) => call.url.startsWith('/context-relay/panel?')).length, 1, '每 tick 一次 panel GET');
   assert.equal(tick.filter((call) => call.url.startsWith('/context-relay/work-items?')).length, 1, '每 tick 一次 work-items GET');
   // 刷新语义保留：同一 tick 后 panel 通道与台账通道都拿到新快照
-  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'handoff' }, live: LIVE({ band: 'relay', overBudget: true }) };
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT, defaultOperation: 'handoff' }, live: LIVE({ band: 'relay', overBudget: true, phase: 'verify', ratio: 0.52 }) };
   env.server.workItems = ledgerPayload({ counts: { total: 4, open: 0, doing: 0, blocked: 1, done: 3, pending: 1 } });
   env.pollAll();
   await panel.flush();
   await ledger.flush();
-  assert.match(chipTitleOf(panel), /band relay/, 'panel 通道同一 tick 刷新');
+  assert.match(chipTitleOf(panel), /阶段 验证/, 'panel 通道同一 tick 刷新（title 用中文阶段名）');
   assert.match(textOf(byClass(ledger.tree, 'relay-v3-chip')[0]), /台账 1\/4/, '台账通道同一 tick 刷新');
   // 生命周期：单组件卸载不掐断共享轮询；订阅者全部卸载才停（会话级唯一轮询）
   panel.render({ sessionId: '' });
