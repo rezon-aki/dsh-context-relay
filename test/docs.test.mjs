@@ -58,18 +58,52 @@ test('buildDocIndex/renderDocIndex：L1/L2 分层、raw 不入索引、relPath �
   } finally { fx.cleanup(); }
 });
 
-test('renderDocIndex：超索引预算时截断并留显式 marker（不静默）', () => {
+test('renderDocIndex：超预算按目录折叠成组行（不丢条目、每条省略带命令）', () => {
   const fx = fixture();
   try {
     for (let i = 0; i < 40; i += 1) {
       w(join(fx.r, 'docs', 'note-' + i + '.md'), '---', 'role: 说明文档 ' + i, 'layer: L2', 'when: 需要时', '---', '# 说明');
     }
-    const rendered = renderDocIndex(buildDocIndex(fx.cwd));
+    const index = buildDocIndex(fx.cwd);
+    const rendered = renderDocIndex(index);
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
     assert.equal(rendered.truncated, true);
     assert.ok(rendered.omitted > 0);
-    assert.match(rendered.text, /索引已截断：\d+ 条未显示/);
+    assert.match(rendered.text, /relay_doc list prefix=docs/);
+    assert.match(rendered.text, /41 份（代表：/);
+    assert.equal(index.all.filter((entry) => entry.relPath.startsWith('docs/')).length, 41, '组内 41 份都经 prefix=docs 可达');
+    for (const line of rendered.text.split(NL)) {
+      if (/未显示|已折叠|另有|份（代表/.test(line)) assert.match(line, /relay_doc/, '省略必须带展开命令：' + line);
+    }
+    assert.ok(!rendered.text.includes('索引超预算已截断'), '不再用无命令的 clip 兜底');
   } finally { fx.cleanup(); }
+});
+
+test('fixture 1,280 份：0 条不可达、0 条无命令省略、raw/reports 永不单列', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-1280-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (title) => ['---', 'title: ' + title, 'role: ' + title, 'layer: L2', 'when: 需要时', '---', '# ' + title];
+    for (let i = 0; i < 600; i += 1) w(join(r, 'architecture', 'a-' + i + '.md'), ...fm('架构 ' + i));
+    for (let i = 0; i < 300; i += 1) w(join(r, 'decisions', 'd-' + i + '.md'), ...fm('决策 ' + i));
+    for (let i = 0; i < 300; i += 1) w(join(r, 'research', 'r-' + i + '.md'), ...fm('研究 ' + i));
+    for (let i = 0; i < 80; i += 1) w(join(r, 'reports', 'task-' + i + '.md'), '# 回执 ' + i);
+    const index = buildDocIndex(cwd);
+    assert.equal(index.all.length, 1280);
+    const rendered = renderDocIndex(index);
+    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
+    const prefixes = [...rendered.text.matchAll(/relay_doc list prefix=([^\s`]+)/g)].map((match) => match[1]);
+    assert.ok(prefixes.includes('architecture') && prefixes.includes('decisions') && prefixes.includes('research'), '三组都可展开：' + prefixes.join(','));
+    const reachable = (rel) => rendered.text.includes('`' + rel + '`')
+      || prefixes.some((prefix) => rel === prefix || rel.startsWith(prefix + '/'))
+      || rendered.text.includes('relay_doc list include=all');
+    const unreachable = index.all.filter((entry) => !reachable(entry.relPath));
+    assert.deepEqual(unreachable.map((entry) => entry.relPath), [], '0 条不可达');
+    for (const line of rendered.text.split(NL)) {
+      if (/未显示|已折叠|另有|份（代表/.test(line)) assert.match(line, /relay_doc/, '无命令省略：' + line);
+    }
+    for (const line of rendered.text.split(NL)) assert.ok(!/^- `reports\//.test(line), 'raw 单列：' + line);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
 test('readDoc：按标题/分页读取、越界与坏路径拒绝、给 nextOffset', () => {
@@ -154,6 +188,10 @@ test('relay_doc 工具：index/list/read/search/lint 五个动作可用且有界
     assert.equal(list.shown, 3);
     const all = await docTool.execute({ action: 'list', include: 'all' }, exec);
     assert.equal(all.shown, 4);
+    const byPrefix = await docTool.execute({ action: 'list', prefix: '.scratch/context-relay/docs' }, exec);
+    assert.equal(byPrefix.ok, true);
+    assert.equal(byPrefix.shown, 1);
+    assert.deepEqual(byPrefix.entries.map((entry) => entry.path), ['docs/decisions.md']);
     const read = await docTool.execute({ action: 'read', path: 'docs/decisions.md', section: 'D2' }, exec);
     assert.equal(read.ok, true);
     assert.match(read.text, /不丢数据/);

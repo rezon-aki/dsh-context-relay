@@ -178,7 +178,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_recommend: [133, 311],
   relay_phase: [397, 5272],
   relay_organize: [314, 651],
-  relay_doc: [305, 823],
+  relay_doc: [305, 950],
   doc_lint: [110, 147],
   relay_work_items: [392, 2166],
   relay_handoff: [384, 1534],
@@ -192,7 +192,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
 };
 
 /** 15 工具 schema 合计（v0.11 P0-B: desc 5,491 / params 17,431；P0-C reopen schema 后 params 17,857 / schema 23,348）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 17857, schema: 23348 };
+const TOOL_SCHEMA_TOTALS = { desc: 5491, params: 17984, schema: 23475 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -250,8 +250,8 @@ const ROLE_SNAPSHOT = {
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
     toolDescChars: 4737,
-    toolSchemaChars: 20435,
-    totalChars: 32151,
+    toolSchemaChars: 20562,
+    totalChars: 32278,
   },
   teammate: {
     sections: [
@@ -265,8 +265,8 @@ const ROLE_SNAPSHOT = {
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: ['relay_status', 'relay_phase', 'relay_doc', 'doc_lint', 'relay_checkpoint', 'relay_freshen'],
     toolDescChars: 1912,
-    toolSchemaChars: 10375,
-    totalChars: 11651,
+    toolSchemaChars: 10502,
+    totalChars: 11778,
   },
   architect: {
     sections: [
@@ -280,8 +280,8 @@ const ROLE_SNAPSHOT = {
     roleTools: ['relay_checkpoint'],
     tools: ['relay_status', 'relay_doc', 'doc_lint', 'relay_checkpoint'],
     toolDescChars: 1099,
-    toolSchemaChars: 3338,
-    totalChars: 4044,
+    toolSchemaChars: 3465,
+    totalChars: 4171,
   },
   worker: {
     sections: [
@@ -295,8 +295,8 @@ const ROLE_SNAPSHOT = {
     roleTools: [],
     tools: ['relay_status', 'relay_doc', 'doc_lint'],
     toolDescChars: 761,
-    toolSchemaChars: 1793,
-    totalChars: 2179,
+    toolSchemaChars: 1920,
+    totalChars: 2306,
   },
 };
 
