@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  failureHumanOf, handoffHumanOf, humanParts, internalKeysIn, phaseHumanOf, renderFourPart, statusHumanOf,
+  failureHumanOf, handoffHumanOf, humanParts, internalKeysIn, phaseHumanOf, renderFourPart, statusHumanOf, userViewOf,
 } from '../lib/output.js';
 import {
   NOTICE_MAX, capacityNoticeText, contextCheckText, panelChangeText, phaseBoundaryText, planeIssueOf,
@@ -75,7 +75,7 @@ test('notice summary 保留机器标记（band= 只进 summary）', () => {
   assert.deepEqual(internalKeysIn(summary), ['band='], '机器标记由黑名单发现，但只允许在 summary');
 });
 
-test('relay_status / relay_phase / handoff：human 四段无内部键，内部字段留在 facts', () => {
+test('relay_status / relay_phase / handoff：用户段只解释（无原值/路径），human 四段无内部键，事实留在结构化字段', () => {
   const status = statusHumanOf({
     phase: 'build',
     lead: { used: 36000, window: 100000, ratio: 0.36, band: 'warn' },
@@ -89,6 +89,11 @@ test('relay_status / relay_phase / handoff：human 四段无内部键，内部�
     workItems: { relativePath: '.scratch/context-relay/work-items.json' },
   });
   assertHuman(renderFourPart(status), 'relay_status.human', 3000);
+  const statusUser = userViewOf(status);
+  assert.ok(statusUser !== null, 'status 用户段可投影');
+  const statusText = [statusUser.see, statusUser.need, statusUser.impact].join('；');
+  assert.doesNotMatch(statusText, /%|\btokens\b|已压缩 \d/, 'status 用户段不给百分比/token/计数');
+  assert.match(statusText, /余量/, 'status 用户段解释余量够不够');
 
   const phase = phaseHumanOf({
     phase: 'build',
@@ -100,6 +105,12 @@ test('relay_status / relay_phase / handoff：human 四段无内部键，内部�
     hint: '先摸清事实与边界，再开工',
   });
   assertHuman(renderFourPart(phase), 'relay_phase.human', 3000);
+  const phaseUser = userViewOf(phase);
+  assert.ok(phaseUser !== null, 'phase 用户段可投影');
+  const phaseText = [phaseUser.see, phaseUser.need, phaseUser.impact].join('；');
+  assert.doesNotMatch(phaseText, /\btokens\b|工作台账|分点 \d/, 'phase 用户段不给 token/台账计数');
+  assert.match(phaseUser.see, /构建/, 'phase 用户段说明这步在做什么');
+  assert.match(phaseUser.see, /验证/, 'phase 用户段说明下一步');
 
   const handoff = handoffHumanOf({
     title: '接力测试',
@@ -114,6 +125,12 @@ test('relay_status / relay_phase / handoff：human 四段无内部键，内部�
   });
   assertHuman(renderFourPart(handoff), 'relay_handoff.human', 3000);
   assert.doesNotMatch(renderFourPart(handoff), /session-internal-id/, 'human 不贴 session id');
+  const handoffUser = userViewOf(handoff);
+  assert.ok(handoffUser !== null, 'handoff 用户段可投影');
+  const handoffText = [handoffUser.see, handoffUser.need, handoffUser.impact].join('；');
+  assert.doesNotMatch(handoffText, /\.scratch\/|KB/, 'handoff 用户段不给内部路径/原始数字');
+  assert.match(handoffText, /progress\.md/, 'handoff 用户段给关键文件名');
+  assert.match(handoffText, /交接单/, 'handoff 用户段说明交接文件');
 });
 
 test('fail()：统一失败文案 ≤300 字四段；技术细节/内部键只留结构化字段', () => {

@@ -147,7 +147,7 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER ≤2220 / TEAMMATE ≤1300', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER ≤2250 / TEAMMATE ≤1320', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
   // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
@@ -155,11 +155,12 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER �
   // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
   // A1 actor 化：Lead 面 checkpoint/freshen 必须写「发消息让队友自己执行」→ ROUTER 实测 2,028，上限随实测到 2,060（硬约束不删）。
   // v0.13 D2/D5：用户汇报默认三问 + 来源约束 + 架构师机制/协议诊断 → PROTOCOL 实测 7,236、ROUTER 1,976？按实测上调（硬约束不删）。
+  // v0.13 fix5（解释口径）：ROUTER +50 → 2,246（上限 2,250）；TEAMMATE +18 → 1,311（上限 1,320）。
   assert.ok(PROTOCOL_TEXT.length <= 7300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2220, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2250, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
   // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
-  assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1300, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
+  assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',

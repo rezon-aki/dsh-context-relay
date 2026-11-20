@@ -183,7 +183,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [370, 8030],
+  relay_phase: [370, 8074],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
@@ -198,8 +198,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22813, schema: 28439 };
+/** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393；v0.13 fix5 report schema 三问化 params +44）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22857, schema: 28483 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -257,32 +257,34 @@ const ROLE_SNAPSHOT = {
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1853],
       ['context-relay:architect', 772],
-      ['context-relay:router', 2196],
+      ['context-relay:router', 2246],
       ['context-relay:team-lead', 654],
     ],
-    sectionChars: 12726,
+    sectionChars: 12776,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
     toolDescChars: 4872,
     // v0.13 fix4：collect lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）。
-    toolSchemaChars: 25526,
-    totalChars: 38252,
+    // v0.13 fix5：relay_phase report schema 三问化 +44；router 2196→2246。
+    toolSchemaChars: 25570,
+    totalChars: 38346,
   },
   teammate: {
     sections: [
-      ['context-relay:protocol', 1293],
+      ['context-relay:protocol', 1311],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 0],
       ['context-relay:architect', 0],
     ],
-    sectionChars: 1308,
+    sectionChars: 1326,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: [...TEAMMATE_TOOL_NAMES],
     toolDescChars: 1815,
-    toolSchemaChars: 13026,
-    totalChars: 14334,
+    // v0.13 fix5：relay_phase report schema 三问化 +44 同样进队友面。
+    toolSchemaChars: 13070,
+    totalChars: 14396,
   },
   architect: {
     sections: [
@@ -326,7 +328,7 @@ test('C11 A-07/A-09：4 角色装配实测快照（section 求值 + restrict + �
   for (const role of ['teammate', 'architect', 'worker']) assert.deepEqual(skills[role], [], role + ' 不装配 human-loop');
   // A-07：TEAMMATE 协议段长度预算（≤1,300 字符；快照已钉 1,261，这里保留可读的预算上限语义）。
   const protocolChars = (role) => measured[role].sections.find(([name]) => name === 'context-relay:protocol')[1];
-  assert.ok(protocolChars('teammate') <= 1300, 'TEAMMATE 协议段超预算: ' + protocolChars('teammate'));
+  assert.ok(protocolChars('teammate') <= 1320, 'TEAMMATE 协议段超预算: ' + protocolChars('teammate'));
   // A-09：root 合计必须是装配实测值（而不是把 lib 常量相加）；四角色按身份递减、工具面按角色裁剪。
   assert.equal(measured.lead.sectionChars, ROLE_SNAPSHOT.lead.sectionChars, 'root 常驻文本合计按装配实测定格');
   assert.ok(measured.lead.sectionChars > measured.teammate.sectionChars, 'root 常驻文本应多于直接队友');

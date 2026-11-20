@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Context Relay 操作手册
 
-> **v0.13.0 更新**：① **用户消息默认三问**——「你看到什么 / 要你做什么 / 有什么影响」（默认≤600 字）；四段（结论/影响/需要你做什么/证据位置）只在用户要细节或 ship 长报告时用，旧四段只 warning、不阻断。② **默认沉默**——中间进度不主动发；派活 `user_visible` 默认 false，只有标记 true 的完成项收口才产 `[给用户]` 段；没有 `[给用户]` 段就不发进度消息。③ **工具返回先给人话段**——collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节]`；organize/doc/work_items/recommend/团队工具等内部工具标 `[模型状态/内部·不要转述给用户]`，失败标 `[内部错误·不要转述给用户]`。④ **机制/协议/汇报方式的诊断归 architect**——Lead 不自行拍这类方案。⑤ **同批**——文案 actor 化 + actor lint、`lead_confirm` 单源、`manage.maintain` 维护入口、回执证据 / `review_ref` / 参数 warn、配置表生成 / legacy golden / 风险档落盘 / isDocItem 路径优先；新增归档与重启冒烟脚本。
+> **v0.13.0 更新**：① **用户消息默认三问**——「你看到什么 / 要你做什么 / 有什么影响」（默认≤600 字）；四段（结论/影响/需要你做什么/证据位置）只在用户要细节或 ship 长报告时用，旧四段只 warning、不阻断。② **默认沉默**——中间进度不主动发；派活 `user_visible` 默认 false，只有标记 true 的完成项收口才产 `[给用户]` 段；没有 `[给用户]` 段就不发进度消息。③ **工具返回先给人话段**——collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节·原文数据，可引用但要讲清楚]`；organize/doc/work_items/recommend/团队工具等内部工具标 `[模型状态/内部·原文数据，可引用但要讲清楚]`，失败标 `[内部错误·原文数据，可引用但要讲清楚]`。④ **机制/协议/汇报方式的诊断归 architect**——Lead 不自行拍这类方案。⑤ **同批**——文案 actor 化 + actor lint、`lead_confirm` 单源、`manage.maintain` 维护入口、回执证据 / `review_ref` / 参数 warn、配置表生成 / legacy golden / 风险档落盘 / isDocItem 路径优先；新增归档与重启冒烟脚本。
 >
 > **v0.12.0 新增**：① **风险分级**——T0/T1/T2 与门禁矩阵（T0 文档改动免设计门/独立审查，但须带实际 diff 证据 `paths`+`lines`，只写 reason 降 T1；T2 全门，未知保守 T2）；② **设计回显**——T2 设计门必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条），T0 一段 / T1 一页 / T2 七段；③ **说人话**——notice/报错/结果统一四段 `human`，内部键只进 `facts`/结构化字段；④ **文档索引 v2**——在役/决策单列 + 目录分组、A/B/C 分层、legend/health 与注入计量；⑤ **角色裁剪**——`human-loop`（技能）、`doc_lint`、`ask_user_question` 只给 Lead，`context-relay`/`doc-governance` 全局可用；teammate/worker 保留 `relay_doc`（teammate 另有 checkpoint/freshen），架构师/worker 裁 `relay_status` 与 `relay_phase`；⑥ **语义层**——`constraints`/`contracts`/`relations` 标记与 `relay_doc related` 一跳。
 >
@@ -120,8 +120,9 @@ disable-model-invocation: true
   需要你做什么：裁决/确认/无需（推荐+默认）。
   证据位置：path:line/文档路径（≤3条）。
   旧四段仍可提交，默认只给 warning、绝不阻断ship/任何phase；review/report 非空硬门不变。格式/长度只产warning，随relay_phase结果+一次性notice。每phase≤1次非P0同步，已答内容写brief/handoff。
-- **来源约束（默认沉默）**：先从工具返回的 `[给用户]` 段起稿（collect/handoff 等），只保留三问；`[内部细节]`、回执头、工具名、字段名、提交号、文件行号默认不转述；**没有 `[给用户]` 段就不发进度消息**。派活 `user_visible` 默认 false——中间进度默认不发，只有显式标 true 的分点完成才产 `[给用户]` 段。
-- **工具返回默认先给人话段**：collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节]`；organize/doc/work_items/recommend/团队工具等内部工具是 `[模型状态/内部·不要转述给用户]` + 技术文本；失败是 `[内部错误·不要转述给用户]`。内部段只供模型判断，不转述给用户。
+- **来源约束（默认沉默）**：先从工具返回的 `[给用户]` 段起稿（collect/handoff/status/phase 等），只保留三问；内部段是原文数据——**可引用，但要讲清楚**（先说结论与影响，数字/字段不原样堆给用户）；回执头、工具名、字段名、提交号、文件行号默认不原样贴；**没有 `[给用户]` 段就不发进度消息**。派活 `user_visible` 默认 false——中间进度默认不发，只有显式标 true 的分点完成才产 `[给用户]` 段。
+- **工具返回默认先给人话段**：collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节·原文数据，可引用但要讲清楚]`；organize/doc/work_items/recommend/团队工具等内部工具是 `[模型状态/内部·原文数据，可引用但要讲清楚]` + 技术文本；失败是 `[内部错误·原文数据，可引用但要讲清楚]`。内部段可引用，但要讲清楚（数字给结论，不堆原值）。
+- **可见性矩阵（v0.13 U1 裁决，2026-11-20）**：status（余量够不够做完这轮）、phase（这步在做什么 + 下一步）、handoff（进度与关键文件名）、collect（`user_visible:true`）/ship（`user_gate.report`）默认给用户段；dispatch/organize/checkpoint/recommend/doc/work_items/团队工具默认内部。**status/phase 保留用户段（不改回内部）**：到线/阶段是用户最需要知道的边界，沉默会让用户不知道何时该决策；用户段只给解释，原始数字/路径留内部段可引用。设计矩阵 §3.2 已同步本裁决。
 - **ship 委派统计（advisory）**：给用户的 ship 汇报带一行「派活 N 次 / Lead 自做 K 项（原因）」；数据看 `relay_status.delegation`；只作汇报素材，**不机械校验 report 文本、不阻断 ship**。
 - **PTC 边界**：程序里等待仍受 `run_code` 默认 120s 执行 deadline 约束（60s 提问超时留了余量）；不要把「必须等答案」的长等待塞进提问工具。**历史**：v0.2.3 引入 timed；v0.2.9 误删；v0.2.10 恢复固定 120s；v0.2.11 一度做「无限等待」被用户否决（2026-11-03「整体移除这个会一直等你回答的功能」），最终改为「只给简单问题、超时 pending、复杂问题走文字汇报」。
 

@@ -1,7 +1,7 @@
 /**
  * v0.13 P4（plain-report D1/D4）：工具默认 render 给「拿给用户看的那段」。
- * - collect/handoff：先 [给用户] 三问，再 [内部细节·不要转述]（digest/证据/字段名不投递）；
- * - status/phase/dispatch 等内部工具：带 [模型状态/内部] 标记，不生成 [给用户]；
+ * - collect/handoff/status/phase：先 [给用户] 三问（解释），再 [内部细节·原文数据，可引用但要讲清楚]；
+ * - dispatch/organize 等内部工具：带 [模型状态/内部·原文数据] 标记，不生成 [给用户]；
  * - 失败：只给 [内部错误] 一行，不再把 human 四段 JSON 当输出；
  * - 回执「## 用户可见」节优先，缺失时中性兜底；模板加可选节（缺失不拒绝）。
  * 全部走真实工具 execute + output.render；tmp 工作区，不触网。
@@ -26,7 +26,8 @@ import { INTERNAL_DETAILS_MARK, INTERNAL_ERROR_MARK, MODEL_STATE_MARK, internalK
 const LEAD_CONFIRM = { no_drift: true, no_missing: true, no_regression: true };
 const thresholds = thresholdsFromPercent(35);
 /** 用户段里不得出现的内部字段名（原始键护栏，不是词表）。 */
-const INTERNAL_FIELD_RE = /reportPath|technicalDigest|dispatchId|revision|verdict|commit|digest|sessionId|handoffPath|summary|headroomTo|band=|\bseq\b/;
+/** 红线：用户段不得出现原样字段名（key: / key= / 原始键）；解释性引用不算。 */
+const RAW_FIELD_RE = /(?:reportPath|technicalDigest|dispatchId|revision|verdict|commit|digest|sessionId|handoffPath|summary)\s*[:=]|band=|headroomTo|\bseq\b/;
 
 function tmpCwd() { return mkdtempSync(join(tmpdir(), 'relay-p4-')); }
 
@@ -106,7 +107,7 @@ test('collect render：默认先给 [给用户] 三问，digest/证据留在结�
   assert.ok(!rendered.includes(result.technicalDigest), '技术摘要不进默认 render');
   const userPart = rendered.split(INTERNAL_DETAILS_MARK)[0];
   assert.deepEqual(internalKeysIn(userPart), [], '用户段无内部键');
-  assert.doesNotMatch(userPart, INTERNAL_FIELD_RE, '用户段无内部字段名：' + userPart);
+  assert.doesNotMatch(userPart, RAW_FIELD_RE, '用户段无原样字段名：' + userPart);
 });
 
 test('collect render：无「## 用户可见」时中性兜底；needs-human 带需要你决定', async () => {
@@ -161,8 +162,14 @@ test('status/phase render：凡带 human 的工具默认先给用户段；技术
     for (const label of ['你看到什么：', '要你做什么：', '有什么影响：']) assert.ok(rendered.includes(label), name + ' 三问齐全：' + label);
     assert.ok(rendered.includes(INTERNAL_DETAILS_MARK), name + ' 技术细节有内部标记');
     const userPart = rendered.split(INTERNAL_DETAILS_MARK)[0];
-    assert.doesNotMatch(userPart, INTERNAL_FIELD_RE, name + ' 用户段无内部字段名：' + userPart);
+    assert.doesNotMatch(userPart, RAW_FIELD_RE, name + ' 用户段无原样字段名：' + userPart);
+    assert.doesNotMatch(userPart, /%|\btokens\b|工作台账|分点/, name + ' 用户段不给原始数字/台账计数：' + userPart);
     assert.match(rendered.slice(rendered.indexOf(INTERNAL_DETAILS_MARK)), /phase|band=|context/, name + ' 内部段仍保留模型状态');
+    if (name === 'relay_phase') {
+      const reportDesc = tools.get('relay_phase').parameters.properties.user_gate.properties.report.description;
+      assert.match(reportDesc, /三问/, 'user_gate.report schema 描述改三问');
+      assert.doesNotMatch(reportDesc, /四段式大白话汇报/, '旧四段 schema 描述已移除');
+    }
   }
 });
 
@@ -200,7 +207,9 @@ test('handoff render：[给用户] 先说新会话已建好，内部段保留 su
   for (const label of ['你看到什么：', '要你做什么：', '有什么影响：']) assert.ok(rendered.includes(label), label);
   assert.ok(rendered.includes(INTERNAL_DETAILS_MARK), '技术 summary 有内部标记');
   const userPart = rendered.split(INTERNAL_DETAILS_MARK)[0];
-  assert.doesNotMatch(userPart, INTERNAL_FIELD_RE, '用户段无内部字段名：' + userPart);
+  assert.doesNotMatch(userPart, RAW_FIELD_RE, '用户段无原样字段名：' + userPart);
+  assert.doesNotMatch(userPart, /\.scratch\//, 'handoff 用户段不给 .scratch 路径');
+  assert.match(userPart, /progress\.md/, 'handoff 用户段给关键文件名');
   // 失败路径（缺 human_approved）：只给内部错误一行，不把 human 四段当输出
   const refused = await tool.execute({ status: { goal: 'x' } }, { agent: { session: { ...session, id: 'old2' }, options: {} } });
   assert.equal(refused.ok, false);
@@ -215,4 +224,19 @@ test('dispatch brief：worker 回执模板含可选 ## 用户可见 / ## 需要�
   assert.match(brief, /## 用户可见/, '模板含可选用户可见节');
   assert.match(brief, /需要你决定/, 'needs-human 时加需要你决定');
   assert.match(brief, /缺失不拒绝/, '缺失不拒绝');
+});
+
+test('内部段标记：原文数据可引用但要讲清楚（不再写「不要转述」）', () => {
+  for (const [name, mark] of [['模型状态', MODEL_STATE_MARK], ['内部细节', INTERNAL_DETAILS_MARK], ['内部错误', INTERNAL_ERROR_MARK]]) {
+    assert.match(mark, /原文数据，可引用但要讲清楚/, name + ' 新口径');
+    assert.doesNotMatch(mark, /不要转述/, name + ' 不再写不要转述');
+  }
+});
+
+test('红线只拦原样字段名：解释性引用放行', () => {
+  assert.doesNotMatch('这次提交 abc1234 已核对，登录按钮修好了。', RAW_FIELD_RE, '提交号可解释性引用');
+  assert.doesNotMatch('版本 revision 已对齐，用户可见变化已说明。', RAW_FIELD_RE, '说明性提到 revision 不算原样字段名');
+  assert.match('commit: abc1234', RAW_FIELD_RE, '原样 commit: 被拦');
+  assert.match('dispatchId=d-1', RAW_FIELD_RE, '原样 dispatchId= 被拦');
+  assert.match('band=organize', RAW_FIELD_RE, '原样 band= 被拦');
 });
