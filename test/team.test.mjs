@@ -1511,7 +1511,8 @@ test('relay_collect：立即读回执头 3 行 + digest（≤600）→ 台账 do
     assert.equal(result.ok, true);
     assert.equal(result.status, 'collected');
     assert.equal(result.verdict, 'done');
-    assert.equal(result.digest, '登录修复完成，node --test 全绿');
+    assert.equal(result.digest, '[evidence:unverified:commit+verification] 登录修复完成，node --test 全绿');
+    assert.deepEqual(result.evidence, { verdict: 'unverified', missing: ['commit', 'verification'] }, '缺 commit/verification → unverified（warn，不拒）');
     assert.ok(Array.from(result.digest).length <= 600);
     assert.ok(!result.text.includes('## 证据'), '只回 digest，不返回报告正文');
     assert.equal(result.reportPath, '.scratch/context-relay/reports/a1.md');
@@ -1720,7 +1721,7 @@ test('relay_collect：reload 后旧回执不得假收口（落盘新 dispatchId 
     const collected = await collect.execute({ itemId: 'a1', lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(collected.status, 'collected');
     assert.equal(collected.verdict, 'done');
-    assert.equal(collected.digest, '重新派活后完成');
+    assert.equal(collected.digest, '[evidence:unverified:commit+verification] 重新派活后完成');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
@@ -1803,7 +1804,7 @@ test('relay_collect：报告超 64KB → reportTruncated 标记 + digest 有界�
     assert.equal(result.status, 'collected');
     assert.equal(result.reportTruncated, true, '超过 64KB 读取上限显式标记');
     assert.ok(result.reportBytes > 65536);
-    assert.equal(result.digest, '大报告完成');
+    assert.equal(result.digest, '[evidence:unverified:commit+verification] 大报告完成');
     assert.equal(ledgerItem(dir, 'a1').status, 'done');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });

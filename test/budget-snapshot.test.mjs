@@ -183,7 +183,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [370, 7513],
+  relay_phase: [370, 8030],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
@@ -199,7 +199,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
 };
 
 /** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 21767, schema: 27393 };
+const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22284, schema: 27910 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -248,24 +248,25 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   → teammate: status+phase+doc+checkpoint+freshen（12,509 schema）；architect: doc+checkpoint（2,850）；
  *   worker: 只 relay_doc（1,305）；fix3 补 lead_confirm 复用字段后 Lead 13 工具 23,991 schema（relay_phase params 7,513）。
  * v0.13 B1 维护入口（manage.maintain）：relay_team_status desc +122 / params +367（含 brief/reset）→ lead 面 +489。
+ * v0.13 P1 ② review_ref：relay_phase params +517（user_gate.review_ref）；协议 PROTOCOL 7160→7200 / ROUTER 2028→2052（D3 只读例外句）。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 7160],
+      ['context-relay:protocol', 7200],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1853],
       ['context-relay:architect', 693],
-      ['context-relay:router', 2028],
+      ['context-relay:router', 2052],
       ['context-relay:team-lead', 654],
     ],
-    sectionChars: 12403,
+    sectionChars: 12467,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
     toolDescChars: 4872,
-    toolSchemaChars: 24480,
-    totalChars: 36883,
+    toolSchemaChars: 24997,
+    totalChars: 37464,
   },
   teammate: {
     sections: [
@@ -279,8 +280,8 @@ const ROLE_SNAPSHOT = {
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: [...TEAMMATE_TOOL_NAMES],
     toolDescChars: 1815,
-    toolSchemaChars: 12509,
-    totalChars: 13817,
+    toolSchemaChars: 13026,
+    totalChars: 14334,
   },
   architect: {
     sections: [
