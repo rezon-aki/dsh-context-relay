@@ -193,13 +193,13 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_renew: [357, 291],
   relay_architect: [718, 759],
   relay_dispatch: [248, 1314],
-  relay_collect: [659, 1704],
+  relay_collect: [659, 1839],
   relay_checkpoint: [338, 1207],
   relay_freshen: [416, 952],
 };
 
 /** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22284, schema: 27910 };
+const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22419, schema: 28045 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -265,8 +265,9 @@ const ROLE_SNAPSHOT = {
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
     toolDescChars: 4872,
-    toolSchemaChars: 24997,
-    totalChars: 37464,
+    // v0.13 fix4：collect lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）。
+    toolSchemaChars: 25132,
+    totalChars: 37599,
   },
   teammate: {
     sections: [

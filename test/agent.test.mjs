@@ -4376,7 +4376,8 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
   // fix3：relay_collect.lead_confirm 补 auto/confirmKey/diffHash → 实测 5219，预算按实测+~3.5% 上调到 5400。
   // v0.13 B1：manage.maintain 新增 brief/reset/action 枚举 → 实测 5586，预算按实测+~2% 上调到 5700。
-  assert.ok(leadParameterChars <= 5700, 'lead-only 5 条参数总字符 <=5700（v0.13 B1 实测 5586），实际 ' + leadParameterChars);
+  // v0.13 fix4：collect.lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）→ 实测 5721，预算按实测+~2% 上调到 5850。
+  assert.ok(leadParameterChars <= 5850, 'lead-only 5 条参数总字符 <=5850（v0.13 fix4 实测 5721），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

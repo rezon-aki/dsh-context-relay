@@ -106,6 +106,18 @@ export const CONFIG_ROWS = [
     en: "Host-compaction attribution fallback: write a minimal recovery snapshot + one notice on host attribution; `off` logs only.",
   },
   {
+    key: "`receiptVerify`",
+    default: () => "`'warn'`",
+    zh: "回执/审查证据校验档：`warn`（默认；缺 commit/verification 只标 unverified）/ `strict`（缺即拒）/ `off`（不校验）。",
+    en: "Receipt/review evidence check: `warn` (default; missing commit/verification is flagged unverified), `strict` (missing → refused), `off` (no check).",
+  },
+  {
+    key: "`strictToolArgs`",
+    default: () => "`false`",
+    zh: "工具 schema 外的参数：`false`（默认）只记 JSONL + warn，`true` 直接返回 invalid-args。",
+    en: "Arguments outside a tool's schema: `false` (default) only records JSONL + warns, `true` returns invalid-args.",
+  },
+  {
     key: "`panelPath` / `settingsPath`",
     default: () => '`~/.dsh/data/dsh-context-relay/…`',
     zh: "面板和设置文件的位置。",

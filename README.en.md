@@ -198,6 +198,8 @@ Host plugin configuration:
 | `contextCheck` | `'on'` | Proactive self-check at a new phase/task; `'off'` silences it. |
 | `reopenGate` | `'strict'` | ship→build/verify repair gate: `strict` / `warn` / `off` (off = old v0.10 behaviour). |
 | `compactionFallback` | `'on'` | Host-compaction attribution fallback: write a minimal recovery snapshot + one notice on host attribution; `off` logs only. |
+| `receiptVerify` | `'warn'` | Receipt/review evidence check: `warn` (default; missing commit/verification is flagged unverified), `strict` (missing → refused), `off` (no check). |
+| `strictToolArgs` | `false` | Arguments outside a tool's schema: `false` (default) only records JSONL + warns, `true` returns invalid-args. |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | Where the panel and settings files are kept. |
 | `architect` | `true` | Default for the architect switch (the composer's architect pill overrides it per session). |
 | `workItems` | `true` | Enables the work ledger; setting it to `false` goes back completely to the old behaviour (it conflicts with the dispatch-work-first protocol, and a warning is shown at load). |

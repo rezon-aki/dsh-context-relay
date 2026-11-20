@@ -444,8 +444,8 @@ test('relay_team_status：Lead 读团队健康（records 根 + stale/spent 动�
     assert.deepEqual(report.stale.sort(), ['impl-g1', 'review-g1']);
     assert.match(report.text, /records=\.scratch\/context-relay\/team\/session-lead\//);
     assert.match(report.text, /^小队 2\/8/, 'v0.11 P0-B：默认只展示当前 squad 计数');
-    assert.match(report.text, /stale → 边界 reset 复用（真清空，0 额度）；换身份\/角色且 allowSpawn 才 renew/);
-    assert.match(report.text, /spent → 先 checkpoint 再 reset 复用（0 额度）；换身份\/角色且 allowSpawn 才 renew/);
+    assert.match(report.text, /stale → 发消息让该队友自己 relay_freshen\(\{reset:true, brief\}\) 真清空复用（0 额度）；换身份\/角色且 allowSpawn 才 renew/);
+    assert.match(report.text, /spent → 先发消息让该队友自己 relay_checkpoint，再自己 relay_freshen\(\{reset:true, brief\}\) 复用（0 额度）；换身份\/角色且 allowSpawn 才 renew/);
     assert.match(impl.action, /relay_freshen\(\{reset:true/, '结构化 action 也 reset-first');
     assert.doesNotMatch(impl.action, /relay_renew）|先换新/);
     assert.ok(report.text.length <= 2000, '团队报告有界');

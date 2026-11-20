@@ -198,6 +198,8 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `contextCheck` | `'on'` | 新 phase/新任务起点自查提醒；`'off'` 全静默。 |
 | `reopenGate` | `'strict'` | ship→build/verify 返修闸门：`strict` / `warn` / `off`（off=v0.10 旧行为）。 |
 | `compactionFallback` | `'on'` | 宿主自动压缩归因兜底：host 归因写最小恢复快照+一次 notice；`off` 只日志。 |
+| `receiptVerify` | `'warn'` | 回执/审查证据校验档：`warn`（默认；缺 commit/verification 只标 unverified）/ `strict`（缺即拒）/ `off`（不校验）。 |
+| `strictToolArgs` | `false` | 工具 schema 外的参数：`false`（默认）只记 JSONL + warn，`true` 直接返回 invalid-args。 |
 | `panelPath` / `settingsPath` | `~/.dsh/data/dsh-context-relay/…` | 面板和设置文件的位置。 |
 | `architect` | `true` | 架构师开关的默认值（输入框「架构师」小胶囊按会话覆盖）。 |
 | `workItems` | `true` | 启用工作台账；设为 `false` 完全回到旧行为（与「执行活先派活」的协议冲突，装载时会提示）。 |

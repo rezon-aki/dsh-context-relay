@@ -17,6 +17,10 @@ import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearDeriveMemory } from '../lib/agent/derive.js';
 import { ARCHITECT_TOOL_NAMES, LEAD_TOOL_NAMES, TEAMMATE_TOOL_NAMES, WORKER_TOOL_NAMES } from './tool-surface.mjs';
+import { createTeamTools } from '../lib/agent/team-tools.js';
+import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
+import { thresholdsFromPercent } from '../lib/policy.js';
+import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const TOOL_RE = /\b(?:relay_[a-z][a-z0-9_]*|doc_lint)\b/g;
@@ -158,6 +162,78 @@ test('A2 actor lint：Lead 文本不得直接调 checkpoint/freshen，跨角色�
   const cross = lead.text.split('\n').filter((line) => /relay_checkpoint|relay_freshen/.test(line));
   assert.ok(cross.length >= 4, 'Lead 文本应保留 4 处换人/保鲜说明（实际 ' + cross.length + '）');
   for (const line of cross) assert.match(line, /发消息/, 'Lead 提 checkpoint/freshen 时必须写「发消息让队友」：' + line.trim().slice(0, 120));
+});
+
+
+const DESIGN_GATE = { path: '.scratch/context-relay/architecture/actor-tools.md', user_approved: true, ask_ref: '用户确认：按设计推进', not_doing: ['不发布 npm'] };
+const CONTRACT_CHECK = { requirement: '需求已定：工具结果文本 actor 化', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+
+/** 工具结果文本夹具：Lead + 一名到线队友，触发 relay_phase triage 与 relay_team_status 的 action 文案。 */
+async function toolResultTexts() {
+  resetSharedState();
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-actor-tools-'));
+  const session = { id: 'session-actor-tools-lead', header: { cwd }, seq: 0, snapshotEvents: () => [], requestHeader: () => ({ config: { provider: 'deepseek-official', model: 'deepseek-flash' } }) };
+  const teams = {
+    tryMembership: () => ({ role: 'lead', root: { session: { id: session.id } } }),
+    listMembers: () => [{ id: 'session-actor-tools-m1', name: 'mate-1', role: 'teammate', status: 'inactive' }],
+  };
+  const sessionQuery = {
+    async observeSession(memberId) {
+      const projectedTokens = memberId === 'session-actor-tools-m1' ? 420000 : 20000;
+      return { projections: { values: { contextPressure: { contextWindow: 1000000, projectedTokens } } }, [Symbol.dispose]() {} };
+    },
+  };
+  const roster = emptyRoster();
+  ensureLineage(roster, 'mate-1', { name: 'mate-1', sessionId: 'session-actor-tools-m1' });
+  await writeRoster(cwd, roster, session.id);
+  const services = {
+    sessionProjections: { snapshot: () => ({ values: { contextPressure: { contextWindow: 1000000, projectedTokens: 20000 } } }) },
+    tokenMeter: { measure: () => ({ totalTokens: 20000 }) },
+    agentTeams: teams,
+    sessionQuery,
+  };
+  const preset = toolCtx(services);
+  apply(preset.ctx, {});
+  const agent = { session, options: {}, inject() {} };
+  const phase = await preset.tools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent });
+  const teamTools = createTeamTools({ ctx: preset.ctx, currentThresholds: () => thresholdsFromPercent(40), allowSpawn: false, squadMax: 8 });
+  const statusTool = teamTools.leadTools.find((tool) => tool.name === 'relay_team_status');
+  assert.ok(statusTool !== undefined, 'relay_team_status 已注册');
+  const status = await statusTool.execute({}, { agent });
+  return [
+    { name: 'relay_phase', text: String(phase.text ?? '') },
+    { name: 'relay_team_status', text: String(status.text ?? '') },
+  ];
+}
+
+/** 与 fakeCtx 同构，但暴露 ctx.get 服务（工具执行需要投影/团队/台账）。 */
+function toolCtx(services) {
+  const fixture = services.agentTeams !== undefined && services.subagents === undefined ? subagentsFromLegacy(services.agentTeams) : undefined;
+  const normalized = fixture === undefined ? services : { ...services, subagents: fixture, agents: services.agents ?? fixture.agentsService };
+  const tools = new Map();
+  const ctx = {
+    effect(fn) { const dispose = fn(); return typeof dispose === 'function' ? dispose : () => {}; },
+    on() { return () => {}; },
+    logger: { info() {}, warn() {} },
+    systemPrompt: { section() { return () => {}; }, context() { return () => {}; } },
+    tools: { register(definition) { tools.set(definition.name, definition); return () => {}; } },
+    get(name) { return normalized?.[name]; },
+  };
+  return { ctx, tools };
+}
+
+test('A2+ actor lint：工具结果文本也不得让 Lead 直接调队友工具（需注明发消息让队友自己执行）', async () => {
+  const surfaces = await toolResultTexts();
+  for (const surface of surfaces) {
+    const offenders = actorViolations(surface.text, LEAD_TOOL_NAMES);
+    assert.deepEqual(offenders, [], surface.name + ' 结果文本直接提到非本部工具且未注明由队友执行：' + JSON.stringify(offenders, null, 1));
+    // 裸词「checkpoint / freshen / reset 复用」同样要写明由队友执行（不做工具名匹配就漏掉）。
+    const actionLines = surface.text.split('\n').filter((line) => /checkpoint|freshen/.test(line));
+    assert.ok(actionLines.length > 0, surface.name + ' 结果文本应含队友动作行（避免空样本自证）');
+    for (const line of actionLines) {
+      assert.match(line, /发消息|让队友|队友自己|它自己|你自己|由你自己/, surface.name + ' 动作行未写明由队友执行：' + line);
+    }
+  }
 });
 
 test('A2 actor lint：架构师文本不得出现 Lead 会发 relay_freshen，须注明自己执行', async () => {
