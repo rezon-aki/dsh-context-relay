@@ -4369,11 +4369,13 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // A-06 实测 2,141/3,000 → 预算按实测+~3% 定格；15 工具逐条精确快照见 test/budget-snapshot.test.mjs。
   // v0.10.x 完成确认门：relay_collect 描述补 lead_confirm 口径 → 实测 2353，预算按实测+~2% 上调到 2400。
   // v0.11 P0-B：relay_team_status 描述补默认 squad/manage/include_* 口径后收敛 ≤400 → 实测 2356，预算 2400 不变。
-  assert.ok(leadDescriptionChars <= 2400, 'lead-only 5 条描述总字符 <=2400（v0.11 P0-B 实测 2356），实际 ' + leadDescriptionChars);
+  // v0.13 B1：manage.maintain 进描述（标准 checkpoint→freshen 句）→ 实测 2478，预算按实测+~3% 上调到 2550。
+  assert.ok(leadDescriptionChars <= 2550, 'lead-only 5 条描述总字符 <=2550（v0.13 B1 实测 2478），实际 ' + leadDescriptionChars);
   // v0.10.x 完成确认门：relay_collect 新增 lead_confirm 结构化 schema → 实测 3643，预算 3700。
   // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
   // fix3：relay_collect.lead_confirm 补 auto/confirmKey/diffHash → 实测 5219，预算按实测+~3.5% 上调到 5400。
-  assert.ok(leadParameterChars <= 5400, 'lead-only 5 条参数总字符 <=5400（fix3 实测 5219），实际 ' + leadParameterChars);
+  // v0.13 B1：manage.maintain 新增 brief/reset/action 枚举 → 实测 5586，预算按实测+~2% 上调到 5700。
+  assert.ok(leadParameterChars <= 5700, 'lead-only 5 条参数总字符 <=5700（v0.13 B1 实测 5586），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

@@ -189,7 +189,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
   doc_lint: [110, 147],
   relay_work_items: [392, 2844],
   relay_handoff: [384, 1534],
-  relay_team_status: [374, 1151],
+  relay_team_status: [496, 1518],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
   relay_dispatch: [248, 1314],
@@ -198,8 +198,8 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（fix3 补 lead_confirm 的 auto/confirmKey/diffHash 后：desc 5,504 / params 21,400 / schema 26,904；含 w2 risk 与 w1 design_gate 回显字段）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5504, params: 21400, schema: 26904 };
+/** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 21767, schema: 27393 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -247,6 +247,7 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  * ledger +13、router +29、team-lead +30（lead 段合计 +135），architect 收尾句 +28；更新实测快照。
  *   → teammate: status+phase+doc+checkpoint+freshen（12,509 schema）；architect: doc+checkpoint（2,850）；
  *   worker: 只 relay_doc（1,305）；fix3 补 lead_confirm 复用字段后 Lead 13 工具 23,991 schema（relay_phase params 7,513）。
+ * v0.13 B1 维护入口（manage.maintain）：relay_team_status desc +122 / params +367（含 brief/reset）→ lead 面 +489。
  */
 const ROLE_SNAPSHOT = {
   lead: {
@@ -262,9 +263,9 @@ const ROLE_SNAPSHOT = {
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
-    toolDescChars: 4750,
-    toolSchemaChars: 23991,
-    totalChars: 36394,
+    toolDescChars: 4872,
+    toolSchemaChars: 24480,
+    totalChars: 36883,
   },
   teammate: {
     sections: [
