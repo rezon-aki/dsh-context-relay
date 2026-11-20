@@ -69,7 +69,9 @@ test('renderDocIndex：其余按目录成组（不丢条目、每条省略带命
     const index = buildDocIndex(fx.cwd);
     const rendered = renderDocIndex(index);
     assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    assert.equal(rendered.truncated, true, '有折叠组即计入 folded');
+    // fix2：折叠组有命令可回取，不算 truncated；只有字节超护栏/扫描触顶才算。
+    assert.equal(rendered.truncated, false, '有折叠组但有展开命令 → 不算 truncated');
+    assert.equal(renderDocIndex(index, { maxBytes: 1 }).truncated, true, '字节超护栏才 truncated');
     assert.ok(rendered.omitted > 0);
     assert.match(rendered.text, /relay_doc list prefix=docs/);
     assert.match(rendered.text, /docs\/ — 40 份（代表：/);

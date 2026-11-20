@@ -284,7 +284,7 @@ npm run check   # 全部入口语法检查
 
 ### 工具与接口
 
-共 15 个工具：7 个常驻 + `doc_lint` + 5 个 Lead 专属 + 2 个队友工具（`relay_checkpoint`/`relay_freshen`，架构师只用前者）。工具与技能按角色裁剪（`human-loop` 只随 Lead 注册；`context-relay`/`doc-governance` 全局可用）：
+共 15 个工具：7 个全局注册（其中 `relay_organize`/`relay_handoff`/`relay_recommend`/`relay_work_items` 仅 Lead 可用）+ `doc_lint`（仅 Lead）+ 5 个 Lead 专属 + 2 个队友工具（`relay_checkpoint`/`relay_freshen`，架构师只用前者）。工具与技能按角色裁剪（`human-loop` 只随 Lead 注册；`context-relay`/`doc-governance` 全局可用）：
 
 | 角色 | 工具面 | 技能 |
 |---|---|---|

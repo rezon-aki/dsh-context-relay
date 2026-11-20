@@ -969,3 +969,26 @@ test('confirmKey 消费：已 done 重复请求只回传 auto+confirmKey → 复
   assert.equal(forged.ok, false);
   assert.equal(forged.code, 'done-gate');
 });
+
+test('confirmKey 绑定内容：同 id 改 title/evidence 后旧 key 失效，旧确认不保留', async () => {
+  const cwd = tempCwd();
+  const phase = { phase: 'build', risk: { tier: 'T0', source: 'declared', reasons: ['test'] } };
+  const doc = { id: 'bind-doc', title: '改 README', status: 'done', evidence: ['README.md:1'] };
+  assert.equal((await writeWorkItems(cwd, { items: [doc], currentPhase: phase })).ok, true);
+  const saved = readWorkItems(cwd).items.find((item) => item.id === 'bind-doc');
+  assert.match(saved.lead_confirm.diffHash, /^[0-9a-f]{16}$/, 'auto 确认带内容指纹');
+  const changed = { ...doc, title: '改 README v2', evidence: ['README.md:2'] };
+  // 改内容后复用旧 auto+confirmKey → 拦截（旧确认不得覆盖新内容）。
+  const replayed = await writeWorkItems(cwd, {
+    rev: readWorkItems(cwd).rev,
+    items: [{ ...changed, lead_confirm: { auto: saved.lead_confirm.auto, confirmKey: saved.lead_confirm.confirmKey } }],
+    currentPhase: phase,
+  });
+  assert.equal(replayed.ok, false, '内容变后旧 key 失效');
+  assert.equal(replayed.code, 'done-gate');
+  // 不带显式确认重写同 id 新内容：旧确认不保留，done 但无 confirm。
+  const plain = await writeWorkItems(cwd, { rev: readWorkItems(cwd).rev, items: [changed], currentPhase: phase });
+  assert.equal(plain.ok, true, JSON.stringify(plain));
+  const after = readWorkItems(cwd).items.find((item) => item.id === 'bind-doc');
+  assert.equal(after.lead_confirm, null, '内容变了旧确认失效');
+});

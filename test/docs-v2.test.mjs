@@ -8,7 +8,7 @@ import { displayWidth, normalizeDocsOptions, normalizePins, renderIndex, selectI
 import { METRICS_MAX_LINES, docsMetricsSnapshot, noteInjection, readMetricsDir, readMetricsEvents, recordRead, recordSearch } from '../lib/docs-metrics.js';
 import { buildReport, parseSinceMs, run as runMetricsReport } from '../scripts/docs-metrics.mjs';
 import { createRelayTools } from '../lib/agent/tools.js';
-import { readWorkItems } from '../lib/agent/work-items.js';
+import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 
 const NL = String.fromCharCode(10);
 const w = (path, ...lines) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, lines.join(NL) + NL); };
@@ -342,27 +342,41 @@ test('显示宽度：CJK/emoji 双宽；W 触发 A→B，layout=flat 关闭 W/G�
   } finally { fx.cleanup(); }
 });
 
-test('docs.select=legacy：L1/L2 全单列、不看 pin/在役；默认仍按在役/决策选择', () => {
+test('docs.select=legacy：真回滚 v0.11 渲染（L1/L2 全单列 + 尾行，无在役/带决策/A-B-C）', () => {
   const fx = fixture();
   try {
     const index = buildDocIndex(fx.cwd);
     const current = renderDocIndex(index);
     assert.doesNotMatch(current.text, /^- `docs\/note\.md`/m, '默认不把普通 L2 单列');
     const legacy = renderDocIndex(index, { select: false, pins: ['docs/note.md'] });
+    assert.equal(legacy.level, 'legacy', 'legacy 不走 A/B/C');
+    assert.match(legacy.text, /### 先读（L1）/, 'v0.11 L1 标题');
+    assert.match(legacy.text, /### 按需（L2）/, 'v0.11 L2 标题');
     assert.match(legacy.text, /^- `docs\/note\.md`/m, 'legacy 全 L1/L2 单列');
+    assert.match(legacy.text, /另有 \d+ 份历史产物未入索引/, 'v0.11 尾行');
+    assert.doesNotMatch(legacy.text, /### 在役（先读）|### 带决策/, '无 v0.12 选择标题');
     assert.equal(legacy.workspacePins.length, 0, 'legacy 不消费 pin');
+    const tiny = renderDocIndex(index, { select: false, maxBytes: 1 });
+    assert.match(tiny.text, /共 \d+ 份文档已折叠（预算 1B）/, 'v0.11 极端字节保底');
+    assert.doesNotMatch(tiny.text, /### 在役（先读）|### 带决策/, '极端预算也不退回 v0.12 结构');
   } finally { fx.cleanup(); }
 });
 
-test('工作区 pin：progress.key_docs 指向 relay 根外路径也可见、可直接 read，且不进 paths', () => {
+test('工作区 pin：只展示 relay 根外真实文件；不存在的 relay 路径不冒充工作区 pin', () => {
   const fx = fixture();
   try {
+    const toolsPath = join(fx.cwd, 'lib', 'agent', 'tools.js');
+    mkdirSync(dirname(toolsPath), { recursive: true });
+    writeFileSync(toolsPath, '// entry\n');
     const index = buildDocIndex(fx.cwd);
     const rendered = renderDocIndex(index, { pins: ['lib/agent/tools.js — 入口'] });
     assert.ok(rendered.workspacePins.includes('lib/agent/tools.js'));
     assert.match(rendered.text, /- `lib\/agent\/tools\.js` — 工作区 pin（不在 relay 根内；用 read 直接读）/);
     assert.ok(!rendered.paths.includes('lib/agent/tools.js'), '工作区 pin 不进 metrics paths');
     assert.ok(rendered.shown >= 1);
+    const missing = renderDocIndex(index, { pins: ['docs/missing.md'] });
+    assert.deepEqual(missing.workspacePins, [], '不存在的 relay 路径不当工作区 pin');
+    assert.doesNotMatch(missing.text, /docs\/missing\.md/, '缺失路径不出现在索引正文');
   } finally { fx.cleanup(); }
 });
 
@@ -403,8 +417,57 @@ test('list/related 记 origin：后续 read 归因 list/pointer，查找本身�
   } finally { fx.cleanup(); }
 });
 
-test('docs 开关归一：默认全开；legacy/flat/off 关掉', () => {
+test('docs 开关归一：默认全开；legacy/flat/off 关掉；width/maxGroups 可选数值', () => {
   assert.deepEqual(normalizeDocsOptions(undefined), { select: true, layout: true, metrics: true });
   assert.deepEqual(normalizeDocsOptions({ select: 'legacy', layout: 'flat', metrics: 'off' }), { select: false, layout: false, metrics: false });
   assert.deepEqual(normalizeDocsOptions({ select: false, layout: false, metrics: false }), { select: false, layout: false, metrics: false });
+  assert.deepEqual(normalizeDocsOptions({ width: 512, maxGroups: 3 }), { select: true, layout: true, metrics: true, width: 512, maxGroups: 3 });
+  assert.deepEqual(normalizeDocsOptions({ width: -1, maxGroups: 1.5 }), { select: true, layout: true, metrics: true });
+});
+
+test('truncated 只表示字节超护栏/扫描触顶：折叠组不算', () => {
+  const fx = fixture();
+  try {
+    const index = buildDocIndex(fx.cwd);
+    const rendered = renderDocIndex(index);
+    assert.ok(rendered.omitted > 0, 'fixture 有折叠组');
+    assert.equal(rendered.truncated, false, '有分组不算 truncated');
+    assert.equal(renderDocIndex(index, { maxBytes: 1 }).truncated, true, '字节超护栏才 truncated');
+  } finally { fx.cleanup(); }
+});
+
+test('docs.width/docs.maxGroups 可经 config 接到生产渲染（W/G 不再只有参数没有调用方）', async () => {
+  const fx = fixture();
+  try {
+    const session = { id: 'docs-width-session', header: { cwd: fx.cwd }, seq: 0 };
+    const exec = { agent: { session, options: {} } };
+    const docOf = (docs) => createRelayTools({ ...metricsRuntime(), docs }).find((definition) => definition.name === 'relay_doc');
+    const wide = await docOf({ width: 1 }).execute({ action: 'index' }, exec);
+    assert.equal(wide.level, 'B', 'docs.width 触发 W');
+    assert.match(wide.text, /counts: indexed\/raw=\d+\/\d+/, 'counts 行两个标签两个值');
+    assert.doesNotMatch(wide.text, /counts: L1\/L2\/raw=/, '不再三标签两值');
+    const grouped = await docOf({ maxGroups: 0 }).execute({ action: 'index' }, exec);
+    assert.equal(grouped.level, 'C', 'docs.maxGroups 触发 G');
+  } finally { fx.cleanup(); }
+});
+
+test('relay_phase 落账 pin 按 PIN_LIMIT 保留（不再 8 条截断）', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-v2-pin-cap-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'architecture', 'design.md'), ...fm('设计稿'));
+    const seed = Array.from({ length: 10 }, (_, i) => 'docs/p' + i + '.md');
+    const seeded = await writeWorkItems(cwd, { items: [], scopeId: 'pin-cap-session', currentPhase: { phase: 'decide', pins: seed } });
+    assert.equal(seeded.ok, true, JSON.stringify(seeded));
+    const tools = createRelayTools({ ...metricsRuntime(), workItems: { enabled: true } });
+    const phase = tools.find((definition) => definition.name === 'relay_phase');
+    const session = { id: 'pin-cap-session', header: { cwd }, seq: 0 };
+    await phase.execute({
+      phase: 'build',
+      design_gate: { path: '.scratch/context-relay/architecture/design.md', user_approved: true, ask_ref: '确认', not_doing: ['不做'] },
+    }, { agent: { session, options: {} } });
+    const pins = readWorkItems(cwd, { scopeId: 'pin-cap-session' }).currentPhase.pins;
+    assert.equal(pins.length, 11, 'design pin + 10 条继承不被 8 截断');
+    assert.ok(pins.includes('.scratch/context-relay/architecture/design.md'));
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
 });

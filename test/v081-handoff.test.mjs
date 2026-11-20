@@ -4,7 +4,7 @@ import fs, { mkdtempSync, readFileSync, readdirSync, readlinkSync, symlinkSync, 
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRelayHandoffTool } from '../lib/agent/handoff.js';
+import { createRelayHandoffTool, lintRiskTierOf } from '../lib/agent/handoff.js';
 import { configurePanelStore, clearPanelMemory, panelStateOf } from '../lib/panel-store.js';
 
 // rc.2 dsh-schedule 形状（lib/types/types.d.ts:439-450 / :394-417）：list() 返回分页对象，条目带 target/status。
@@ -111,3 +111,10 @@ test('v081 C15: schedule_conflict 重试仍冲突 → 清理失败留 recovery�
  const r=await h.run();assert.equal(r.code,'handoff-cleanup-failed');assert.equal(edits.length,2,'只重试 1 次（共 2 次 edit）');assert.match(JSON.stringify(r.recovery),/schedule_conflict/);assert.equal(r.handover.cleanup.schedules[0].action,'pending');
 });
 
+
+test('fix2：T0 handoff 风险档优先进程内记忆，重载后回退台账 currentPhase.risk', () => {
+  assert.equal(lintRiskTierOf('T0', undefined), 'T0');
+  assert.equal(lintRiskTierOf(undefined, { currentPhase: { risk: { tier: 'T0' } } }), 'T0', '重载后从台账兜底');
+  assert.equal(lintRiskTierOf('T2', { currentPhase: { risk: { tier: 'T0' } } }), 'T2', '记忆优先');
+  assert.equal(lintRiskTierOf(undefined, undefined), undefined, '都没有则维持全量 lint');
+});
