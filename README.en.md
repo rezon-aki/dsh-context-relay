@@ -134,7 +134,7 @@ A historical screenshot of the relay panel (the current dial is ask me / keep go
 
 Every phase has a clear start and a clear finish. Two things have to line up before delivery:
 
-1. **Design gate (before work starts):** the design — how it will be done, what it will touch, how it will be checked, what the risks are — comes to you for confirmation. Work starts only after you confirm it.
+1. **Design gate (before T2 work starts):** the design — how it will be done, what it will touch, how it will be checked, what the risks are — comes to you for confirmation. Work starts only after you confirm it. For T1 the design lives in the phase goal (≤1 page); T0 writes no separate design doc.
 2. **Independent review before delivery:** a reviewer with a completely fresh context checks requirement against implementation for drift, scope shrinkage, corner-cutting and gaps — so the implementer can't mark its own homework. The review runs alongside the rest of acceptance, not as one more serial gate.
 
 Acceptance stays minimal by default: run the target tests, do one independent diff review, and (if needed) one syntax check. Heavy verification — a full regression suite, real-device runs, large samples, several review rounds — isn't done by default and needs your explicit approval.
@@ -153,7 +153,7 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 
 - **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate, adopt a historical member, or rebuild the team at a phase boundary.
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
-- **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead; `doc_lint` and questions meant for a human (`ask_user_question`) go to the Lead only; teammates and workers keep `relay_doc` (bounded reads of briefs/handoffs), while the architect and workers no longer receive `relay_status`. Tool names and parameters are unchanged.
+- **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead (`context-relay`/`doc-governance` stay global); `doc_lint` and questions meant for a human (`ask_user_question`) go to the Lead only; teammates keep status/phase/doc plus checkpoint/freshen, workers keep only `relay_doc` (bounded reads of briefs/handoffs); the architect and workers drop `relay_status` and `relay_phase`. Tool names and parameters are unchanged.
 - **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
 - **It doesn't hover over teammates:** reports arrive automatically, so the Lead doesn't spin in a polling loop — which saves tokens.
 
@@ -284,12 +284,21 @@ Deeper design and implementation notes live in:
 
 ### Tools and endpoints
 
-15 tools in total: 7 always available + `doc_lint` + 5 Lead-only + 2 for teammates and the architect. Tools are trimmed by role: the Lead doesn't get the execution tools (`bash`/`pwsh`/`write`/`edit` are hidden); `doc_lint` is Lead-only; teammates keep status/phase/doc plus checkpoint/freshen; workers keep only `relay_doc`; the architect and workers don't get `relay_status`.
+15 tools in total: 7 always available + `doc_lint` + 5 Lead-only + 2 shipped with teammates (`relay_checkpoint`/`relay_freshen`; the architect gets only the former). Tools and skills are trimmed by role (`human-loop` is registered only for the Lead; `context-relay`/`doc-governance` stay global):
+
+| Role | Tools | Skills |
+|---|---|---|
+| Lead (root) | 13 relay tools (including `doc_lint`) + the host's human interface `ask_user_question`; the execution tools `bash`/`pwsh`/`write`/`edit` are hidden | `context-relay`, `doc-governance`, `human-loop` |
+| teammate (direct) | `relay_status`/`relay_phase`/`relay_doc` + `relay_checkpoint`/`relay_freshen` | `context-relay`, `doc-governance` |
+| architect | `relay_doc` + `relay_checkpoint` | `context-relay`, `doc-governance` |
+| worker (plain subagent) | only `relay_doc` | `context-relay`, `doc-governance` |
+
+All three subagent roles drop `doc_lint`, `ask_user_question` and the Lead-only tools (`relay_organize`/`relay_handoff`/`relay_recommend`/`relay_work_items`); the architect and workers also drop `relay_status` and `relay_phase`.
 
 | Tool | What it does |
 |---|---|
 | `relay_status` | Context usage, line state, phase, budget left, dispatch/execution ratio, plane self-check, squad summary (teamSummary) and reopen history. |
-| `relay_phase` | Declare or switch phase; the first entry into build checks the design gate; delivery requires the independent review and a report; post-delivery repair uses `reopen{reason,user_approved}`, and ship→discover marks a new task. |
+| `relay_phase` | Declare or switch phase; the first T2 entry into build checks the design gate (T1 writes the design into the phase goal, T0 writes no separate design doc); delivery requires the independent review and a report; post-delivery repair uses `reopen{reason,user_approved}`, and ship→discover marks a new task. |
 | `relay_organize` | Write the handover page → official compaction → put the page back into the conversation. Once per session by default. |
 | `relay_handoff` | Produce the handover summary and the full handover file, create a new relay session, and clean up the old session tree. |
 | `relay_work_items` | Read or write the Lead's own work ledger (no args = read; a whole-list replace may carry an optimistic lock). |
@@ -302,7 +311,7 @@ Deeper design and implementation notes live in:
 | `relay_renew` | Replace a teammate generation (off by default; only for a change of identity/role with `allowSpawn=true`). |
 | `relay_architect` | Create or continue the fixed architect (`fresh` for a new context / `continue` to keep designing). |
 | `relay_checkpoint` | Teammates and the architect write a checkpoint (conclusion / done / decisions / evidence / constraints / open questions / next steps). |
-| `relay_freshen` | Pressure relief inside a task for teammates and the architect; `{reset:true, brief}` truly wipes the context and installs a new brief. |
+| `relay_freshen` | Pressure relief inside a task for teammates; `{reset:true, brief}` truly wipes the context and installs a new brief. |
 
 HTTP (available only after local GUI authentication): `GET/PUT /context-relay/settings`, `GET/PUT /context-relay/panel`, `GET /context-relay/architect-models?sessionId=`, `GET /context-relay/work-items?sessionId=` (read-only).
 

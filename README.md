@@ -134,7 +134,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 每个阶段有明确的开始与完成条件。交付前有两个必须对齐的点：
 
-1. **设计门（开工前）**：先把设计（怎么做、动哪些地方、怎么验收、有什么风险）交给你确认；你确认了才动手。
+1. **设计门（T2 开工前）**：先把设计（怎么做、动哪些地方、怎么验收、有什么风险）交给你确认；你确认了才动手。T1 的设计写进阶段目标（≤1 页），T0 不写独立稿。
 2. **完成前独立审查（交付前）**：让一个全新上下文的审查者核对「需求 ↔ 实现」有没有偏移、缩水、偷懒、缺失——防止实现者自己夸自己。审查和其他验收并行，不串成一道长流程。
 
 验收默认只做最小必要：跑目标测试 + 一次独立 diff 审查 +（必要时）一次语法检查。全量回归、真机验证、大样本、多轮审查这类「重型验证」默认不做，需要你明确同意。
@@ -153,7 +153,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 - **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认关闭**，优先复用现有人手；没有可用队员时，让现有队员清空复用、把历史成员纳入小队（adopt），或 phase 边界交接重建。
 - **Lead 只做调度**：拆活、派活、验收；具体实现交给队友。队友会收到一张标准派活单：目标、必读材料、能改哪些文件、怎么验收、回执放哪。
-- **按角色裁剪**：human-loop 技能只注册给接力 Lead；`doc_lint` 与需要人拍板的问题（`ask_user_question`）只给 Lead；teammate/worker 保留 `relay_doc`（brief/handoff 的有界读），架构师与 worker 不再拿到 `relay_status`。工具名与参数不变。
+- **按角色裁剪**：human-loop 技能只注册给接力 Lead（`context-relay`/`doc-governance` 全局可用）；`doc_lint` 与需要人拍板的问题（`ask_user_question`）只给 Lead；teammate 保留 status/phase/doc 与 checkpoint/freshen，worker 只余 `relay_doc`（brief/handoff 的有界读）；架构师与 worker 裁 `relay_status` 和 `relay_phase`。工具名与参数不变。
 - **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
 - **不会一直催队友**：队友的回执会自动送达，Lead 不会空转轮询（省 token）。
 
@@ -284,12 +284,21 @@ npm run check   # 全部入口语法检查
 
 ### 工具与接口
 
-共 15 个工具：7 个常驻 + `doc_lint` + 5 个 Lead 专属 + 2 个队友/架构师工具。工具面按角色裁剪：Lead 不装执行工具（`bash`/`pwsh`/`write`/`edit` 被隐藏），`doc_lint` 只给 Lead；队友保留 status/phase/doc 与 checkpoint/freshen，worker 只保留 `relay_doc`，架构师与 worker 不拿 `relay_status`。
+共 15 个工具：7 个常驻 + `doc_lint` + 5 个 Lead 专属 + 2 个队友工具（`relay_checkpoint`/`relay_freshen`，架构师只用前者）。工具与技能按角色裁剪（`human-loop` 只随 Lead 注册；`context-relay`/`doc-governance` 全局可用）：
+
+| 角色 | 工具面 | 技能 |
+|---|---|---|
+| Lead（root） | 13 个 relay 工具（含 `doc_lint`）+ 宿主的人类接口 `ask_user_question`；`bash`/`pwsh`/`write`/`edit` 被隐藏 | `context-relay`、`doc-governance`、`human-loop` |
+| teammate（直接队友） | `relay_status`/`relay_phase`/`relay_doc` + `relay_checkpoint`/`relay_freshen` | `context-relay`、`doc-governance` |
+| 架构师 | `relay_doc` + `relay_checkpoint` | `context-relay`、`doc-governance` |
+| worker（普通子代理） | 只保留 `relay_doc` | `context-relay`、`doc-governance` |
+
+三类子智能体都裁掉 `doc_lint`、`ask_user_question` 与 Lead 专属工具（`relay_organize`/`relay_handoff`/`relay_recommend`/`relay_work_items`）；架构师与 worker 另裁 `relay_status` 和 `relay_phase`。
 
 | 工具 | 作用 |
 |---|---|
 | `relay_status` | 看上下文占用、到线状态、阶段、剩余预算、派活/执行占比、平面自检、小队摘要（teamSummary）与 reopen 记录。 |
-| `relay_phase` | 声明/切换阶段；首次进 build 校验设计门；交付阶段要求独立审查与汇报；ship 后返修用 `reopen{reason,user_approved}`，ship→discover 标新任务。 |
+| `relay_phase` | 声明/切换阶段；T2 首次进 build 校验设计门（T1 设计写进阶段目标，T0 不写独立稿）；交付阶段要求独立审查与汇报；ship 后返修用 `reopen{reason,user_approved}`，ship→discover 标新任务。 |
 | `relay_organize` | 写交接材料 → 官方压缩 → 把材料放回对话。每会话默认一次。 |
 | `relay_handoff` | 生成交接摘要与完整交接单，创建新接力会话并清理旧会话树。 |
 | `relay_work_items` | 读写 Lead 自己的工作台账（无参数=读；整表替换可带乐观锁）。 |
@@ -302,7 +311,7 @@ npm run check   # 全部入口语法检查
 | `relay_renew` | 队友换代（默认关闭；只换身份/角色且 `allowSpawn=true` 才用）。 |
 | `relay_architect` | 创建/续用固定架构师（`fresh` 换新上下文 / `continue` 接着设计）。 |
 | `relay_checkpoint` | 队友/架构师写检查点（结论/完成/决策/证据/约束/未决/下一步）。 |
-| `relay_freshen` | 队友/架构师同任务内减压；`{reset:true, brief}` 真清空并换新 brief。 |
+| `relay_freshen` | 队友同任务内减压；`{reset:true, brief}` 真清空并换新 brief。 |
 
 HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`GET/PUT /context-relay/panel`、`GET /context-relay/architect-models?sessionId=`、`GET /context-relay/work-items?sessionId=`（只读）。
 
