@@ -11,7 +11,7 @@ import { createDelegationTools } from '../lib/agent/delegation-tools.js';
 import { ROUTER_DENY_TOOLS } from '../lib/agent/protocol.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
-import { internalKeysIn, renderFourPart } from '../lib/output.js';
+import { INTERNAL_DETAILS_MARK, MODEL_STATE_MARK, internalKeysIn, renderFourPart, renderUserBlock, userViewOf } from '../lib/output.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
@@ -2924,7 +2924,9 @@ test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect�
   assert.equal(collected.ok, true, JSON.stringify(collected));
   assert.equal(collected.status, 'collected');
   assert.equal(collected.verdict, 'done');
-  assert.match(collected.digest, /度量接线完成/);
+  assert.match(collected.technicalDigest, /度量接线完成/, '技术摘要留在结构化字段');
+  assert.match(collected.digest, /一项工作完成了/, '默认 digest 是人话兜底（不再投递报告摘要）');
+  assert.equal(typeof collected.user?.see, 'string');
   assert.ok(!collected.text.includes('## 证据'), 'collect 只回 digest，不返回报告正文');
   const doneItem = readWorkItems(cwd, { scopeId: leadSessionId }).items.find((item) => item.id === 'wire-metrics');
   assert.equal(doneItem.status, 'done');
@@ -3439,14 +3441,16 @@ test('v0.9.0 P2：relay_phase 成功结果带人类可读 text，output.render �
   assert.doesNotMatch(result.text, /^warnings: /m, '非 ship 缺 contract_check 不再 warning');
   assert.ok(!result.text.startsWith('{'), 'text 不是 JSON 包络');
   const rendered = tool.output.render({}, result);
-  assert.deepEqual(rendered, [{ type: 'text', text: result.text }], 'render 直接返回 text（模型唯一可见通道）');
+  // v0.13 P4（D1）：带 human 的工具 render 默认先给 [给用户] 三问，再 [内部细节] + text（模型状态不丢）。
+  const userBlock = renderUserBlock(userViewOf(result.human));
+  assert.deepEqual(rendered, [{ type: 'text', text: userBlock + '\n\n' + INTERNAL_DETAILS_MARK + '\n' + result.text }], 'render = [给用户] 三问 + [内部细节] + text');
   // w3 说人话：phase 结果带用户四段 human；内部事实（band/headroom）只留 facts。
   assert.deepEqual(Object.keys(result.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
   assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
   assert.equal(result.facts.phase, 'build');
   assert.ok(!rendered[0].text.startsWith('{'), 'render 非 JSON');
   // 防御性 fallback：无 text 的旧值仍回 JSON（不丢结构化事实）。
-  assert.equal(tool.output.render({}, { phase: 'build' })[0].text, JSON.stringify({ phase: 'build' }));
+  assert.equal(tool.output.render({}, { phase: 'build' })[0].text, MODEL_STATE_MARK + '\n' + JSON.stringify({ phase: 'build' }), '无 human 的旧值按内部结果兜底');
   // 同 phase 声明：只输出少量行（≤300）。
   const same = await tool.execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent });
   assert.ok(same.text.length <= 300, '同 phase 文本 ≤300，实际 ' + same.text.length);
