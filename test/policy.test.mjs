@@ -758,16 +758,22 @@ test('v0.11 P0-E capacityOf/capacityRatioOf：独立容量线默认 55% / 窗口
   assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 2 }).threshold, 0.55, '非法 ratio 回落默认 55%');
 });
 
-test('v0.9.0 userReportWarnings：合规零 warning；缺段/乱序/空段/超长/代码块/输出 → 只 warning 不抛不拒', () => {
-  const compliant = '结论：完成用户汇报校验接线。\n影响：无（用户可见行为不变）。\n需要你做什么：无需。\n证据位置：lib/policy.js:488、test/policy.test.mjs';
-  const ok = userReportWarnings(compliant);
+test('v0.13 D2 userReportWarnings：三问零 warning；旧四段只 warning 不拒；缺段/乱序/空段/超长/代码块 → 只 warning', () => {
+  const three = '你看到什么：登录按钮修好了。\n要你做什么：不用。\n有什么影响：没有额外影响。';
+  const ok = userReportWarnings(three);
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.warnings, []);
   assert.equal(ok.formatOk, true);
-  assert.equal(ok.chars, [...compliant.trim()].length);
-  // markdown 加粗/#/列表 变体与「需要你」变体都识别（顺序固定）。
-  assert.deepEqual(userReportWarnings('## 结论：完成\n**影响**：无\n- 需要你做什么：无需\n**证据位置**：a:1').warnings, []);
-  assert.equal(userReportWarnings('结论：a\n影响：b\n需要你：c\n证据位置：d').formatOk, true);
+  assert.equal(ok.chars, [...three.trim()].length);
+  // markdown 加粗/#/列表 变体与三问顺序仍识别。
+  assert.deepEqual(userReportWarnings('## 你看到什么：完成\n**要你做什么**：无\n- 有什么影响：无').warnings, []);
+  // D2=A：旧四段接受（formatOk=true），但默认给一条迁移 warning；detailsRequested 时不提示。
+  const legacy = '结论：完成用户汇报校验接线。\n影响：无（用户可见行为不变）。\n需要你做什么：无需。\n证据位置：lib/policy.js:488、test/policy.test.mjs';
+  const legacyResult = userReportWarnings(legacy);
+  assert.equal(legacyResult.formatOk, true, '旧四段仍被识别（不拒）');
+  assert.ok(legacyResult.warnings.some((warning) => warning.code === 'report-four-part-legacy'), '旧四段只 warning');
+  assert.equal(legacyResult.ok, false, '有 warning 即 ok=false（仍不抛不拒）');
+  assert.ok(!userReportWarnings(legacy, { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-four-part-legacy'), '要细节时不提示迁移');
   // 缺段 / 乱序 / 空段 → report-format（同一 code）。
   for (const bad of [
     '结论：a\n影响：b\n证据位置：d',
@@ -796,10 +802,10 @@ test('v0.9.0 userReportWarnings：合规零 warning；缺段/乱序/空段/超�
     assert.ok(result.warnings.some((warning) => warning.code === 'report-empty'));
   }
   // 代码块/超长行/命令输出 → report-internal-details；details_requested 时不产出。
-  assert.ok(userReportWarnings(compliant + '\n```\nnpm test\n```').warnings.some((warning) => warning.code === 'report-internal-details'));
-  assert.ok(userReportWarnings(compliant + '\n证据位置：' + 'p'.repeat(401)).warnings.some((warning) => warning.code === 'report-internal-details'));
-  assert.ok(userReportWarnings(compliant + '\n$ npm test\n全部通过').warnings.some((warning) => warning.code === 'report-internal-details'));
-  const authorized = userReportWarnings(compliant + '\n```\nnpm test\n```', { detailsRequested: true });
+  assert.ok(userReportWarnings(legacy + '\n```\nnpm test\n```').warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.ok(userReportWarnings(legacy + '\n证据位置：' + 'p'.repeat(401)).warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.ok(userReportWarnings(legacy + '\n$ npm test\n全部通过').warnings.some((warning) => warning.code === 'report-internal-details'));
+  const authorized = userReportWarnings(legacy + '\n```\nnpm test\n```', { detailsRequested: true });
   assert.ok(!authorized.warnings.some((warning) => warning.code === 'report-internal-details'), '用户已授权展开细节');
   assert.equal(authorized.info, '用户已授权展开细节');
 });

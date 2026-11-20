@@ -2924,9 +2924,8 @@ test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect�
   assert.equal(collected.ok, true, JSON.stringify(collected));
   assert.equal(collected.status, 'collected');
   assert.equal(collected.verdict, 'done');
-  assert.match(collected.technicalDigest, /度量接线完成/, '技术摘要留在结构化字段');
-  assert.match(collected.digest, /一项工作完成了/, '默认 digest 是人话兜底（不再投递报告摘要）');
-  assert.equal(typeof collected.user?.see, 'string');
+  assert.match(collected.digest, /度量接线完成/, 'user_visible 未标（默认 false）→ digest 仍是技术摘要');
+  assert.equal(collected.user, undefined, '默认静默：不产用户段');
   assert.ok(!collected.text.includes('## 证据'), 'collect 只回 digest，不返回报告正文');
   const doneItem = readWorkItems(cwd, { scopeId: leadSessionId }).items.find((item) => item.id === 'wire-metrics');
   assert.equal(doneItem.status, 'done');
@@ -4023,7 +4022,7 @@ test('文案：autoChoose 模型自决档退役（D8=A）——advice/常驻协�
   assert.match(protocol, /提问工具只用于简单问题/, '提问纪律：只把简单问题放提问工具');
   assert.match(protocol, /复杂问题不走提问工具/, '提问纪律：复杂问题用普通消息白话展开');
   assert.match(protocol, /pending 不是跳过、不是同意/, '提问纪律：超时 pending 的语义');
-  assert.match(protocol, /汇报一律四段式/, '交互纪律：用户汇报四段式（D1=B 只提醒不拒绝）');
+  assert.match(protocol, /汇报默认三问/, '交互纪律：用户汇报默认三问（D2=A；四段仅在要细节/长报告时用）');
   assert.match(protocol, /等待纪律/, '等待纪律：派活后不空转等队友');
   assert.match(protocol, /wait_agent \/ list_agents/, '等待纪律：点名不要循环调用的工具');
   assert.match(protocol, /回执会自动作为消息送达/, '等待纪律：回执自动送达');
@@ -4380,8 +4379,8 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
   // fix3：relay_collect.lead_confirm 补 auto/confirmKey/diffHash → 实测 5219，预算按实测+~3.5% 上调到 5400。
   // v0.13 B1：manage.maintain 新增 brief/reset/action 枚举 → 实测 5586，预算按实测+~2% 上调到 5700。
-  // v0.13 fix4：collect.lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）→ 实测 5721，预算按实测+~2% 上调到 5850。
-  assert.ok(leadParameterChars <= 5850, 'lead-only 5 条参数总字符 <=5850（v0.13 fix4 实测 5721），实际 ' + leadParameterChars);
+  // v0.13 D3：dispatch/work_items 加 user_visible → 实测 5943，预算按实测+~2% 上调到 6050。
+  assert.ok(leadParameterChars <= 6050, 'lead-only 5 条参数总字符 <=6050（v0.13 D3 实测 5943），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;

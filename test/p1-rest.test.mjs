@@ -136,16 +136,14 @@ test('① relay_collect：正文含 commit+verification → evidence verified；
     verification: { cmd: 'npm test', exit: '0', count: '1015', log: '.scratch/context-relay/logs/t.log' },
     missing: [],
   });
-  assert.match(verified.digest, /一项工作完成了，结果已经核对/, '默认 digest 是人话兜底');
-  assert.equal(verified.technicalDigest, '证据齐全，完成。', '技术摘要留在结构化字段（不再默认投递）');
+  assert.equal(verified.digest, '证据齐全，完成。', 'user_visible 默认 false → digest 仍是技术摘要');
   assert.equal(readWorkItems(cwd, { scopeId: 'session-p1-collect' }).items.find((item) => item.id === 'e1').status, 'done');
 
   const unverified = await collect.execute({ itemId: 'e2', dispatchId: 'd-e2-test', lead_confirm: LEAD_CONFIRM }, { agent: lead });
   assert.equal(unverified.ok, true, 'warn 不拒：仍收口');
   assert.equal(unverified.verdict, 'done');
   assert.deepEqual(unverified.evidence, { verdict: 'unverified', missing: ['commit', 'verification'] });
-  assert.match(unverified.digest, /一项工作完成了，但有一项没有验证/);
-  assert.match(unverified.technicalDigest, /^\[evidence:unverified:commit\+verification\] /);
+  assert.match(unverified.digest, /^\[evidence:unverified:commit\+verification\] /);
   assert.match(unverified.evidenceWarning, /commit/);
   assert.equal(readWorkItems(cwd, { scopeId: 'session-p1-collect' }).items.find((item) => item.id === 'e2').status, 'done');
 });

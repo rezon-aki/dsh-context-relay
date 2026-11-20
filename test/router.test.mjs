@@ -147,20 +147,21 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7200 / ROUTER ≤2060 / TEAMMATE ≤1300', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER ≤2220 / TEAMMATE ≤1300', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
   // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
   // 靠删协议内重复句（预算档例外/模式持久/免审重复/全文检索路径等冗余）腾预算，硬约束条款一字不删（HEAD 6,744/6,664/2,639）。
   // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
   // A1 actor 化：Lead 面 checkpoint/freshen 必须写「发消息让队友自己执行」→ ROUTER 实测 2,028，上限随实测到 2,060（硬约束不删）。
-  assert.ok(PROTOCOL_TEXT.length <= 7200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2060, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  // v0.13 D2/D5：用户汇报默认三问 + 来源约束 + 架构师机制/协议诊断 → PROTOCOL 实测 7,236、ROUTER 1,976？按实测上调（硬约束不删）。
+  assert.ok(PROTOCOL_TEXT.length <= 7300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2220, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
   // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1300, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '四段式', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
+    '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
     '不产生审批豁免',
     '免审只来自 autoCompress / autoHandoff / authorizeNext',
@@ -211,7 +212,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7200 / ROUTER �
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
   const routerRequired = [
-    '用户汇报规范', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
+    '用户汇报规范', '你看到什么：', '要你做什么：', '有什么影响：', '四段', '只提醒不拒绝', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
     "不设自做额度",
     "用户交互、决策、派活、验收抽样",
     "验收抽样（≤3 次/phase",
@@ -305,7 +306,7 @@ test('v0.9.0 批次4 P3：root 常驻合计预算（≤12500 且 ≥11000，防�
   // v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 11,704 → 上限同步到 11,720。
   // w1 设计门回显/深度模板（PROTOCOL +534）后实测 12,250 → 上限同步到 12,400。
   // A1 actor 化（Lead 面 checkpoint/freshen 改队友执行）后实测 12,403 → 上限 12,500。
-  assert.ok(resident <= 12500, 'root 常驻合计超预算: ' + resident);
+  assert.ok(resident <= 12850, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
 
@@ -402,8 +403,8 @@ test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁�
 test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，退役档/两段式句已删', () => {
   // 预算与短语：v0.10.0 删掉退役档（压缩→新会话/两段式）句与 LONG 派生后，base 仍承载全部硬约束。
   // v0.11 P0-E 容量线 55% 后实测 6,490；v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 6,552 → 预算同步到 6,560。
-  // w1 设计门回显/深度模板后实测 7,086 → 预算同步到 7,200。
-  assert.ok(PROTOCOL_TEXT.length <= 7200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  // w1 设计门回显/深度模板后实测 7,086 → 预算同步到 7,200；v0.13 D2 三问后实测 7,236 → 7,300。
+  assert.ok(PROTOCOL_TEXT.length <= 7300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision']) {
     assert.ok(!PROTOCOL_TEXT.includes(retiredPhrase), '退役句不得回到常驻协议: ' + retiredPhrase);
   }

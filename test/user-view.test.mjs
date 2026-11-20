@@ -68,9 +68,9 @@ function collectHarness(cwd, sessionId) {
   return { lead, collect: definitions.find((tool) => tool.name === 'relay_collect') };
 }
 
-async function seedDoing(cwd, sessionId, id) {
+async function seedDoing(cwd, sessionId, id, { userVisible = false } = {}) {
   const written = await writeWorkItems(cwd, {
-    items: [{ id, title: id, status: 'doing', owner: 'worker-1', next: '回执 .scratch/context-relay/reports/' + id + '.md', phase: 'build' }],
+    items: [{ id, title: id, status: 'doing', owner: 'worker-1', next: '回执 .scratch/context-relay/reports/' + id + '.md', phase: 'build', ...(userVisible ? { user_visible: true } : {}) }],
     updatedBy: sessionId, scopeId: sessionId,
   });
   assert.equal(written.ok, true, JSON.stringify(written));
@@ -89,7 +89,7 @@ test('collect render：默认先给 [给用户] 三问，digest/证据留在结�
   resetShared();
   const cwd = tmpCwd();
   const sessionId = 'session-p4-collect';
-  await seedDoing(cwd, sessionId, 'a1');
+  await seedDoing(cwd, sessionId, 'a1', { userVisible: true });
   writeReceipt(cwd, 'a1', { revision: 'd-a1-p4', userVisible: { see: '登录按钮修好了。', need: '不用。', impact: '没有额外影响。' } });
   const { lead, collect } = collectHarness(cwd, sessionId);
   const result = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-p4', lead_confirm: LEAD_CONFIRM }, { agent: lead });
@@ -113,7 +113,7 @@ test('collect render：无「## 用户可见」时中性兜底；needs-human 带
   resetShared();
   const cwd = tmpCwd();
   const sessionId = 'session-p4-collect-fallback';
-  await seedDoing(cwd, sessionId, 'a1');
+  await seedDoing(cwd, sessionId, 'a1', { userVisible: true });
   writeReceipt(cwd, 'a1', { revision: 'd-a1-fb' });
   const { lead, collect } = collectHarness(cwd, sessionId);
   const done = await collect.execute({ itemId: 'a1', dispatchId: 'd-a1-fb', lead_confirm: LEAD_CONFIRM }, { agent: lead });
@@ -122,7 +122,7 @@ test('collect render：无「## 用户可见」时中性兜底；needs-human 带
   const rendered = renderOf(collect, done);
   assert.ok(rendered.startsWith('[给用户]'));
   // needs-human verdict → blocked 的真实 execute 路径
-  await seedDoing(cwd, sessionId, 'a2');
+  await seedDoing(cwd, sessionId, 'a2', { userVisible: true });
   writeReceipt(cwd, 'a2', { revision: 'd-a2-fb', verdict: 'needs-human', userVisible: { see: '需要你拍板。', need: '选 A 还是 B。', impact: '决定前不动。', decision: '问题：A/B？推荐：A；默认：A。' } });
   const blocked = await collect.execute({ itemId: 'a2', dispatchId: 'd-a2-fb', lead_confirm: LEAD_CONFIRM }, { agent: lead });
   assert.equal(blocked.verdict, 'needs-human');
@@ -130,6 +130,15 @@ test('collect render：无「## 用户可见」时中性兜底；needs-human 带
   const blockedRender = renderOf(collect, blocked);
   assert.ok(blockedRender.startsWith('[给用户]'));
   assert.ok(blockedRender.includes('需要你决定'), 'needs-human 的 render 指出要用户决定');
+  // D3 默认沉默：user_visible=false（缺字段）→ 不产用户段，只给内部细节。
+  await seedDoing(cwd, sessionId, 'a3');
+  writeReceipt(cwd, 'a3', { revision: 'd-a3-fb', userVisible: { see: '不该出现。', need: '不用。', impact: '无。' } });
+  const silent = await collect.execute({ itemId: 'a3', dispatchId: 'd-a3-fb', lead_confirm: LEAD_CONFIRM }, { agent: lead });
+  assert.equal(silent.user, undefined, 'user_visible=false 不生成 user 段');
+  assert.doesNotMatch(silent.digest, /不该出现/, '默认沉默时 digest 不取用户句');
+  const silentRender = renderOf(collect, silent);
+  assert.ok(!silentRender.includes('[给用户]'), '默认沉默 render 不含用户段');
+  assert.ok(silentRender.startsWith(INTERNAL_DETAILS_MARK), '默认沉默只给内部细节');
 });
 
 test('status/phase render：凡带 human 的工具默认先给用户段；技术事实留 [内部细节]', async () => {

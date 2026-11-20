@@ -121,8 +121,7 @@ test('② receiptVerify：strict 缺 commit/verification 直接拒（零台账�
   const warned = await warnHarness.collect.execute({ itemId: 'warn-missing', dispatchId: 'd-warn-missing', lead_confirm: LEAD_CONFIRM }, { agent: warnHarness.lead });
   assert.equal(warned.ok, true, 'warn 放行');
   assert.equal(warned.evidence.verdict, 'unverified');
-  assert.match(warned.technicalDigest, /^\[evidence:unverified:commit\+verification\] /);
-  assert.match(warned.digest, /一项工作完成了，但有一项没有验证/);
+  assert.match(warned.digest, /^\[evidence:unverified:commit\+verification\] /);
   assert.match(warned.evidenceWarning, /commit/);
 });
 
