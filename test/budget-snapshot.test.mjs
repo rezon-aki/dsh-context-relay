@@ -25,6 +25,7 @@ import { markPendingArchitect } from '../lib/agent/shared.js';
 import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearDeriveMemory } from '../lib/agent/derive.js';
+import { ARCHITECT_TOOL_NAMES, LEAD_TOOL_NAMES, TEAMMATE_TOOL_NAMES, WORKER_TOOL_NAMES } from './tool-surface.mjs';
 
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 
@@ -242,29 +243,28 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  * w5 角色注入裁剪后：teammate/architect/worker 裁 ask_user；human-loop 不再全局注册，只在 Lead 的 agent scope 注册；
  * w6b relations 后 relay_doc desc +40 / params +10：lead 与 architect 工具面同步 +50（teammate/worker 无 relay_doc）。
  * fix-p1 角色矩阵按审计 §2.6 修正：doc_lint 只 Lead；teammate/worker 保留 relay_doc；architect/worker 裁 relay_status。
+ * A1 actor 化（2026-11-20）：Lead 面 checkpoint/freshen 改为「发消息让队友自己执行」——protocol +63、
+ * ledger +13、router +29、team-lead +30（lead 段合计 +135），architect 收尾句 +28；更新实测快照。
  *   → teammate: status+phase+doc+checkpoint+freshen（12,509 schema）；architect: doc+checkpoint（2,850）；
  *   worker: 只 relay_doc（1,305）；fix3 补 lead_confirm 复用字段后 Lead 13 工具 23,991 schema（relay_phase params 7,513）。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 7097],
+      ['context-relay:protocol', 7160],
       ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 1840],
+      ['context-relay:work-ledger', 1853],
       ['context-relay:architect', 693],
-      ['context-relay:router', 1999],
-      ['context-relay:team-lead', 624],
+      ['context-relay:router', 2028],
+      ['context-relay:team-lead', 654],
     ],
-    sectionChars: 12268,
+    sectionChars: 12403,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
-    tools: [
-      'relay_status', 'relay_recommend', 'relay_phase', 'relay_organize', 'relay_doc', 'doc_lint', 'relay_work_items', 'relay_handoff',
-      'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
-    ],
+    tools: [...LEAD_TOOL_NAMES],
     toolDescChars: 4750,
     toolSchemaChars: 23991,
-    totalChars: 36259,
+    totalChars: 36394,
   },
   teammate: {
     sections: [
@@ -276,25 +276,25 @@ const ROLE_SNAPSHOT = {
     sectionChars: 1308,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
-    tools: ['relay_status', 'relay_phase', 'relay_doc', 'relay_checkpoint', 'relay_freshen'],
+    tools: [...TEAMMATE_TOOL_NAMES],
     toolDescChars: 1815,
     toolSchemaChars: 12509,
     totalChars: 13817,
   },
   architect: {
     sections: [
-      ['context-relay:protocol', 768],
+      ['context-relay:protocol', 796],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 0],
       ['context-relay:architect', 0],
     ],
-    sectionChars: 783,
+    sectionChars: 811,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint'],
-    tools: ['relay_doc', 'relay_checkpoint'],
+    tools: [...ARCHITECT_TOOL_NAMES],
     toolDescChars: 683,
     toolSchemaChars: 2850,
-    totalChars: 3633,
+    totalChars: 3661,
   },
   worker: {
     sections: [
@@ -306,7 +306,7 @@ const ROLE_SNAPSHOT = {
     sectionChars: 386,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: [],
-    tools: ['relay_doc'],
+    tools: [...WORKER_TOOL_NAMES],
     toolDescChars: 345,
     toolSchemaChars: 1305,
     totalChars: 1691,

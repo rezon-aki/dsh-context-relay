@@ -147,14 +147,15 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7200 / ROUTER ≤2000 / TEAMMATE ≤1300', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7200 / ROUTER ≤2060 / TEAMMATE ≤1300', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
   // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
   // 靠删协议内重复句（预算档例外/模式持久/免审重复/全文检索路径等冗余）腾预算，硬约束条款一字不删（HEAD 6,744/6,664/2,639）。
   // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
+  // A1 actor 化：Lead 面 checkpoint/freshen 必须写「发消息让队友自己执行」→ ROUTER 实测 2,028，上限随实测到 2,060（硬约束不删）。
   assert.ok(PROTOCOL_TEXT.length <= 7200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2000, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2060, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
   // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1300, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
@@ -294,7 +295,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
   }
 });
 
-test('v0.9.0 批次4 P3：root 常驻合计预算（≤12400 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
+test('v0.9.0 批次4 P3：root 常驻合计预算（≤12500 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
   // 本条是「文本资产自身」的常量合计预算；C11/A-09 起 root 实际注入量以 apply 装配实测快照为准
   // （test/budget-snapshot.test.mjs 的 ROLE_SNAPSHOT.lead），两者互为交叉校验。
   const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
@@ -303,12 +304,13 @@ test('v0.9.0 批次4 P3：root 常驻合计预算（≤12400 且 ≥11000，防�
   // v0.11 P0-E 容量线独立配置（协议 55% 口径）后实测 11,594 → 上限 11,620；
   // v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 11,704 → 上限同步到 11,720。
   // w1 设计门回显/深度模板（PROTOCOL +534）后实测 12,250 → 上限同步到 12,400。
-  assert.ok(resident <= 12400, 'root 常驻合计超预算: ' + resident);
+  // A1 actor 化（Lead 面 checkpoint/freshen 改队友执行）后实测 12,403 → 上限 12,500。
+  assert.ok(resident <= 12500, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
 
 test('v0.9.0 批次4 P1：WORK_LEDGER 承载注入去重行为说明（P3 新文本）', () => {
-  // v0.10.x 台账完成确认门新增一句 → 实测 1,840，预算按实测+~1% 上调到 1,860。
+  // v0.10.x 台账完成确认门新增一句 → 实测 1,840，预算按实测+~1% 上调到 1,860；A1 actor 化后 1,853。
   assert.ok(WORK_LEDGER_PROTOCOL_TEXT.length <= 1860, 'WORK_LEDGER 超预算: ' + WORK_LEDGER_PROTOCOL_TEXT.length);
   for (const phrase of ['焦点文本变化', 'rev 变化不算', '同一 step 最多一条 notice', '重启后首次汇总一次', '首次派活或档位/状态变化', '后续派活直接放行', '派活判断点（只在首次/状态变化时打断）']) {
     assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺 P1 行为句: ' + phrase);
