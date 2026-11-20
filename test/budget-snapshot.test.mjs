@@ -186,19 +186,19 @@ const TOOL_SCHEMA_SNAPSHOT = {
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
-  relay_work_items: [392, 2166],
+  relay_work_items: [392, 2844],
   relay_handoff: [384, 1534],
   relay_team_status: [374, 1151],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
   relay_dispatch: [248, 1314],
-  relay_collect: [659, 1217],
+  relay_collect: [659, 1704],
   relay_checkpoint: [338, 1207],
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（fix-p1 risk 判档描述后：desc 5,504 / params 20,235 / schema 25,739；含 w2 risk 与 w1 design_gate 回显字段）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5504, params: 20235, schema: 25739 };
+/** 15 工具 schema 合计（fix3 补 lead_confirm 的 auto/confirmKey/diffHash 后：desc 5,504 / params 21,400 / schema 26,904；含 w2 risk 与 w1 design_gate 回显字段）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5504, params: 21400, schema: 26904 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -243,7 +243,7 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  * w6b relations 后 relay_doc desc +40 / params +10：lead 与 architect 工具面同步 +50（teammate/worker 无 relay_doc）。
  * fix-p1 角色矩阵按审计 §2.6 修正：doc_lint 只 Lead；teammate/worker 保留 relay_doc；architect/worker 裁 relay_status。
  *   → teammate: status+phase+doc+checkpoint+freshen（12,509 schema）；architect: doc+checkpoint（2,850）；
- *   worker: 只 relay_doc（1,305）；Lead 不变（13 工具，22,826 schema / relay_phase params 7,513）。
+ *   worker: 只 relay_doc（1,305）；fix3 补 lead_confirm 复用字段后 Lead 13 工具 23,991 schema（relay_phase params 7,513）。
  */
 const ROLE_SNAPSHOT = {
   lead: {
@@ -263,8 +263,8 @@ const ROLE_SNAPSHOT = {
       'relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect',
     ],
     toolDescChars: 4750,
-    toolSchemaChars: 22826,
-    totalChars: 35094,
+    toolSchemaChars: 23991,
+    totalChars: 36259,
   },
   teammate: {
     sections: [

@@ -4344,7 +4344,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // w1（relay-docs-v2 §2.5 P5）：design_gate 新增 ask_ref/not_doing 回显字段 → 合计 12988，预算按实测+~0.9% 上调到 13100。
   // fix-p1（risk 判档）：T0 实际 diff 证据、userVisible/lib 公开面升级口径写进 relay_phase.risk/diff_hash 描述 → 合计 13344，
   // 预算按实测+~1.2% 上调到 13500（#68：只调预算，不删语义/约束，仍逐条受 ≤400/单行约束）。
-  assert.ok(parameterChars <= 13500, '参数 schema 总字符 <=13500（fix-p1 实测 13344），实际 ' + parameterChars);
+  // fix3（confirmKey 契约）：relay_work_items.lead_confirm 补 auto/confirmKey/diffHash + 复用 anyOf → 实测 14022，
+  // 预算按实测+~2% 上调到 14300。
+  assert.ok(parameterChars <= 14300, '参数 schema 总字符 <=14300（fix3 实测 14022），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -4370,7 +4372,8 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   assert.ok(leadDescriptionChars <= 2400, 'lead-only 5 条描述总字符 <=2400（v0.11 P0-B 实测 2356），实际 ' + leadDescriptionChars);
   // v0.10.x 完成确认门：relay_collect 新增 lead_confirm 结构化 schema → 实测 3643，预算 3700。
   // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
-  assert.ok(leadParameterChars <= 4800, 'lead-only 5 条参数总字符 <=4800（v0.11 P0-B 实测 4732），实际 ' + leadParameterChars);
+  // fix3：relay_collect.lead_confirm 补 auto/confirmKey/diffHash → 实测 5219，预算按实测+~3.5% 上调到 5400。
+  assert.ok(leadParameterChars <= 5400, 'lead-only 5 条参数总字符 <=5400（fix3 实测 5219），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
   const protocol = sections[0].text;
@@ -5053,6 +5056,13 @@ test('w2 风险分级：T1 设计进 phase goal、ship 做一次 diff 审查、�
   const shipped = await call({ phase: 'ship', diff_hash: 'd1', user_gate: { report: '四段汇报', review: 'diff 审查：无偏移/劣化/偷懒/缺失' } });
   assert.equal(shipped.phase, 'ship');
   assert.ok(shipped.gateWaived.includes('contract_check'), 'T1 不做契约三问');
+  // README 口径：T1 同 diff 复用审查结论须带 diff_hash（缺 hash 的空 review 不得复用）。
+  await call({ phase: 'blocked', exit_reason: '等用户确认' });
+  await assert.rejects(call({ phase: 'ship', user_gate: { report: '四段汇报' } }), /diff_hash/, 'T1 复用必须带 diff_hash');
+  const reused = await call({ phase: 'ship', diff_hash: 'd1', user_gate: { report: '四段汇报' } });
+  assert.ok(reused.gateWaived.includes('independent_review'), '同 diff + diff_hash 复用审查结论');
+  await call({ phase: 'blocked', exit_reason: '再确认' });
+  await assert.rejects(call({ phase: 'ship', diff_hash: 'd2', user_gate: { report: '四段汇报' } }), /review/, '换 diff_hash 必须重审');
 });
 
 test('P1-2 去重键：T2 复用必须带 diff_hash；reopen/新任务清键，同 diff 也不复用', async () => {

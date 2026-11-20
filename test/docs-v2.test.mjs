@@ -331,6 +331,7 @@ test('显示宽度：CJK/emoji 双宽；W 触发 A→B，layout=flat 关闭 W/G�
     assert.equal(displayWidth('abc'), 3);
     assert.equal(displayWidth('中a'), 3, 'CJK 记 2 列');
     assert.equal(displayWidth('👁a'), 3, 'emoji 记 2 列');
+    assert.equal(displayWidth('👁' + String.fromCharCode(0xfe0f)), 2, 'VS16 变体选择符不额外计列');
     const index = buildDocIndex(fx.cwd);
     assert.equal(renderDocIndex(index).level, 'A', '默认 1024 列下小索引仍 A');
     const wide = renderDocIndex(index, { width: 100 });
@@ -356,9 +357,15 @@ test('docs.select=legacy：真回滚 v0.11 渲染（L1/L2 全单列 + 尾行，�
     assert.match(legacy.text, /另有 \d+ 份历史产物未入索引/, 'v0.11 尾行');
     assert.doesNotMatch(legacy.text, /### 在役（先读）|### 带决策/, '无 v0.12 选择标题');
     assert.equal(legacy.workspacePins.length, 0, 'legacy 不消费 pin');
+    assert.equal(legacy.truncated, false, '无省略且未超护栏 → truncated=false');
+    const folded = renderDocIndex(index, { select: false, maxBytes: legacy.bytes - 10 });
+    assert.ok(folded.omitted > 0, '有省略');
+    assert.equal(folded.truncated, true, 'v0.11 truncated 含 omitted>0');
     const tiny = renderDocIndex(index, { select: false, maxBytes: 1 });
     assert.match(tiny.text, /共 \d+ 份文档已折叠（预算 1B）/, 'v0.11 极端字节保底');
     assert.doesNotMatch(tiny.text, /### 在役（先读）|### 带决策/, '极端预算也不退回 v0.12 结构');
+    assert.equal(renderDocIndex({ entries: [], all: [] }, { select: false }).truncated, false, '无省略且未超字节 → truncated=false');
+    assert.equal(renderDocIndex({ entries: [], all: [] }, { select: false, maxBytes: 1 }).truncated, true, '字节超护栏 → truncated=true');
   } finally { fx.cleanup(); }
 });
 

@@ -5,6 +5,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRelayHandoffTool, lintRiskTierOf } from '../lib/agent/handoff.js';
+import { metricsFileOf } from '../lib/docs-metrics.js';
 import { configurePanelStore, clearPanelMemory, panelStateOf } from '../lib/panel-store.js';
 
 // rc.2 dsh-schedule 形状（lib/types/types.d.ts:439-450 / :394-417）：list() 返回分页对象，条目带 target/status。
@@ -117,4 +118,19 @@ test('fix2：T0 handoff 风险档优先进程内记忆，重载后回退台账 c
   assert.equal(lintRiskTierOf(undefined, { currentPhase: { risk: { tier: 'T0' } } }), 'T0', '重载后从台账兜底');
   assert.equal(lintRiskTierOf('T2', { currentPhase: { risk: { tier: 'T0' } } }), 'T2', '记忆优先');
   assert.equal(lintRiskTierOf(undefined, undefined), undefined, '都没有则维持全量 lint');
+});
+
+test('fix3：handoff 文档注入埋点只在交接验收成功后写（失败不留假注入）', async () => {
+  const seed = (h) => { fs.mkdirSync(join(h.cwd, '.scratch', 'context-relay'), { recursive: true }); writeFileSync(join(h.cwd, '.scratch', 'context-relay', 'progress.md'), '# 进度\n'); return h; };
+  const failed = seed(harness({ accept: false }));
+  const failedResult = await failed.run();
+  assert.equal(failedResult.ok, false);
+  assert.equal(fs.existsSync(metricsFileOf(failed.cwd, failedResult.sessionId)), false, '失败交接不得留下注入事件');
+  const ok = seed(harness());
+  const okResult = await ok.run();
+  assert.equal(okResult.ok, true, JSON.stringify(okResult));
+  const events = readFileSync(metricsFileOf(ok.cwd, okResult.sessionId), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  const injects = events.filter((event) => event.type === 'inject');
+  assert.equal(injects.length, 1, '成功交接写一条注入事件');
+  assert.equal(injects[0].site, 'handoff');
 });

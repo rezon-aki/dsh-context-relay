@@ -17,6 +17,7 @@ import { createTeamTools } from '../lib/agent/team-tools.js';
 import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
+import { confirmKeyOf } from '../lib/risk.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
 import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
@@ -381,6 +382,51 @@ test('relay_work_items：完成确认门——新变 done 缺/不完整/含 fals
   assert.equal(passed.ok, true, JSON.stringify(passed));
   assert.equal(passed.counts.done, 1);
   assert.deepEqual(readLedgerFile(cwd).items[0].lead_confirm, confirm, '三项 true 才置 done 并写入条目');
+});
+
+test('relay_work_items：auto 确认经工具契约消费（auto+confirmKey），同 id 内容变更后旧确认失效', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  writeLedger(cwd, [
+    { id: 'auto-wi', title: '改 README', status: 'doing', next: '写说明', evidence: ['README.md:1'], phase: 'build' },
+  ], { rev: 1, currentPhase: { phase: 'build', goal: 'g', since: 1, openedAtRev: 1, risk: { tier: 'T0', source: 'declared', reasons: ['docs'] } } });
+  const session = fakeSession({ id: 'session-wi-auto-confirm', cwd, seq: 0 });
+  const tool = applyAgent(fakeServices({ session }).services).tools.get('relay_work_items');
+  const agent = { session, options: {} };
+  // 输入 schema 必须允许复用形态（否则模型只能按 schema 传三项 true，永远进不了复用分支）。
+  const schema = tool.parameters.properties.items.items.properties.lead_confirm;
+  assert.deepEqual(schema.properties.auto.enum, ['T0', 'T1']);
+  assert.ok(schema.properties.confirmKey && schema.properties.diffHash, 'schema 列出 confirmKey/diffHash');
+  assert.ok(JSON.stringify(schema.anyOf ?? []).includes('confirmKey'), 'schema 允许 auto+confirmKey 复用形态');
+  const item = { id: 'auto-wi', title: '改 README', status: 'done', evidence: ['README.md:1'] };
+  const first = await tool.execute({ rev: 1, items: [item] }, { agent });
+  assert.equal(first.ok, true, JSON.stringify(first));
+  const saved = readLedgerFile(cwd).items[0].lead_confirm;
+  assert.equal(saved.auto, 'T0');
+  assert.match(saved.confirmKey, /^[0-9a-f]{16}$/);
+  assert.match(saved.diffHash, /^[0-9a-f]{16}$/);
+  assert.equal(saved.confirmKey, confirmKeyOf({ itemId: 'auto-wi', rev: 1, diffHash: saved.diffHash }), 'diffHash 真进了 confirmKeyOf（key 绑内容指纹）');
+  // 重复请求只回传 auto+confirmKey+diffHash（不带三项布尔）→ 走工具 execute 复用盘上确认。
+  const replay = await tool.execute({
+    rev: readLedgerFile(cwd).rev,
+    items: [{ ...item, lead_confirm: { auto: saved.auto, confirmKey: saved.confirmKey, diffHash: saved.diffHash } }],
+  }, { agent });
+  assert.equal(replay.ok, true, JSON.stringify(replay));
+  assert.equal(readLedgerFile(cwd).items[0].lead_confirm.confirmKey, saved.confirmKey, '复用盘上三项 true');
+  // 同 id 改内容后重放旧 key → done-gate 整表拒绝（零副作用）。
+  const rev = readLedgerFile(cwd).rev;
+  const changed = { ...item, title: '改 README v2', evidence: ['README.md:2'] };
+  const refused = await tool.execute({
+    rev,
+    items: [{ ...changed, lead_confirm: { auto: saved.auto, confirmKey: saved.confirmKey, diffHash: saved.diffHash } }],
+  }, { agent });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.code, 'done-gate');
+  assert.equal(readLedgerFile(cwd).rev, rev, '拒绝零副作用');
+  // 不带显式确认重写同 id 新内容：旧确认不保留。
+  const plain = await tool.execute({ rev, items: [changed] }, { agent });
+  assert.equal(plain.ok, true, JSON.stringify(plain));
+  assert.equal(readLedgerFile(cwd).items[0].lead_confirm, null, '内容变更后旧确认失效');
 });
 
 test('relay_work_items：workItems=false 时结构化拒绝且不读写（work-items-disabled）', async () => {

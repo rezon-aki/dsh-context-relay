@@ -36,7 +36,7 @@
 ### 文档索引 v2（P1–P3）
 
 - 选择：单列在役（pin / 最近 3 次交接 / 2 份 brief / progress / lessons）与决策文档（decisions，或 frontmatter constraints/contracts 且显式 role/when）；其余按目录成组；`relay_doc list prefix=<目录>` 展开。
-- 层级：默认 A 层；2KB 只当护栏，超限 A→B→C（折叠/分组），每份文档仍 ≤2 次调用可达。
+- 层级：默认 A 层；单列显示宽度超过默认 1024 列（CJK/emoji 按双宽计）或显式 `docs.maxGroups` 超限时降 A→B→C（折叠/分组），2KB 字节上限只当兜底护栏（超了同样降级），每份文档仍 ≤2 次调用可达。
 - 计量：index/read/search 写 `.scratch/context-relay/metrics/<session>.ndjson`（≤200 行，不存正文/query），`relay_status.docs` 出摘要；`scripts/docs-metrics.mjs` 提供周报骨架（`node scripts/docs-metrics.mjs --since 7d`）。
 
 ### 角色注入裁剪（D）

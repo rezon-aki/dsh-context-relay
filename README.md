@@ -209,6 +209,11 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `handoffApproval` | `'required'` | 压缩/交接默认走官方审批；没有审批界面的部署可以设 `'off'`（风险自担）。 |
 | `inheritOnHandoff` | `true` | 交接后新会话沿用旧会话的模型和权限；设为 `false` 则回部署默认。 |
 | `longPresetId` | `'relay-long'` | 唯一模式 id（一般不用改）。 |
+| `docs.select` | `true` | 文档索引 v2 的选择面（在役/决策单列 + 目录折叠）。设为 `false` / `'legacy'` / `'off'` 真回滚 v0.11 渲染：L1/L2 全单列 + 折最大目录组 + 历史尾行，无 A/B/C 层级。 |
+| `docs.layout` | `true` | 索引的宽度/组数自动分层（W/G）。设为 `false` / `'flat'` / `'off'` 关闭 W/G（不再因宽度或组数降级）；字节护栏仍会 A→B→C 兜底。 |
+| `docs.metrics` | `true` | index/read/search 是否写 `.scratch/context-relay/metrics/<session>.ndjson`，以及 `relay_status.docs` 摘要。设为 `false` / `'off'` 完全不写事件、status 无 docs 块。 |
+| `docs.width` | `1024` | 单列条目的显示列预算（CJK/emoji 按 2 列）：超过则 A→B，B 层 pin 仍超则 C。正整数覆盖；`docs.layout` 关掉后本项不参与分层。 |
+| `docs.maxGroups` | 不设（不触发 G） | 显式组数上限（整数 ≥0）：目录组数超过它则降 C（设 0 且存在组时直接 C）。只有显式配置才启用 G。 |
 
 侧栏设置（人类可改，热生效）：水位线基准 / 默认模式 / 默认自动压缩授权 / 默认开新会话授权。「预算无上限」和「架构师」不在侧栏：开关在输入框里按会话控制，默认值分别来自 `settings.unlimitedBudget`（默认 true）和配置 `architect`（默认 true）。
 
@@ -318,7 +323,7 @@ HTTP（仅本机 GUI 认证后可用）：`GET/PUT /context-relay/settings`、`G
 ### 文档分层与注入边界
 
 - 跨会话文档分三层：L0 索引（自动生成、带「何时读」）→ L1（交接单/阶段材料/进度/经验，新会话先读）→ L2（架构/设计/决策，按需取）；`relay_doc` 负责读和查（`index`/`list`/`read`/`search`/`lint`/`related`），`doc_lint` 负责体检。
-- L0 只单列「在役」文档（pin / 最新交接 / 进度 / 经验）与决策文档，其余按目录成组（份数 + 1–3 个代表 + `relay_doc list prefix=<目录>` 展开）；索引头部两行 legend/health，超 2KB 护栏按 A→B→C 降级。
+- L0 只单列「在役」文档（pin / 最新交接 / 进度 / 经验）与决策文档，其余按目录成组（份数 + 1–3 个代表 + `relay_doc list prefix=<目录>` 展开）；索引头部两行 legend/health。分层先看显示宽度：单列部分超过默认 1024 列（CJK/emoji 按双宽计）或显式 `docs.maxGroups` 超限时降 A→B→C；2KB 字节上限只作兜底护栏，超了同样降级。
 - 语义标记：frontmatter 的 `constraints`/`contracts` 在条目上给 `!n`/`An`，`relations` 给 `→n`；`relay_doc related <path>` 一次看全出边+入边，`doc_lint` 对坏指针给 advisory WARN。
 - 注入有计量：`index`/`read`/`search` 写 `.scratch/context-relay/metrics/<session>.ndjson`（≤200 行，不含正文），`relay_status.docs` 看摘要，`scripts/docs-metrics.mjs` 出周报骨架。
 - 字节/条数上限只做建议：超了自动归档或把完整内容落盘、消息里给指针，不拒绝也不丢数据；常驻注入保持有界（协议 + 15 个工具 schema + 4 个角色装配都有预算断言）。
