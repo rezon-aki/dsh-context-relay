@@ -752,7 +752,10 @@ test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；item
   const emptyAgent = { session: emptySession, options: {} };
   await emptyTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
   const emptySwitched = await emptyTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: emptyAgent });
-  assert.match(emptySwitched.ledger.hint, /还没有工作台账/, '空台账跨 phase 给开账提示（事件驱动，不建文件）');
+  // fix-p2：空台账单线程也把 design_gate.path 落成 pin（否则下次 index/交接就丢）；
+  // 因此不再有「还没有工作台账」提示，改为「本 phase 没有分点」提示。
+  assert.match(emptySwitched.ledger.hint, /没有分点/);
+  assert.deepEqual(readLedgerFile(emptyCwd).currentPhase.pins, [DESIGN_GATE.path], '空台账也持久化 pin');
 });
 
 test('relay_phase：phase=null 未收口条目不能绕过 strict 关 phase 闸（C7/A-03 复现）；carry 可带走', async () => {
@@ -934,7 +937,9 @@ test('relay_phase 跨 phase：有队伍时自动带队友 triage；队友待处�
   // 队友 mate-1 到 organize 且没写 team_note：v0.7.0 只 warning，不拒绝切 phase。
   const warned = await phase.execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: { session, options: {} } });
   assert.match(warned.teamWarning, /mate-1/, '队友上下文提醒降级为 warning');
-  assert.ok(!existsSync(join(cwd, WORK_ITEMS_REL)), '不写台账');
+  // fix-p2：空台账也落 pin（design_gate.path），不再以「不写台账」为不变量。
+  assert.ok(existsSync(join(cwd, WORK_ITEMS_REL)), '空台账落 pin');
+  assert.deepEqual(readLedgerFile(cwd).currentPhase.pins, [DESIGN_GATE.path], 'pin 跟随 design_gate');
   assert.ok(existsSync(ctxFile), 'triage 快照照常落盘');
   assert.deepEqual(warned.team.pending, ['mate-1']);
 

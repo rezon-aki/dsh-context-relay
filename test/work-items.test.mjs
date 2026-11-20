@@ -941,3 +941,31 @@ test('w2 风险 done-gate：T0 自动确认；T1 文档条目自动；T1 代码�
   const explicit = await write([{ id: 'd3', ...confirm('改 README', ['README.md:1']), lead_confirm: { no_drift: true } }], 'T0');
   assert.equal(explicit.ok, false, '显式不完整确认不自动补');
 });
+
+test('confirmKey 消费：已 done 重复请求只回传 auto+confirmKey → 复用盘上三项 true；key 不匹配 → 拦截', async () => {
+  const cwd = tempCwd();
+  const phase = { phase: 'build', risk: { tier: 'T0', source: 'declared', reasons: ['test'] } };
+  const doc = { id: 'auto-doc', title: '改 README', status: 'done', evidence: ['README.md:1'] };
+  assert.equal((await writeWorkItems(cwd, { items: [doc], currentPhase: phase })).ok, true);
+  const saved = readWorkItems(cwd).items.find((item) => item.id === 'auto-doc');
+  assert.match(saved.lead_confirm.confirmKey, /^[0-9a-f]{16}$/);
+  const rev = readWorkItems(cwd).rev;
+  // 重复请求只带 auto + confirmKey（三项布尔不完整）：同一 key → 复用，不重复要求确认。
+  const reused = await writeWorkItems(cwd, {
+    rev,
+    items: [{ ...doc, lead_confirm: { auto: saved.lead_confirm.auto, confirmKey: saved.lead_confirm.confirmKey } }],
+    currentPhase: phase,
+  });
+  assert.equal(reused.ok, true, JSON.stringify(reused));
+  const after = readWorkItems(cwd).items.find((item) => item.id === 'auto-doc');
+  assert.deepEqual([after.lead_confirm.no_drift, after.lead_confirm.no_missing, after.lead_confirm.no_regression], [true, true, true]);
+  assert.equal(after.lead_confirm.confirmKey, saved.lead_confirm.confirmKey);
+  // 不匹配的 key → done-gate 拦截（不能借重复请求伪造/降级确认）。
+  const forged = await writeWorkItems(cwd, {
+    rev: readWorkItems(cwd).rev,
+    items: [{ ...doc, lead_confirm: { auto: 'T0', confirmKey: 'deadbeefdeadbeef' } }],
+    currentPhase: phase,
+  });
+  assert.equal(forged.ok, false);
+  assert.equal(forged.code, 'done-gate');
+});

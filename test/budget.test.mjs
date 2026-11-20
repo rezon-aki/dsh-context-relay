@@ -312,6 +312,7 @@ test('relay_phase warn 档缺 budget_plan：拒绝且零副作用（phase/面板
   assert.deepEqual(internalKeysIn(error.message), [], '拒绝文案不含内部键');
   assert.equal(error.code, 'budget plan');
   assert.ok(error.facts.detail.startsWith('relay_phase refused (budget plan)'), '原始技术细节只进 facts');
+  assert.ok(Array.from(error.message).length <= 300, '拒绝文案统一 ≤300 字，实际 ' + Array.from(error.message).length);
 
   const report = await h.status();
   assert.equal(report.phase, 'discover', '拒绝不切换 phase');

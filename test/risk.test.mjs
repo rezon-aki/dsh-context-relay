@@ -37,6 +37,11 @@ test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知�
   assert.equal(isDocPath('lib/a.js'), false);
   assert.equal(isDocItem('补设计文档'), true);
   assert.equal(isDocItem('改 lib 函数'), false);
+  // 按路径+标题判定：标题像代码但 evidence 是文档 → 文档；标题写文档但 evidence 是源码 → 文档；两者都不是 → 代码。
+  assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['README.md:1'] }), true);
+  assert.equal(isDocItem({ title: '补设计文档', evidence: ['lib/x.js:1'] }), true);
+  assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['docs/x.md:1'] }), true);
+  assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['lib/x.js:1', 'test/a.mjs:2'] }), false);
 });
 
 test('去重键：reviewKey/confirmKey/docsHash/denyKey 确定且随输入变化', () => {

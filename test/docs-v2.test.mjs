@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { buildDocIndex, DOC_LIMITS, progressKeyDocs, readDoc, renderDocIndex } from '../lib/docs.js';
-import { normalizePins, renderIndex, selectIndex } from '../lib/docs-policy.js';
+import { displayWidth, normalizeDocsOptions, normalizePins, renderIndex, selectIndex } from '../lib/docs-policy.js';
 import { METRICS_MAX_LINES, docsMetricsSnapshot, noteInjection, readMetricsDir, readMetricsEvents, recordRead, recordSearch } from '../lib/docs-metrics.js';
 import { buildReport, parseSinceMs, run as runMetricsReport } from '../scripts/docs-metrics.mjs';
 import { createRelayTools } from '../lib/agent/tools.js';
@@ -192,6 +192,29 @@ test('relay_phase：design_gate.path 自动并入 currentPhase.pins，L0 随之�
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
+test('relay_phase：空台账单线程 design_gate.path 也持久化 pin', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-v2-pin-empty-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'architecture', 'design.md'), ...fm('设计稿'));
+    const tools = createRelayTools({ ...metricsRuntime(), workItems: { enabled: true } });
+    const phase = tools.find((definition) => definition.name === 'relay_phase');
+    const doc = tools.find((definition) => definition.name === 'relay_doc');
+    const session = { id: 'pin-empty-session', header: { cwd }, seq: 0 };
+    const exec = { agent: { session, options: {} } };
+    const built = await phase.execute({
+      phase: 'build',
+      design_gate: { path: '.scratch/context-relay/architecture/design.md', user_approved: true, ask_ref: '确认', not_doing: ['不做'] },
+    }, exec);
+    assert.equal(built.phase, 'build');
+    const ledger = readWorkItems(cwd, { scopeId: 'pin-empty-session' });
+    assert.equal(ledger.exists, true, '空台账也要落盘');
+    assert.deepEqual(ledger.currentPhase.pins, ['.scratch/context-relay/architecture/design.md']);
+    const index = await doc.execute({ action: 'index' }, exec);
+    assert.match(index.text, /- `architecture\/design\.md`/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
 test('埋点：inject/read/search 写 ndjson（无正文/query），inIndex 归因与 200 行滚动', () => {
   const fx = fixture();
   try {
@@ -300,4 +323,88 @@ test('周报骨架：aggregate 样本门槛/坏行跳过/组级指标；CLI 只�
     assert.equal(readFileSync(join(dir, 's0.ndjson'), 'utf8'), before, 'CLI 只读');
     assert.equal(readMetricsDir(dir).skipped, 1);
   } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('显示宽度：CJK/emoji 双宽；W 触发 A→B，layout=flat 关闭 W/G，字节仍兜底', () => {
+  const fx = fixture();
+  try {
+    assert.equal(displayWidth('abc'), 3);
+    assert.equal(displayWidth('中a'), 3, 'CJK 记 2 列');
+    assert.equal(displayWidth('👁a'), 3, 'emoji 记 2 列');
+    const index = buildDocIndex(fx.cwd);
+    assert.equal(renderDocIndex(index).level, 'A', '默认 1024 列下小索引仍 A');
+    const wide = renderDocIndex(index, { width: 100 });
+    assert.equal(wide.level, 'B', 'W 按显示宽度触发');
+    const flat = renderDocIndex(index, { width: 1, layout: false });
+    assert.equal(flat.level, 'A', 'layout=flat 关闭 W/G 自动层级');
+    const bytes = renderDocIndex(index, { width: 1, layout: false, maxBytes: 1 });
+    assert.notEqual(bytes.level, 'A', '字节仍是兜底上限：' + bytes.level);
+  } finally { fx.cleanup(); }
+});
+
+test('docs.select=legacy：L1/L2 全单列、不看 pin/在役；默认仍按在役/决策选择', () => {
+  const fx = fixture();
+  try {
+    const index = buildDocIndex(fx.cwd);
+    const current = renderDocIndex(index);
+    assert.doesNotMatch(current.text, /^- `docs\/note\.md`/m, '默认不把普通 L2 单列');
+    const legacy = renderDocIndex(index, { select: false, pins: ['docs/note.md'] });
+    assert.match(legacy.text, /^- `docs\/note\.md`/m, 'legacy 全 L1/L2 单列');
+    assert.equal(legacy.workspacePins.length, 0, 'legacy 不消费 pin');
+  } finally { fx.cleanup(); }
+});
+
+test('工作区 pin：progress.key_docs 指向 relay 根外路径也可见、可直接 read，且不进 paths', () => {
+  const fx = fixture();
+  try {
+    const index = buildDocIndex(fx.cwd);
+    const rendered = renderDocIndex(index, { pins: ['lib/agent/tools.js — 入口'] });
+    assert.ok(rendered.workspacePins.includes('lib/agent/tools.js'));
+    assert.match(rendered.text, /- `lib\/agent\/tools\.js` — 工作区 pin（不在 relay 根内；用 read 直接读）/);
+    assert.ok(!rendered.paths.includes('lib/agent/tools.js'), '工作区 pin 不进 metrics paths');
+    assert.ok(rendered.shown >= 1);
+  } finally { fx.cleanup(); }
+});
+
+test('docs.metrics=off：index/read 不写事件，relay_status 无 docs 块', async () => {
+  const fx = fixture();
+  try {
+    const tools = createRelayTools({ ...metricsRuntime(), docs: { metrics: false } });
+    const doc = tools.find((definition) => definition.name === 'relay_doc');
+    const status = tools.find((definition) => definition.name === 'relay_status');
+    const session = { id: 'docs-off-session', header: { cwd: fx.cwd }, seq: 0 };
+    const exec = { agent: { session, options: {} } };
+    await doc.execute({ action: 'index' }, exec);
+    await doc.execute({ action: 'read', path: 'docs/note.md' }, exec);
+    assert.equal(existsSync(join(fx.r, 'metrics', 'docs-off-session.ndjson')), false, 'metrics off 不落盘');
+    const report = await status.execute({}, exec);
+    assert.equal(report.docs, undefined, 'relay_status 回到旧输出');
+  } finally { fx.cleanup(); }
+});
+
+test('list/related 记 origin：后续 read 归因 list/pointer，查找本身不算 read', async () => {
+  const fx = fixture();
+  try {
+    w(join(fx.r, 'docs', 'pointer.md'), ...fm('指针', ['relations: implements: docs/target.md']));
+    w(join(fx.r, 'docs', 'target.md'), ...fm('目标'));
+    const tools = createRelayTools(metricsRuntime());
+    const doc = tools.find((definition) => definition.name === 'relay_doc');
+    const session = { id: 'docs-origin-session', header: { cwd: fx.cwd }, seq: 0 };
+    const exec = { agent: { session, options: {} } };
+    await doc.execute({ action: 'index' }, exec);
+    await doc.execute({ action: 'list', prefix: 'docs/pointer.md' }, exec);
+    assert.equal((await doc.execute({ action: 'read', path: 'docs/pointer.md' }, exec)).ok, true);
+    await doc.execute({ action: 'related', path: 'docs/pointer.md' }, exec);
+    assert.equal((await doc.execute({ action: 'read', path: 'docs/target.md' }, exec)).ok, true);
+    const reads = readMetricsEvents(fx.cwd, 'docs-origin-session').events.filter((event) => event.type === 'read');
+    assert.equal(reads.length, 2, 'list/related 本身不写 read 事件');
+    assert.equal(reads[0].origin, 'list');
+    assert.equal(reads[1].origin, 'pointer');
+  } finally { fx.cleanup(); }
+});
+
+test('docs 开关归一：默认全开；legacy/flat/off 关掉', () => {
+  assert.deepEqual(normalizeDocsOptions(undefined), { select: true, layout: true, metrics: true });
+  assert.deepEqual(normalizeDocsOptions({ select: 'legacy', layout: 'flat', metrics: 'off' }), { select: false, layout: false, metrics: false });
+  assert.deepEqual(normalizeDocsOptions({ select: false, layout: false, metrics: false }), { select: false, layout: false, metrics: false });
 });
