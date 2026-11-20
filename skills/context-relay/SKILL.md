@@ -6,6 +6,8 @@ disable-model-invocation: true
 
 # Context Relay 操作手册
 
+> **v0.13.0 更新**：① **用户消息默认三问**——「你看到什么 / 要你做什么 / 有什么影响」（默认≤600 字）；四段（结论/影响/需要你做什么/证据位置）只在用户要细节或 ship 长报告时用，旧四段只 warning、不阻断。② **默认沉默**——中间进度不主动发；派活 `user_visible` 默认 false，只有标记 true 的完成项收口才产 `[给用户]` 段；没有 `[给用户]` 段就不发进度消息。③ **工具返回先给人话段**——collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节]`；organize/doc/work_items/recommend/团队工具等内部工具标 `[模型状态/内部·不要转述给用户]`，失败标 `[内部错误·不要转述给用户]`。④ **机制/协议/汇报方式的诊断归 architect**——Lead 不自行拍这类方案。⑤ **同批**——文案 actor 化 + actor lint、`lead_confirm` 单源、`manage.maintain` 维护入口、回执证据 / `review_ref` / 参数 warn、配置表生成 / legacy golden / 风险档落盘 / isDocItem 路径优先；新增归档与重启冒烟脚本。
+>
 > **v0.12.0 新增**：① **风险分级**——T0/T1/T2 与门禁矩阵（T0 文档改动免设计门/独立审查，但须带实际 diff 证据 `paths`+`lines`，只写 reason 降 T1；T2 全门，未知保守 T2）；② **设计回显**——T2 设计门必须带 `ask_ref`（逐字用户原话 ≤300 字）与 `not_doing`（1–10 条），T0 一段 / T1 一页 / T2 七段；③ **说人话**——notice/报错/结果统一四段 `human`，内部键只进 `facts`/结构化字段；④ **文档索引 v2**——在役/决策单列 + 目录分组、A/B/C 分层、legend/health 与注入计量；⑤ **角色裁剪**——`human-loop`（技能）、`doc_lint`、`ask_user_question` 只给 Lead，`context-relay`/`doc-governance` 全局可用；teammate/worker 保留 `relay_doc`（teammate 另有 checkpoint/freshen），架构师/worker 裁 `relay_status` 与 `relay_phase`；⑥ **语义层**——`constraints`/`contracts`/`relations` 标记与 `relay_doc related` 一跳。
 >
 > **v0.11.0 更新**：① **主动管理**——新 phase/新任务起点自查；到线四档（起点主动 / warn 现在动手 / organize·relay 兜底 / capacity 55% 最坏兜底），warn 不再推荐继续。② **固定小队**——默认上限 8（含架构师）、spawn 默认关、换人=reset 全清复用、`relay_team_status manage` 做 retire/adopt，默认视图只 squad。③ **ship 受控 reopen**——ship→build/verify 必须显式 `reopen{reason,user_approved:true}`，ship→discover 标 newTask。④ **容量线独立**——`settings.capacityThreshold` 默认 55%。⑤ **宿主压缩兜底**——host 归因写最小恢复快照+一次 notice（unknown 只日志）。
@@ -24,7 +26,7 @@ disable-model-invocation: true
 
 ## 一轮的标准动作
 
-1. **起手**：调 `tools.relay_status` 看 Lead 与队友的压力、当前 phase、`continue`、`budget`、`plane`（agent 平面自检：role/installed/degradations）、`delegation`（执行占比/派活计数）、`diagnostics`。结构化字段已瘦身：`{phase, lead{used,window,ratio,band}, team[], organizeCount, continue{needed,band,organizeCount,recommendation,reason}, advice, diagnostics{pressureSource,lastCompactionSeq,organizeCount}, budget{band, used, window, ratio, headroomToWarn?, headroomToOrganize?, headroomToRelay?, thresholds{warn,organize,relay}（各线 token 值）, currentPhaseCostTokens?, previousPhase?{phase, costTokens}}}` + `text`；阈值、A/B 选项与预算事实行（headroom、本 phase 已消耗、上一 phase 消耗）只在 `text`（v0.2.15：`text` 不再复制 advice 与 `continue.reason`，只保留预算事实行与 recommendation——两者仍在 JSON 字段）。`organizeCount` 只计**真实压缩成功**的次数（拒绝/失败/空压缩不计数）。结果另带 `human`（结论/影响/需要你做什么/证据 四段式用户文案）与 `facts`（内部事实；`band=`/`headroomTo*` 等原始键不出现在 human/notice 正文，只在 summary/结构化字段/日志）。
+1. **起手**：调 `tools.relay_status` 看 Lead 与队友的压力、当前 phase、`continue`、`budget`、`plane`（agent 平面自检：role/installed/degradations）、`delegation`（执行占比/派活计数）、`diagnostics`。结构化字段已瘦身：`{phase, lead{used,window,ratio,band}, team[], organizeCount, continue{needed,band,organizeCount,recommendation,reason}, advice, diagnostics{pressureSource,lastCompactionSeq,organizeCount}, budget{band, used, window, ratio, headroomToWarn?, headroomToOrganize?, headroomToRelay?, thresholds{warn,organize,relay}（各线 token 值）, currentPhaseCostTokens?, previousPhase?{phase, costTokens}}}` + `text`；阈值、A/B 选项与预算事实行（headroom、本 phase 已消耗、上一 phase 消耗）只在 `text`（v0.2.15：`text` 不再复制 advice 与 `continue.reason`，只保留预算事实行与 recommendation——两者仍在 JSON 字段）。`organizeCount` 只计**真实压缩成功**的次数（拒绝/失败/空压缩不计数）。结果另带 `human`（结构化四段事实，供 `[给用户]` 三问投影）与 `facts`（内部事实；`band=`/`headroomTo*` 等原始键不出现在 human/notice 正文，只在 summary/结构化字段/日志）。
 2. **声明 phase**：`tools.relay_phase({phase, goal?, exit_criteria?, design_gate?, contract_check?, budget_plan?, user_gate?, reopen?})`（**discover/decide 必填 exit_criteria**：可验收完成口径，且只在跨 phase 时校验；**T2 首次进 build 必须带 `design_gate{path, user_approved:true, ask_ref, not_doing}`**（用户确认过的设计文档路径 + 逐字原话 + 不做清单），缺失零副作用拒绝；T1 设计写进 goal/exit_criteria（≤1 页），T0 不写独立稿（goal 写一段「改什么 / 怎么验」）；**contract_check{requirement, fidelity, attention} 只在 ship 必填**（交付自检），其他 phase 可选；**进 ship 只能从 verify 且必带 user_gate（review + report：新上下文独立审查 + 汇报）与 `verification{tier:minimal|heavy, approved_by_user?, items[]}`**，heavy 无用户授权即拒——见下「两段式用户门」）。**预算 phase 优先**：预算只是 phase 边界闸门——phase 中段不因预算打断工作、不中途压缩/接力；**warn 档（30%≤ratio<organize 线；默认基准 35%）切 phase 必填 `budget_plan{action, can_finish?, estimate_tokens?, note?}`**：`proceed`=估计放得下→放行；`split`=**拆票**（缩小本 phase 范围，goal/exit_criteria 收窄）→放行（响应带 reminder，phase 完成时再检查）；`relay`=先做一次 relay 操作（`relay_organize` force:true 或 `relay_handoff`）再重试 `relay_phase`；缺/非法 plan、`can_finish:false`+proceed、estimate 超 headroom 会被拒绝（**拒绝零副作用**）；ok 档不强制（headroom→organize >5% 窗口）；organize/relay 档沿用既有面板闸门；队友 relay 改为向 Lead 请示或拆票。**跨 phase 响应总带 `budget` 事实**（全档：band/headroomToWarn|Organize|Relay/上一 phase 实测消耗；ok 档不强制 `budget_plan` 但同样返回；warn 档另带 estimate/fits/action）——**phase 完成时看跨 phase 响应 budget 或 `relay_status.budget`** 决定边界动作。phase 固定为 discover → decide → build → verify → ship；goal/exit_criteria 会进下一次 organize 的 brief。人类选定的模式在本会话持久、不消费，严格按模式执行；autoChoose/autoDecision 等旧字段已在 v0.10.0 删除。**ship 后返修（ship→build/verify）必须显式 `reopen{reason 1-200, user_approved:true}`**（strict 零副作用拒；warn 放行+warning；off 旧行为），ship→discover 标 `newTask`。用 lessons 参数存带证据经验，超40条/8KB完整归档，不淘汰。
 3. **按 phase 派活（`relay_dispatch`）/收口（`relay_collect`）**：固定小队默认上限 8（含架构师），spawn 默认关；优先复用/清空复用现有队友，没有可用队员时 adopt 或 phase 边界 handoff；满员报 squad-full，不硬撑。派活前读队友状态；派活 brief 五字段缺一不可：目标（可验收）/ 必读 1–3 份（L0/文档指针+when/role，worker按序自取）/ 写范围 / 验收（命令或对照项）/ 回执（报告路径、头3行task/revision/verdict；**头是机器契约、不贴用户**；完成checkpoint后1条≤200字消息）。**派活一律走 `relay_dispatch`，收口一律走 `relay_collect`（短等 ≤120s，只回 digest）；见「派活与收口」节。**
 4. **phase 收尾 = 按面板模式/人类选择处理继续方式（phase 优先）**：ok/warn 档可直接 `relay_phase` 切下一 phase（**warn 档必填 `budget_plan` 可行性估计，见步骤 2**；放不下就拆票或先做一次 relay 操作）；organize/relay 档**不开新 phase**（本 phase 的活照做不砍）。`relay_phase` 超预算切 phase **不走官方审批闸门**（由 composer 面板闸门处理）；严格按本会话面板模式处理，问我=先问用户；模式不免审。
@@ -51,17 +53,17 @@ disable-model-invocation: true
 
 ## 派活与收口（工具化：relay_dispatch / relay_collect）
 
-- **派活一律用 `relay_dispatch({itemId, brief, docs, writeScope, acceptance})`**：从台账取分点 → 复用/新建 worker → 标准 brief（目标 / 必读 1–3 / 写范围 / 验收 / 回执路径+verdict）→ 台账写 doing+owner+next；缺字段直接拒绝，返回 worker/reportPath/dispatchId。
-- **收口一律用 `relay_collect({itemId, waitMs?})`**（短等 ≤120s）：只读回执头 3 行（task/revision/verdict）+ digest（≤600 字），台账置 done（evidence=reportPath）或 blocked（原因），**只回 digest**；完整报告留在报告文件，验收抽样才 read（≤3 次/phase）。
-- **不手工派活/不轮询**：不要用 `subagent`/`send_message` 手工派执行活（会漏 brief/台账/回执契约），不要轮询 `wait_agent`/`list_agents`（回执会自动送达）。
-- **回执头不贴用户**：头 3 行（task/revision/verdict）只给 `relay_collect`/校验用；给用户/Lead 的正文用四段：结论 / 影响 / 需要你做什么 / 证据（证据 ≤3 条 path:line，不贴日志/diff）。
+- **派活一律用 `relay_dispatch({itemId, brief, docs, writeScope, acceptance, user_visible?})`**：从台账取分点 → 复用/新建 worker → 标准 brief（目标 / 必读 1–3 / 写范围 / 验收 / 回执路径+verdict）→ 台账写 doing+owner+next；缺字段直接拒绝，返回 worker/reportPath/dispatchId；`user_visible` 默认 false（静默），只对需要用户看见的完成项标 true。
+- **收口一律用 `relay_collect({itemId, waitMs?})`**（短等 ≤120s）：只读回执头 3 行（task/revision/verdict）+ digest（≤600 字），台账置 done（evidence=reportPath）或 blocked（原因），**只回 digest**（`user_visible:true` 的分点若回执含 `## 用户可见` 三问或 verdict=needs-human，默认渲染 `[给用户]` 段；其余分点只给 `[内部细节]`）；完整报告留在报告文件，验收抽样才 read（≤3 次/phase）。
+- **不手工派活/不轮询**：不要用 `subagent`/`send_message` 手工派执行活（会漏 brief/台账/回执契约；**只读审查/探针例外**可用官方 subagent，回填 report+commit），不要轮询 `wait_agent`/`list_agents`（回执会自动送达）。
+- **回执头不贴用户**：头 3 行（task/revision/verdict）只给 `relay_collect`/校验用；给用户正文默认三问：你看到什么 / 要你做什么 / 有什么影响；用户要细节或 ship 长报告时才用四段：结论 / 影响 / 需要你做什么 / 证据位置（证据 ≤3 条 path:line，不贴日志/diff）。
 - **台账 owner / lead-exec**：build/verify 分点 owner 必须是 worker；Lead 自做必须在 done 的 evidence 记 `lead-exec:<原因>`（build→verify 默认 warn 校验；strict 档可配、命中即拒）。
 - **执行占比目标 ≤20%**：`relay_status.delegation` 给数据（execRatio / 派活 / 收口 / 空闲队友 / advice），warn 档只提醒；超了先派活再继续。
 
 ## 两段式用户门（设计门 + 实现↔设计对齐；最小注意力最大影响，2026-11-16 补充裁决）
 
 - **第一段：设计门（开工前，显式停）**：把设计（架构 / 改动面 / 验收口径 / 风险）交用户确认；用户确认后才允许开工。产品面：**T2 首次进 build（previous ∈ {discover, decide}）必须带 `design_gate{path, user_approved:true, ask_ref, not_doing}`**（path = 用户确认过的设计文档路径；ask_ref = 逐字用户原话 ≤300 字；not_doing = 1–10 条不做清单），缺失任一 `relay_phase` **零副作用拒绝**；结果回显 `design`（含 ask_ref 字数 / not_doing 条数）。没确认的设计不动代码。
-- **第二段：实现↔设计对齐（执行中 / 验收，独立审查）**：`ship` 是唯一的验收声明——只能从 `verify` 进；Lead 会话 `relay_phase({phase:'ship', user_gate:{review, report, questions?, verification?}})`：**实现者自查有盲区**——用**新会话 / 新队友 / 新子智能体**（`subagent` fresh context；**不要用 `subagent_fork`**）做独立审查。**Lead 必须给全上下文索引**：① 用户原话需求+边界（逐字）② 实现索引（file:line）+ 验证证据（测试/命令结果）③ 设计文档/决策入口 ④ 已知边界/未验证项。**审查范围 = 只做「需求 ↔ 设计与实现」对齐**（找偏移/劣化/偷懒/缺失），**不重跑技术验证、不重读第三方源码**；**最多 1 轮**（P0/P1 修完只看 diff 复核），预算 ≤10 个工具调用/≤5 分钟；审查超时或未完成不算通过，可续审/换人复审，不得静默当通过。把审查者身份 + 发现写进 `review`；`report` 大白话汇报（需求 → 实现 + 证据 → 审查结论 → 边界/取舍/没做到）；`questions?` 每条必带 `recommendation`（**不设题数上限**）。**宿主只强制 review/report 非空、不校验内容对错**；**不弹审批弹窗**；`handoff` 不是验收。
+- **第二段：实现↔设计对齐（执行中 / 验收，独立审查）**：`ship` 是唯一的验收声明——只能从 `verify` 进；Lead 会话 `relay_phase({phase:'ship', user_gate:{review, report, questions?, verification?}})`：**实现者自查有盲区**——用**新会话 / 新队友 / 新子智能体**（`subagent` fresh context；**不要用 `subagent_fork`**）做独立审查。**Lead 必须给全上下文索引**：① 用户原话需求+边界（逐字）② 实现索引（file:line）+ 验证证据（测试/命令结果）③ 设计文档/决策入口 ④ 已知边界/未验证项。**审查范围 = 只做「需求 ↔ 设计与实现」对齐**（找偏移/劣化/偷懒/缺失），**不重跑技术验证、不重读第三方源码**；**最多 1 轮**（P0/P1 修完只看 diff 复核），预算 ≤10 个工具调用/≤5 分钟；审查超时或未完成不算通过，可续审/换人复审，不得静默当通过。把审查者身份 + 发现写进 `review`；`report` 大白话汇报（需求 → 实现 + 证据 → 审查结论 → 边界/取舍/没做到）；`questions?` 每条必带 `recommendation`（**不设题数上限**）。**宿主只强制 review/report 非空、不校验内容对错**；**不弹审批弹窗**；`handoff` 不是验收。可选 `user_gate.review_ref`（独立审查报告路径 + 头 `revision`=HEAD + `verdict:done`；默认只 warning，`receiptVerify=strict` 才拒）。
 - **验收只做最小必要（重型须授权）**：默认 = 目标模块测试 + 单次独立 diff 审查 +（必要时）一次语法/静态检查；`user_gate.verification{tier:'minimal'|'heavy', approved_by_user?, items[]}`——全量测试矩阵/真机端到端/大样本采样/多轮独立审查（>1 轮）/跨环境矩阵/性能压测/重复复跑默认不做，`tier='heavy'` 无 `approved_by_user:true` 即拒。
 - **边界问题即发现即报**：discover/decide/build 遇到会改变结果/边界/代价的歧义、假设、实现与原意偏离 → 大白话汇报 + 提问（一次问清、附推荐与默认；**不限题数**）；不替用户拍板、不默默假设。用户起初未必知道最终形态，这是正常的——边发现边对齐。
 - **人类注意力最小高影响**：只在会改变用户可见结果/边界/不可逆处打扰；每 phase ≤1 次非 P0 同步；问题一次批量问清（推荐+默认+后果，**不限题数**）；答案写进 phase brief/handoff（下一会话不再问）；能面板点选的不出问答；P0/不可逆随时。
@@ -77,7 +79,7 @@ disable-model-invocation: true
 
 ## composer 面板（输入框下方「接力」chip）
 
-- **团队保鲜（v0.11）**：固定小队默认上限 8（含架构师，`squadMax` 可上调），spawn 默认关（`allowSpawn`）；派活优先 `relay_dispatch` 自动复用现有 squad 队友（协调类消息才用 `send_message`）。换人=让队友 `relay_checkpoint` → `relay_freshen({reset:true, brief})` 全清复用（同成员/0 额度）；`relay_renew` 默认不可用，只换身份/角色且 `allowSpawn=true` 时可用并受 cap。历史成员默认隐藏、不可派活：`relay_team_status({include_legacy:true})` 查看，`manage:{action:'adopt'}` 纳入，`manage:{action:'retire',scope:'legacy',keep:[...]}` 批量清理（catalog 不删名，真清空用 handoff）。队友只在 organize/relay escalation（warn 只本地提示）。**旧任务结束、旧上下文不要时：`relay_checkpoint` → `relay_freshen({reset:true, brief:"新任务…"})` → 派新任务**——reset 是**真清空**（下一次 pre-step 后模型只剩系统提示 + brief；同成员/同会话/不占成员额度/不计 freshen 次数；失败自动回退官方压缩）。`relay_renew` 只用于换身份/角色（新代占用并发额度，旧代释放后不占）。
+- **团队保鲜（v0.11）**：固定小队默认上限 8（含架构师，`squadMax` 可上调），spawn 默认关（`allowSpawn`）；派活优先 `relay_dispatch` 自动复用现有 squad 队友（协调类消息才用 `send_message`）。换人=让队友 `relay_checkpoint` → `relay_freshen({reset:true, brief})` 全清复用（同成员/0 额度）；`relay_renew` 默认不可用，只换身份/角色且 `allowSpawn=true` 时可用并受 cap。历史成员默认隐藏、不可派活：`relay_team_status({include_legacy:true})` 查看，`manage:{action:'adopt'}` 纳入，`manage:{action:'retire',scope:'legacy',keep:[...]}` 批量清理（catalog 不删名，真清空用 handoff）；`manage:{action:'maintain',names,brief[,reset]}` 只发标准维护消息（checkpoint→freshen；`dryRun` 可先看；不擦除/spawn/写 roster）。队友只在 organize/relay escalation（warn 只本地提示）。**旧任务结束、旧上下文不要时：`relay_checkpoint` → `relay_freshen({reset:true, brief:"新任务…"})` → 派新任务**——reset 是**真清空**（下一次 pre-step 后模型只剩系统提示 + brief；同成员/同会话/不占成员额度/不计 freshen 次数；失败自动回退官方压缩）。`relay_renew` 只用于换身份/角色（新代占用并发额度，旧代释放后不占）。
 - **渲染与档位**：唯一模式表盘为问我 / 继续 / 压缩继续 / 接力新会话；新 root 默认压缩继续，显式选择保持。无下一个新会话模式开关，handoff 恒去 relay-long；模式不跨会话继承。
 - **模型推荐行（v0.3.3）**：Lead 用 `relay_recommend` 提交后，popover 状态行下多一行「模型推荐 · 操作 · 理由 · HH:MM」，表盘同操作档位加冷青虚线「荐」、chip title 追加「· 模型推荐 X」；单一模式收到「压缩→新会话」推荐整条忽略（该档已退役；无行/无高亮，v0.3.4）；推荐文案用面板档位长 label（压缩继续/接力新会话），reason 存储 ≤120、展示/提醒 ≤60；旧宿主缺字段不渲染。**推荐≠决定、不产生授权**。
 
@@ -108,12 +110,18 @@ disable-model-invocation: true
 
 - **提问工具只用于简单问题**：是/否、二选一、低风险确认、只缺一个事实；问题短、选项清楚、推荐排第一，同批一次问完。relay preset 的官方 `tool-ask-user` 行 config = `{mode:'timed', timeout:60}`：人 60s 没答返回 `pending`，模型继续独立工作或改用文字汇报，问题仍可后答；**pending 不是跳过、不是同意**。
 - **复杂问题不走提问工具**：需要用户决策、方案取舍、边界/代价变化、长背景 → 用普通回复消息（大白话）展开：结论与影响 → 选项（推荐+默认+后果）→ 等用户直接回复。不要把这类问题塞进提问工具里等。
-- **用户汇报规范（四段式，只提醒不拒绝）**：正文（含 user_gate.report）四段固定顺序：
+- **用户汇报规范（默认三问；只提醒不拒绝）**：正文（含 ship 的 `user_gate.report`）默认按序三问：
+  你看到什么：用户可观察的变化（一句话结果/状态）。
+  要你做什么：裁决/确认/无需（推荐+默认）。
+  有什么影响：对用户的结果/边界/代价（没有写「无」）。
+  默认≤600字，不贴命令输出/日志/长 diff，不堆内部字段名/错误码/术语（首次出现给人话解释）。**四段式（结论/影响/需要你做什么/证据位置）只在用户要细节或 ship 长报告时用**（details_requested:true，建议≤4000字）：
   结论：一句话结果/状态。
   影响：用户可见结果/边界/代价（没有写无）。
   需要你做什么：裁决/确认/无需（推荐+默认）。
   证据位置：path:line/文档路径（≤3条）。
-  默认≤600字，不贴命令输出/日志/长 diff，不堆内部字段名/错误码/术语（首次出现给人话解释）。用户明确要细节时 details_requested:true，展开建议≤4000字；仅放宽提示，不是硬拒豁免。格式/长度只产warning，随relay_phase结果+一次性notice，绝不阻断ship/任何phase；review/report非空硬门不变。每phase≤1次非P0同步，已答内容写brief/handoff。
+  旧四段仍可提交，默认只给 warning、绝不阻断ship/任何phase；review/report 非空硬门不变。格式/长度只产warning，随relay_phase结果+一次性notice。每phase≤1次非P0同步，已答内容写brief/handoff。
+- **来源约束（默认沉默）**：先从工具返回的 `[给用户]` 段起稿（collect/handoff 等），只保留三问；`[内部细节]`、回执头、工具名、字段名、提交号、文件行号默认不转述；**没有 `[给用户]` 段就不发进度消息**。派活 `user_visible` 默认 false——中间进度默认不发，只有显式标 true 的分点完成才产 `[给用户]` 段。
+- **工具返回默认先给人话段**：collect/handoff/status/phase 默认 `[给用户]` 三问 + `[内部细节]`；organize/doc/work_items/recommend/团队工具等内部工具是 `[模型状态/内部·不要转述给用户]` + 技术文本；失败是 `[内部错误·不要转述给用户]`。内部段只供模型判断，不转述给用户。
 - **ship 委派统计（advisory）**：给用户的 ship 汇报带一行「派活 N 次 / Lead 自做 K 项（原因）」；数据看 `relay_status.delegation`；只作汇报素材，**不机械校验 report 文本、不阻断 ship**。
 - **PTC 边界**：程序里等待仍受 `run_code` 默认 120s 执行 deadline 约束（60s 提问超时留了余量）；不要把「必须等答案」的长等待塞进提问工具。**历史**：v0.2.3 引入 timed；v0.2.9 误删；v0.2.10 恢复固定 120s；v0.2.11 一度做「无限等待」被用户否决（2026-11-03「整体移除这个会一直等你回答的功能」），最终改为「只给简单问题、超时 pending、复杂问题走文字汇报」。
 
@@ -169,7 +177,7 @@ disable-model-invocation: true
 
 ## 专职架构师（单一模式）
 
-- **分工**：Lead 只与用户对齐需求 + 读项目文档理解业务；**工程实现路线交给固定队友 `architect`**。
+- **分工**：Lead 只与用户对齐需求 + 读项目文档理解业务；**工程实现路线交给固定队友 `architect`**；**机制/协议/汇报方式的诊断与设计也先交 architect**（汇报形态、角色分工、协议条款），Lead 不自行拍这类方案，结论由 Lead 与用户敲定。
 - **模型**：默认值跟随「模型」选择器的默认选择（即 Lead 当前模型；未显式选过=取模型默认值，已选过则沿用该选择）；可在 composer 模型菜单「架构师模型 / 架构师推理等级」行随时覆盖（显式覆盖需在官方子代理白名单内），选「默认（跟随模型选择）」恢复跟随；显式选择按会话持久、handoff 继承。
 - **只建一次**：relay_team_status 看队伍，没有就 `relay_architect({mode:'fresh', brief, doc_pointers, write_scope})`（工具内置固定 lineage、spawn 与首批 brief）；之后固定复用，不按任务重建。
 - **每次任务低上下文**：架构师只读必须上下文（需求 brief/文档指针/模块入口），交付工程实现文档（默认 `.scratch/context-relay/architecture/<task>.md`：需求对齐/技术路线/模块接口/数据协议/风险取舍/待决策/实现步骤与验收）；交付后只 `relay_checkpoint` 归档并等新任务；**不要让它交付后自行清空**——新任务到达时由 Lead 按需要决定是否 `relay_freshen({reset:true, brief:新任务})` 再派。

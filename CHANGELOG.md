@@ -2,6 +2,57 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计草稿、验收、审计与研究记录不随发布提供（公开架构/迁移文档见 docs/design）。
 
+## v0.13.0 (2026-11-20)
+
+「用户段默认投递 + 默认沉默」：把 v0.12 的「说人话」从建议变成材料层默认——工具返回先给 `[给用户]` 三问，内部细节收进内部段；中间进度默认不发（派活 `user_visible` 默认关），没有用户段就不发进度消息；旧四段模板退为 warning。同批补齐执行纪律（文案 actor 化、完成确认单源、回执证据、审查引用、参数 warn）与工程护栏（配置表单一真源、legacy golden、风险档落盘、isDocItem 路径优先），新增存量归档与重启冒烟脚本。工具数与数据格式不变（仍 15 个工具），无迁移。
+
+### 行为变更（升级前必读）
+
+- **用户消息默认三问**：「你看到什么 / 要你做什么 / 有什么影响」（默认≤600 字）。四段式（结论/影响/需要你做什么/证据位置）只在用户明确要细节或 ship 长报告时使用；旧四段仍可提交，但只给 warning，不阻断任何 phase/ship。
+- **工具返回默认先给用户段**：collect/handoff/status/phase（凡带 `human` 的工具）默认渲染以 `[给用户]` 三问开头，技术事实放 `[内部细节·不要转述]`；organize/doc/work_items/recommend/团队工具、dispatch 等内部工具以 `[模型状态/内部·不要转述给用户]` 开头；失败为 `[内部错误·不要转述给用户]`。没有 `[给用户]` 段就不发进度消息。
+- **中间进度默认沉默**：`relay_dispatch.user_visible` 与 `relay_work_items.user_visible` 默认 false；只有派活时显式标 true 的分点，收口时才产用户段（回执可写 `## 用户可见` 三问；缺失/未验证用中性兜底，不把未验证说成完成）；`needs-human` 的「## 需要你决定」并入「要你做什么」。
+- **架构师触发扩展**：机制/协议/汇报方式（汇报形态、角色分工、协议条款）的诊断与设计也先交固定 `architect`，Lead 不自行拍这类方案。
+- **完成确认单源**：`lead_confirm{no_drift,no_missing,no_regression}` 的 schema、必填与归一化统一生成自 `LEAD_CONFIRM_SPEC`；`relay_work_items` 与 `relay_collect` 不再各写一份。
+- **文案 actor 化**：Lead 面文案不再出现「Lead 直接调队友专属工具（checkpoint/freshen）」的误导，统一为「发消息让队友自己执行」；新增 actor lint 契约测试锁住（Lead/architect 文本不得让 Lead 直调队友工具）。
+- **参数与证据纪律**：工具 schema 外参数默认只记 warn 日志（JSONL），`strictToolArgs=true` 改为拒绝；回执正文缺 commit/验证证据默认只标 `unverified`（`receiptVerify=strict` 才拒，零台账写入）；`user_gate.review_ref` 可校验独立审查报告（path 在工作区内 + 头 `revision` 与 HEAD 一致 + `verdict:done`，默认只 warning）。
+- **风险档落盘**：`relay_phase` 把本 phase 风险档 `risk{tier,source,reasons}` 写进台账 `currentPhase.risk`，`relay_status` 可读回；插件重载/T0 交接不再丢档或保守回退 T2。
+- **文档项判定路径优先**：`isDocItem` 先看路径（docs/、`.md` 等）再看标题/内容；文档项混淆矩阵 fixture 223 条，召回 83.4%→98.3%。
+
+### 说人话材料层（P4）
+
+- 新增 `lib/output.js` 用户投影 API：`USER_LABELS` 三问固定标签、`userViewOf`（human 四段→三问，必须显式 visible）、`renderUserBlock`（含「没有需要你知道的变化；不要发进度消息」沉默句）、`renderInternalResult`/`renderUserResult`（工具默认渲染分层）、`userVisibleOfReport`（回执 `## 用户可见` 节解析）与 `collectUserOf`（中性兜底）。
+- Lead 协议同步：用户汇报规范改为默认三问 + 来源约束（先从 `[给用户]` 起稿，不转述内部细节/回执头/字段名）；worker 回执头不贴用户，用户正文三问。
+- policy 检查器：三问齐全才算通过；旧四段只报 `report-four-part-legacy` warning，不阻断；`details_requested:true` 才鼓励展开四段。
+- `test/user-view.test.mjs` 新增 209 行，锁定默认投递、沉默、三问/四段 warning 与 collect 用户段。
+
+### 派活/收口与审查纪律（P1）
+
+- `relay_team_status manage.maintain`：Lead 对指定队友批量发标准维护消息（checkpoint→freshen），支持 `dryRun` 与 `reset`（默认 true）；只发消息，不擦除、不 spawn、不写 roster。
+- 回执证据：`relay_collect` 解析回执正文的 commit 行与验证块；缺证据标 `unverified` 并在 digest 明示，不拒绝收口；`receiptVerify=strict` 才拒。
+- `review_ref`：`relay_phase` 的 `user_gate` 可选独立审查引用；默认 warning，`receiptVerify=strict` 才拒。
+- 只读审查/探针例外：执行活仍禁止手工 `subagent`/`send_message`；只读审查/探针可用官方 subagent（回填 report+commit）。
+- 参数 warn：schema 外参数默认 `logWarn` + JSONL 记录；`strictToolArgs=true` 改为拒绝。
+
+### 工程与文档（P0/P2）
+
+- 配置表单一真源 `scripts/gen-config-table.mjs`：键集合读 `AGENT_OPTION_KEYS`，默认值读代码；生成/写回/校验两份 README 的标记区块（`--check` 漂移退出码 1，`test/config-table.test.mjs` 锁定）。
+- legacy 索引 golden 基准：`test/fixtures/legacy-index.fixture.mjs` + `legacy-index.golden.md` + `test/legacy-golden.test.mjs`，逐字节锁住 `docs.select=legacy` 渲染。
+- 风险档落盘读写回（`test/risk-phase.test.mjs`）；文档项混淆矩阵 fixture `test/fixtures/docitem-cases.mjs`。
+- 存量归档 `scripts/docs-archive.mjs`（默认 dry-run；引用闭包、不删不改、`archive/manifest.ndjson` 可逐条回溯）+ `docs/archival.md`。
+- 重启冒烟 `scripts/smoke-v012.mjs`（只走工具面、隔离临时目录、默认 dry-run；`--apply` 跑写路径）+ `docs/runbook-v012.md`。
+
+### 兼容与回退
+
+- 工具数与名称不变（15）；panel/roster/work-items/文档格式不变，无数据迁移。
+- 旧四段报告仍可提交（只 warning）；旧台账无 `currentPhase.risk`/`user_visible` 时按 absent/false 处理。
+- `user_visible` 缺省静默可能漏报：需要用户看到的分点请在 `relay_dispatch`/`relay_work_items` 显式标 true。
+- 回退：`strictToolArgs`/`receiptVerify` 保持默认 warn 即旧行为；去掉 `review_ref` 退回自由文本；三问/四段为文本层，回退无数据影响。
+
+### 验证与未验证
+
+- 验证：`npm test` **1031/1031** 通过、`npm run check` exit 0、`node scripts/gen-config-table.mjs --check` exit 0；`package.json` 与本文均为 0.13.0。
+- 未验证：真机面板/notice 渲染与宿主重启后的 `[给用户]` 投递链路；`user_visible` 在真实派活中的漏报/误报率；actor lint 只覆盖文本与测试快照，不覆盖模型运行时自由发挥。
+
 ## v0.12.0 (2026-11-19)
 
 「说人话 + 按风险配门禁 + 按需取文档」：在 v0.11.1 上补齐六块短板——统一四段式用户文案与内部键隔离、验证风险分级 T0/T1/T2 与门禁矩阵、T2 设计门回显与设计深度模板、文档索引 v2（在役/决策单列 + 目录折叠 + A/B/C 分层 + 注入计量）、角色注入裁剪（human-loop 与 ask_user 只给 Lead）、AOCI 语义层（constraints/contracts/relations）。工具数与协议不变（仍 15 个工具），无数据迁移。
