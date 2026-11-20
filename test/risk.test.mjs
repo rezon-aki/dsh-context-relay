@@ -37,11 +37,16 @@ test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知�
   assert.equal(isDocPath('lib/a.js'), false);
   assert.equal(isDocItem('补设计文档'), true);
   assert.equal(isDocItem('改 lib 函数'), false);
-  // 按路径+标题判定：标题像代码但 evidence 是文档 → 文档；标题写文档但 evidence 是源码 → 文档；两者都不是 → 代码。
+  // 路径优先、标题只兜底（p3-calib 建议 4）：标题写文档但 evidence 是源码 → 非文档；无可用路径才看标题。
   assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['README.md:1'] }), true);
-  assert.equal(isDocItem({ title: '补设计文档', evidence: ['lib/x.js:1'] }), true);
+  assert.equal(isDocItem({ title: '补设计文档', evidence: ['lib/x.js:1'] }), false, '文档标题不能覆盖源码 evidence');
   assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['docs/x.md:1'] }), true);
   assert.equal(isDocItem({ title: '改 lib 函数', evidence: ['lib/x.js:1', 'test/a.mjs:2'] }), false);
+  // 历史误判根因（p3-calib §4 FN/FP）：整条 evidence 带 verdict/大小/正文时仍要能抽出路径。
+  assert.equal(isDocItem({ title: '通知可执行性', evidence: ['reports/notice-actionable-review.md verdict=pass-with-note'] }), true);
+  assert.equal(isDocItem({ title: '实现审查', evidence: ['REVIEW-IMPL.md（6122B）'] }), true);
+  assert.equal(isDocItem({ title: '任务记录', evidence: ['task-1.md: geo×5，另有 3 项待补'] }), true);
+  assert.equal(isDocItem({ title: '群戳', evidence: ['reports/task-poke-perception.md', 'serve.py 群戳窗口'] }), false, '混合证据含代码 → 非文档');
 });
 
 test('去重键：reviewKey/confirmKey/docsHash/denyKey 确定且随输入变化', () => {
