@@ -182,7 +182,8 @@ test('P0-C strict/warn：非 ship 提供 reopen → fail(invalid-args) 拒绝（
     assert.equal(refused.field, 'reopen');
     assert.match(refused.error, /reopen/);
     assert.ok(Array.from(refused.error).length <= 300, reopenGate + '：拒绝文案 ≤300 字');
-    assert.match(refused.error, /需要你做什么/, reopenGate + '：走统一四段拒绝文案');
+    assert.doesNotMatch(refused.error, /\[给用户\]|你看到什么：|要你做什么：|有什么影响：|需要你做什么：/, reopenGate + '：新契约只给内部事实，不产用户段');
+    assert.match(refused.facts.effects ?? refused.effects, /零副作用（未切换阶段、未写盘）/, reopenGate + '：显式零副作用事实不被默认值覆盖');
     assert.equal((await h.status()).phase, 'discover', reopenGate + '：拒绝零副作用');
   }
 });
