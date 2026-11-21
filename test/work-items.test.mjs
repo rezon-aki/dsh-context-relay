@@ -622,6 +622,35 @@ test('会话级隔离 / 交接继承 / 旧 workspace 台账迁移', async () => 
   assert.equal(readWorkItems(legacyCwd, { scopeId: 'scope-legacy' }).items[0].id, 'old', '他人旧文件不覆盖本会话');
 });
 
+test('交接继承：doing 归一 open/owner=null/next 带接管前缀；done/blocked 原样（v0.14 团队收尾）', async () => {
+  const cwd = tempCwd();
+  const seeded = await writeWorkItems(cwd, {
+    scopeId: 'scope-src',
+    updatedBy: 'scope-src',
+    items: [
+      { id: 'work1', title: '进行中', status: 'doing', owner: 'worker-1', next: '写完 handler', phase: 'build' },
+      { id: 'done1', title: '已完成', status: 'done', evidence: ['.scratch/context-relay/reports/x.md'], lead_confirm: LEAD_CONFIRM, phase: 'build' },
+      { id: 'blocked1', title: '阻塞中', status: 'blocked', blocked: '等外部接口', owner: 'worker-2', phase: 'build' },
+    ],
+  });
+  assert.equal(seeded.ok, true, JSON.stringify(seeded));
+  const copied = await copyWorkItemsToScope(cwd, { fromScopeId: 'scope-src', toScopeId: 'scope-dst' });
+  assert.equal(copied, workItemsRelativePath(undefined, 'scope-dst'));
+  const child = readWorkItems(cwd, { scopeId: 'scope-dst' });
+  assert.equal(child.rev, seeded.ledger.rev, 'rev 保留（新会话续用同一台账版本线）');
+  const doing = child.items.find((item) => item.id === 'work1');
+  assert.equal(doing.status, 'open', '旧队已中断：doing 归一 open 可重派');
+  assert.equal(doing.owner, null);
+  assert.match(doing.next, /^接手自旧会话；旧队已中断，按需重派/);
+  assert.match(doing.next, /写完 handler/, '原 next 作为线索保留');
+  assert.equal(child.items.find((item) => item.id === 'done1').status, 'done');
+  assert.equal(child.items.find((item) => item.id === 'done1').owner, null);
+  const blocked = child.items.find((item) => item.id === 'blocked1');
+  assert.equal(blocked.status, 'blocked');
+  assert.equal(blocked.owner, 'worker-2', '非 doing 条目不归一');
+  assert.equal(blocked.next, null);
+});
+
 test('ledgerAgeMinutes/ledgerAgeSuffix：新鲜度后缀（刚更新 / N 分钟前 / 停滞提醒；缺 updatedAt 为空）', async () => {
   const now = Date.parse('2026-11-12T12:00:00.000Z');
   assert.equal(ledgerAgeMinutes({ updatedAt: '2026-11-12T11:58:00.000Z' }, now), 2);

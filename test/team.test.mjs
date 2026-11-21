@@ -15,6 +15,7 @@ import { clearSentinelMemory, dispatchNeedOf, LAST_BAND } from '../lib/agent/sen
 import { DISPATCH_HEALTHS, clearDelegationMemory, createDelegationTools, delegationMemoryState, dispatchHealthOf } from '../lib/agent/delegation-tools.js';
 import { DELEGATION_DISPATCH_DIR, dispatchRecordPathOf, receiptFreshnessOf } from '../lib/agent/delegation.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
+import { readIncidents, recordIncident } from '../lib/agent/incidents.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
 import { clearSharedMemory, consumePendingBudgetInherit, markPendingArchitect } from '../lib/agent/shared.js';
 import { COLLECT_OK_PREFIX, DISPATCH_OK_PREFIX } from '../lib/projection.js';
@@ -863,6 +864,50 @@ test('relay_freshen prestart：自评 reset 可用且同 dispatch 一次；中�
   } finally { clearPendingResets(); cleanup(dir); }
 });
 
+test('startedAt：首个 bash/write 写入 dispatch（v2 workerSessionId）；之后 prestart reset 拒；relay_* 不算开工', async () => {
+  const dir = tempWorkspace();
+  clearPendingResets();
+  clearSentinelMemory();
+  try {
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    const mate = makeAgent({ sessionId: 'session-w1', cwd: dir, header: { origin: 'subagent', parentSession: LEAD } });
+    const bundle = fakeCtx({ agentTeams: makeTeamService({ memberships: new Map([[mate, membership('teammate', 'impl-g1', lead)]]) }) });
+    apply(bundle.ctx, {});
+    await writeWorkItems(dir, { items: [{ id: 'p1', title: '实现', status: 'doing', owner: 'impl-g1', next: '写测试', phase: 'build' }], updatedBy: LEAD, scopeId: LEAD });
+    const dispatchDir = join(dir, '.scratch', 'context-relay', 'dispatch', LEAD);
+    mkdirSync(dispatchDir, { recursive: true });
+    const recordPath = join(dispatchDir, 'p1.json');
+    writeFileSync(recordPath, JSON.stringify({ itemId: 'p1', scopeId: LEAD, dispatchId: 'd-p1-x', worker: 'impl-g1' }));
+    const startedProbe = bundle.listeners
+      .filter((entry) => entry.name === 'tools/pre-execute')
+      .map((entry) => entry.listener)
+      .find((listener) => listener.name === 'dshContextRelayStartedProbe');
+    assert.ok(startedProbe, 'startedAt 埋点已注册');
+    // relay_* / 只读工具不算开工（不写 startedAt）
+    await startedProbe({ name: 'relay_status', arguments: {}, agent: mate }, async () => ({ kind: 'allow' }));
+    assert.equal(JSON.parse(readFileSync(recordPath, 'utf8')).startedAt, undefined, 'relay_* 不算开工');
+    // 首个工作类工具：写 startedAt + workerSessionId + version=2
+    await startedProbe({ name: 'bash', arguments: { command: 'pwd' }, agent: mate }, async () => ({ kind: 'allow' }));
+    const started = JSON.parse(readFileSync(recordPath, 'utf8'));
+    assert.equal(typeof started.startedAt, 'string');
+    assert.equal(started.workerSessionId, 'session-w1');
+    assert.equal(started.version, 2);
+    // 后续工作工具不覆盖首工时间
+    const firstAt = started.startedAt;
+    await startedProbe({ name: 'write', arguments: {}, agent: mate }, async () => ({ kind: 'allow' }));
+    assert.equal(JSON.parse(readFileSync(recordPath, 'utf8')).startedAt, firstAt, 'startedAt 只在首工写入');
+    // 已开工 → prestart reset 拒（守卫读的 startedAt 不再是永远为空）
+    const freshen = createTeamTools(makeRuntime(bundle.ctx)).teammateTools.find((tool) => tool.name === 'relay_freshen');
+    const refused = await freshen.execute({
+      reset: true, prestart: true, dispatch_id: 'd-p1-x',
+      self_assessment: { needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' },
+      brief: 'x',
+    }, { agent: mate });
+    assert.equal(refused.code, 'already-started');
+    assert.match(refused.error, /startedAt=/);
+  } finally { clearPendingResets(); clearSentinelMemory(); cleanup(dir); }
+});
+
 test('relay_freshen reset：legacy-only checkpoint 的 brief 指向真实 legacy 路径（不造假分区路径）', async () => {
   const dir = tempWorkspace();
   clearPendingResets();
@@ -1198,6 +1243,67 @@ test('relay_dispatch：复用空闲干净 worker → 标准 5 字段 brief + 台
     assert.equal(result.brief.fields.length, 5);
     assert.equal(existsSync(join(dir, '.scratch', 'context-relay', 'reports')), true, 'reports/ 目录按需创建（设计 §2.4.2 步骤 4）');
   } finally { cleanup(dir); clearDelegationMemory(); }
+});
+
+test('relay_dispatch：只复用 depth-1 队友；无 depth-1 时 spawn（depth≥2 不进候选，显式指定拒）', async () => {
+  function rawSubagents({ withDepth1 }) {
+    const entries = [
+      ...(withDepth1 ? [{ kind: 'child', id: 'session-w1', parentId: LEAD, depth: 1, mode: 'continuable', path: 'worker-1', label: '直属' }] : []),
+      { kind: 'child', id: 'session-grand', parentId: LEAD, depth: 2, mode: 'continuable', path: 'grand-g1', label: '孙代理' },
+    ];
+    const spawned = [];
+    const sent = [];
+    return {
+      spawned,
+      sent,
+      rootOf() { return { session: { id: LEAD } }; },
+      namesOf() { return { self: 'lead' }; },
+      async listDescendants() { return entries; },
+      async resolveName(_caller, name) { return entries.find((entry) => entry.path === name)?.id; },
+      async sendMessage(_caller, targetId) { sent.push(targetId); return { messageId: 'm1' }; },
+      getProvider() { return undefined; },
+      async startActivation(request) {
+        spawned.push(request);
+        return { childId: 'session-worker-1', name: request.name, result: Promise.resolve({ stopReason: 'done' }) };
+      },
+    };
+  }
+
+  const dirA = tempWorkspace();
+  const dirB = tempWorkspace();
+  clearDelegationMemory();
+  try {
+    // A：只有 depth=2（带 roster 登记）→ 不可复用，按无 depth-1 队友 spawn worker-1。
+    const leadA = makeAgent({ sessionId: LEAD, cwd: dirA });
+    const subA = rawSubagents({ withDepth1: false });
+    const bundleA = fakeCtx({ subagents: subA });
+    seedRosterFile(dirA, ['grand-g1']);
+    await seedLedger(dirA, [{ id: 'a1', title: '深代理不可派', status: 'open' }, { id: 'a2', title: '显式深代理', status: 'open' }]);
+    const { dispatch: dispatchA } = delegationToolsOf(bundleA);
+    const spawned = await dispatchA.execute({ ...DISPATCH_ARGS }, { agent: leadA });
+    assert.equal(spawned.ok, true, JSON.stringify(spawned));
+    assert.equal(spawned.worker.name, 'worker-1');
+    assert.equal(spawned.worker.spawned, true, '无 depth-1 队友 → spawn');
+    assert.equal(subA.spawned.length, 1);
+    assert.equal(subA.sent.length, 0, 'depth=2 队友没被 send_message 复用');
+    const refused = await dispatchA.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'grand-g1' }, { agent: leadA });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'invalid-args');
+
+    // B：depth=1 在场 → 自动复用 worker-1，不 spawn。
+    const leadB = makeAgent({ sessionId: LEAD, cwd: dirB });
+    const subB = rawSubagents({ withDepth1: true });
+    const bundleB = fakeCtx({ subagents: subB });
+    seedRosterFile(dirB, ['worker-1', 'grand-g1']);
+    await seedLedger(dirB, [{ id: 'b1', title: '直属可派', status: 'open' }]);
+    const { dispatch: dispatchB } = delegationToolsOf(bundleB);
+    const reused = await dispatchB.execute({ ...DISPATCH_ARGS, itemId: 'b1' }, { agent: leadB });
+    assert.equal(reused.ok, true, JSON.stringify(reused));
+    assert.equal(reused.worker.name, 'worker-1');
+    assert.equal(reused.worker.reused, true, 'depth-1 空闲队友优先复用');
+    assert.equal(subB.spawned.length, 0, '不额外 spawn');
+    assert.equal(subB.sent.length, 1);
+  } finally { clearDelegationMemory(); cleanup(dirA); cleanup(dirB); }
 });
 
 test('relay_dispatch：缺 brief/docs/writeScope/acceptance 或非法写范围 → invalid-args 且零副作用', async () => {
@@ -1675,6 +1781,12 @@ test('dispatch → fake worker 回执 → collect 全流程：台账 done（evid
     const { dispatch, collect } = delegationToolsOf(ctx);
     const dispatched = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
     assert.equal(dispatched.ok, true);
+    const record = readDispatchRecord(dir, 'a1');
+    assert.equal(record.version, 2, 'dispatch 记录 v2');
+    assert.equal(record.workerSessionId, 'session-w1', '记录绑定 worker 会话（startedAt 按会话匹配）');
+    // 越线事故：collect 结算同一 dispatch 的 crossed/escalated → settled（completed=true）。
+    const crossed = recordIncident(dir, { event: 'crossed', leadSessionId: LEAD, sessionId: 'session-w1', worker: 'worker-1', itemId: 'a1', dispatchId: dispatched.dispatchId, band: 'organize', ratio: 0.353, phase: 'build', subagent: true });
+    assert.equal(crossed.ok, true, JSON.stringify(crossed));
     writeReceipt(dir, 'a1', { dispatchId: dispatched.dispatchId, conclusion: '登录修复完成；node --test 全绿' });
     const collected = await collect.execute({ itemId: 'a1', dispatchId: dispatched.dispatchId, lead_confirm: LEAD_CONFIRM }, { agent: lead });
     assert.equal(collected.ok, true);
@@ -1686,6 +1798,14 @@ test('dispatch → fake worker 回执 → collect 全流程：台账 done（evid
     assert.equal(stored.status, 'done');
     assert.deepEqual(stored.evidence, ['.scratch/context-relay/reports/a1.md']);
     assert.equal(stored.next, null);
+    const incidents = readIncidents(dir, LEAD, { limit: 10 });
+    const settled = incidents.recent.find((entry) => entry.event === 'settled');
+    assert.ok(settled, 'collect 结算 incident');
+    assert.equal(settled.dispatchId, dispatched.dispatchId);
+    assert.equal(settled.itemId, 'a1');
+    assert.equal(settled.worker, 'worker-1');
+    assert.equal(settled.completed, true);
+    assert.equal(settled.finalBand, 'organize');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
