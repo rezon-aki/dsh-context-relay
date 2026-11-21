@@ -171,14 +171,14 @@ test('status/phase：内部事实与下一步，无用户段；teammate 不返�
   assert.match(tools.get('relay_phase').parameters.properties.user_gate.properties.report.description, /三问/);
 });
 
-function handoffHarness(cwd, { jobs, agents, sessionId = 'old' } = {}) {
+function handoffHarness(cwd, { jobs, agents, sessionId = 'old', dispatchError } = {}) {
   clearPanelMemory(); configurePanelStore({ panelPath: join(cwd, 'panel.json') });
   const calls = [];
   const inbox = { nextTurn: [], nextStep: [] };
   const child = {
     session: { id: 'new', header: { cwd }, requestHeader: () => undefined, snapshotEvents: () => [] },
     inbox,
-    followup(message) { calls.push('dispatch'); inbox.nextTurn.push(message); },
+    followup(message) { calls.push('dispatch'); inbox.nextTurn.push(message); if (dispatchError !== undefined) throw dispatchError; },
     cancel() { inbox.nextTurn.length = 0; },
   };
   const services = {
@@ -259,6 +259,32 @@ test('handoff：预接受失败仍是内部错误，不伪造部分成功', asyn
   assert.doesNotMatch(rendered, FORBIDDEN);
 });
 
+/** 写盘后失败/已有交接单：事实必须摊开且渲染可见，不伪称零副作用。 */
+function assertHandoffFailureFacts(tool, result, code) {
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, code);
+  assert.ok(typeof result.handoffPath === 'string' && result.handoffPath !== '', '带交接单路径');
+  assert.equal(existsSync(result.handoffPath), true, '交接单确实在盘上');
+  assert.ok(typeof result.effects === 'string' && result.effects !== '', 'effects 非空');
+  assert.ok(result.effects.includes(result.handoffPath), 'effects 带交接单路径');
+  assert.doesNotMatch(result.effects, /零副作用|没有产生任何改动/, '不伪称零副作用');
+  assert.equal(result.facts.effects, result.effects, 'facts 与顶层 effects 同源');
+  assert.equal(result.retryable, false, '写盘后失败不可原地重试');
+  assert.ok(typeof result.next === 'string' && result.next !== '', '带明确下一步');
+  assert.equal(result.user, undefined);
+  assert.equal(result.human, undefined);
+  const rendered = renderOf(tool, result);
+  assert.ok(rendered.startsWith(INTERNAL_ERROR_MARK));
+  assert.match(rendered, /交接单：/);
+  assert.ok(rendered.includes(result.handoffPath), 'render 显示 handoffPath');
+  assert.match(rendered, /事实：/, 'render 显示 summary');
+  assert.match(rendered, /已经发生：/);
+  assert.match(rendered, /可否重试：否/);
+  assert.doesNotMatch(rendered, /零副作用/);
+  assert.doesNotMatch(rendered, FORBIDDEN);
+  return rendered;
+}
+
 test('handoff：预接受、写盘后失败——effects 非空/不可重试/交接单可见，不伪造零副作用', async () => {
   resetShared();
   const cwd = tmpCwd();
@@ -292,6 +318,99 @@ test('handoff：预接受、写盘后失败——effects 非空/不可重试/交
   assert.match(rendered, /可否重试：否/);
   assert.doesNotMatch(rendered, /零副作用/);
   assert.doesNotMatch(rendered, FORBIDDEN);
+});
+
+test('handoff：交接单已写、首条消息未被接受（followup-failed）——effects 摊开/不可重试', async () => {
+  resetShared();
+  const cwd = tmpCwd();
+  const { tool, session } = handoffHarness(cwd, {
+    sessionId: 'session-followup-fail',
+    dispatchError: new Error('followup rejected'),
+  });
+  const result = await tool.execute({ human_approved: true, status: { goal: 'followup fail', next_actions: ['finish'] } }, { agent: { session, options: {} } });
+  const rendered = assertHandoffFailureFacts(tool, result, 'followup-failed');
+  assert.equal(result.partial, undefined, '预接受失败不是部分成功');
+  assert.match(result.effects, /新会话 .* 已创建/);
+  assert.match(result.effects, /首条消息未被接受（followup-failed）/);
+  assert.match(result.effects, /旧会话仍活跃/);
+  assert.match(result.next, /不要重复 relay_handoff/);
+  assert.ok(rendered.includes('followup-failed'), 'render 事实含失败码');
+});
+
+test('handoff：交接单已写、progress 写盘失败（progress-write-failed）——effects 摊开/不可重试', async () => {
+  resetShared();
+  const cwd = tmpCwd();
+  // 把 progress.md 预建成目录：updateProgress 的原子替换必然抛错，稳定命中该分支。
+  mkdirSync(join(cwd, '.scratch', 'context-relay', 'progress.md'), { recursive: true });
+  const { tool, session } = handoffHarness(cwd, { sessionId: 'session-progress-fail' });
+  const result = await tool.execute({ human_approved: true, status: { goal: 'progress fail', next_actions: ['finish'] } }, { agent: { session, options: {} } });
+  assertHandoffFailureFacts(tool, result, 'progress-write-failed');
+  assert.match(result.effects, /新会话 .* 已创建/);
+  assert.match(result.effects, /progress\.md 未更新/);
+  assert.match(result.effects, /旧会话仍活跃/);
+  assert.match(result.next, /修复 progress 写入/);
+});
+
+test('handoff：已有已接受交接单（recovery-required）——摊开旧交接单/目标会话/effects', async () => {
+  resetShared();
+  const cwd = tmpCwd();
+  const dir = join(cwd, '.scratch', 'context-relay');
+  mkdirSync(dir, { recursive: true });
+  const handoffPath = join(dir, 'handoff-existing.md');
+  writeFileSync(handoffPath, '# existing accepted handoff\n');
+  writeFileSync(join(dir, 'handoff-recovery-session-recovery-required.json'), JSON.stringify({
+    sessionId: 'new-accepted',
+    state: 'accepted',
+    handoffPath,
+    takeover: { accepted: true },
+    recovery: [{ step: 'cancel-job:j1', error: 'kill denied' }],
+  }));
+  delete globalThis[Symbol.for('dsh-context-relay.handoff.recovery')];
+  const { tool, session } = handoffHarness(cwd, { sessionId: 'session-recovery-required' });
+  const result = await tool.execute({ human_approved: true, status: { goal: 'duplicate handoff', next_actions: ['finish'] } }, { agent: { session, options: {} } });
+  const rendered = assertHandoffFailureFacts(tool, result, 'recovery-required');
+  assert.equal(result.sessionId, 'new-accepted', '带已接受的目标会话');
+  assert.equal(result.handoffPath, handoffPath, '带已有交接单路径');
+  assert.match(result.effects, /本次没有新建会话或交接单/);
+  assert.match(result.effects, /已有已接受的交接单/);
+  assert.match(result.effects, /仍需按 recovery 收尾/);
+  assert.deepEqual(result.recovery, [{ step: 'cancel-job:j1', error: 'kill denied' }]);
+  assert.match(result.next, /不要重复 relay_handoff/);
+  assert.ok(rendered.includes('new-accepted'), 'render 显示目标会话');
+});
+
+test('organize：brief 已写盘、压缩失败（compaction-failed）——effects 摊开 brief/未注入/docLint', async () => {
+  resetShared();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-organize-compaction-fail', cwd });
+  const services = {
+    sessionProjections: { snapshot: () => ({ values: { contextPressure: { contextWindow: 1000000, projectedTokens: 420000 } } }) },
+    tokenMeter: { measure: () => ({ totalTokens: 420000 }) },
+    compaction: { async compactIfNeeded() { throw new Error('provider exploded'); } },
+  };
+  const { ctx, tools } = fakeCtx(services);
+  apply(ctx, {});
+  const tool = tools.get('relay_organize');
+  const result = await tool.execute({ phase: 'build', brief: 'decided X', force: true }, { agent: { session, options: {} } });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'compaction-failed');
+  assert.ok(typeof result.briefPath === 'string' && result.briefPath !== '');
+  assert.equal(existsSync(result.briefPath), true, 'brief 确实已写盘');
+  assert.ok(typeof result.effects === 'string' && result.effects !== '', 'effects 非空');
+  assert.ok(result.effects.includes(result.briefPath), 'effects 带 brief 路径');
+  assert.match(result.effects, /本次压缩未完成/);
+  assert.match(result.effects, /未注入/);
+  assert.match(result.effects, /docLint/);
+  assert.doesNotMatch(result.effects, /零副作用|没有产生任何改动/);
+  assert.equal(result.retryable, true, '压缩失败可重试（重试会另写一份 brief）');
+  assert.ok(typeof result.next === 'string' && result.next.includes(result.briefPath) && /重试/.test(result.next));
+  assert.equal(result.facts.effects, result.effects);
+  const rendered = renderOf(tool, result);
+  assert.ok(rendered.startsWith(INTERNAL_ERROR_MARK));
+  assert.ok(rendered.includes(result.briefPath), 'render 显示 briefPath');
+  assert.match(rendered, /已经发生：/);
+  assert.match(rendered, /可否重试：是/);
+  assert.doesNotMatch(rendered, /零副作用/);
 });
 
 test('W2 schema：status/phase/collect/handoff 的 output.schema 声明事实形状（不再只是 object）', async () => {

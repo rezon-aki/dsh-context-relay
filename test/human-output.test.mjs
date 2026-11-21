@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { noticeParts, internalKeysIn, renderNoticeText } from '../lib/output.js';
+import { failureRenderText, noticeParts, internalKeysIn, renderNoticeText } from '../lib/output.js';
 import {
   NOTICE_MAX, capacityNoticeText, contextCheckText, panelChangeText, phaseBoundaryText, planeIssueOf,
   recoveryNoticeText, sentinelText, unavailableNoticeText,
@@ -82,13 +82,20 @@ test('fail()：失败必须带 effects/reason/retryable/next，不产 human/user
   assert.equal(result.code, 'below-threshold');
   assert.match(result.error, /band=organize/, '结构化 error 保留排障原文');
   assert.equal(result.reason, result.error);
-  assert.match(result.effects, /零副作用|没有产生/);
+  // 0.14.0-dev fix：未显式传 effects 时不得默认「零副作用」——调用方可能已写盘，只能说未记录、要求先核对。
+  assert.match(result.effects, /未记录副作用|核对/);
+  assert.doesNotMatch(result.effects, /零副作用|没有产生任何改动/);
   assert.equal(result.retryable, true);
   assert.match(result.next, /重试/);
   assert.equal(result.facts.code, 'below-threshold');
   assert.equal(result.facts.retryable, true);
   assert.equal(result.human, undefined);
   assert.equal(result.user, undefined);
+  // 写盘后失败但调用方漏传 effects（真实存在的调用契约风险）：render 也必须摊开「未记录/需核对」。
+  const afterWrite = fail('compaction-failed', 'phase brief written, then compaction failed', { summary: 'brief already on disk; compaction did not finish' });
+  const afterWriteRender = failureRenderText(afterWrite);
+  assert.doesNotMatch(afterWriteRender, /零副作用|没有产生任何改动/);
+  assert.match(afterWriteRender, /已经发生：.*(未记录副作用|需核对)/);
   const partial = fail('handoff-cleanup-failed', 'Destination accepted; cleanup failed', {
     partial: true,
     sessionId: 'session-new',
