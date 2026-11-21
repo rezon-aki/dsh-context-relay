@@ -145,14 +145,14 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认允许', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL 仅记录 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
+test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL 仅记录 / ROUTER ≤2450 / TEAMMATE ≤1450', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.14 P1 合并后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 0.14.0-dev P1：Lead 的 6 个静态段合并为 1 段（PROTOCOL_TEXT，字节预算见下一条）；字符上限保持原量级。
   // R1：提示词体积只做 diagnostic，不设失败门（PROTOCOL 体积变化记录，不阻断测试）。
   console.log('[diagnostic] PROTOCOL_TEXT chars=' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2450, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，防无界漂移。
-  assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
+  assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1450, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
@@ -352,7 +352,7 @@ test('v0.14 P1 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset
   for (const phrase of ['真清空', '不占额度', 'Lead 不代调', '架构师例外', "mode:'fresh'"]) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/架构师 纪律: ' + phrase);
   }
-  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字', 'dispatchId', '必读 1–3 份']) {
+  for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字', 'dispatchId', '必读 1–3 份', 'prestart:true', 'self_assessment']) {
     assert.ok(TEAMMATE_PROTOCOL_TEXT.includes(phrase), '紧凑队友段缺短语: ' + phrase);
   }
   // 小队/额度口径在合并协议里（TEAM_LEAD 片段），ROUTER 不再重复

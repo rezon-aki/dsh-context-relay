@@ -2031,7 +2031,7 @@ test('relay_organize injects the phase brief only after a successful compaction'
   assert.ok(text.length <= 2000, 'injected brief is bounded to 2000 chars, got ' + text.length);
   assert.match(text, /\[context-relay\] 阶段交接摘要 · 构建（压缩后注入，非用户发言）/);
   assert.match(text, /# 阶段交接摘要 · 构建/);
-  assert.match(text, /这不是用户发言。不要复述本段；对用户请用三问重写。/, '近端尾行：brief 末尾带固定免责句');
+  assert.match(text, /这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。/, '近端尾行：brief 末尾带固定免责句');
   assert.match(text, /结论：本阶段「构建」已收口/, '注入 header 先给结论');
   assert.match(text, /先读入口：/, '结论之后再给「先读入口」');
   assert.match(text, /decided X/);

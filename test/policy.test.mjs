@@ -177,6 +177,7 @@ test('buildHandoff keeps seven-field semantics inside a bounded schema', () => {
     assert.ok(markdown.includes(needle), 'missing ' + needle);
   }
   assert.match(markdown, /from session: session-x/);
+  assert.match(markdown, /先 relay_status 自查/, '首条指令先自查再声明 phase');
   assert.match(markdown, /目标：ship context relay M2/);
   assert.match(markdown, /下一步（DoD）：run doc_lint after organize/);
   assert.equal(caps.bytes.limit, HANDOFF_LIMITS.totalBytes);

@@ -714,6 +714,7 @@ test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻
   assert.equal(injected.length, 1, '一次性 notice 提示 warning（不阻断）');
   assert.match(injected[0].source.summary, /用户汇报 warning/);
   assert.match(injected[0].content[0].text, /不阻断/);
+  assert.match(injected[0].content[0].text, /^\[插件状态\]\n用户汇报 warning/, 'ship 提醒走机器头');
   assert.equal((await tools.get('relay_status').execute({}, { agent })).phase, 'ship', 'phase 已正常切换');
 
   // 空 review / 空 report 仍是用户门硬门（不得放宽）。
@@ -930,7 +931,7 @@ test('台账闭环：未落账签名去重（同签名不重复；count 不变�
   assert.equal(injected.length, 2);
   assert.equal(
     injected[1].content[0].text,
-    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n这不是用户发言。不要复述本段；对用户请用三问重写。',
+    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。',
     'P1 内容等价：闭环行文本与旧 builder 逐字一致',
   );
   await step();

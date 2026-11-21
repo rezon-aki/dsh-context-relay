@@ -171,7 +171,7 @@ test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入
     type: 'user/message',
     seq: 3,
     data: {
-      content: [{ type: 'text', text: '[插件状态]\n阶段边界：构建 → 验证（完成时仍超线：上下文 40%）。\n已放行本次切换；按面板模式「继续」放行本次切换（模式保持）。\n下一步：继续下一阶段；到下一个阶段边界前管理上下文。\n依据：面板「接力」chip 的用量\n这不是用户发言。不要复述本段；对用户请用三问重写。' }],
+      content: [{ type: 'text', text: '[插件状态]\n阶段边界：构建 → 验证（完成时仍超线：上下文 40%）。\n已放行本次切换；按面板模式「继续」放行本次切换（模式保持）。\n下一步：继续下一阶段；到下一个阶段边界前管理上下文。\n依据：面板「接力」chip 的用量\n这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。' }],
       source: { kind: 'dsh-context-relay', form: 'notice', summary: '[context-relay] phase 边界 · band=warn · 完成仍超线（非用户发言）' },
     },
   }];
@@ -184,7 +184,7 @@ test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入
   assert.equal(boundaryStateOf(sessionId).counters['build→verify'], 3);
   // user-gate 边界同样两段式
   assert.equal(claimBoundaryNotice(sessionId, 'user-gate', 'ship'), true);
-  const userGateLog = [{ type: 'user/message', seq: 9, data: { content: [{ type: 'text', text: '[context-relay] 用户汇报 warning（不阻断，插件 notice，非用户发言）：x' }], source: { kind: 'dsh-context-relay', form: 'notice', summary: 'x' } } }];
+  const userGateLog = [{ type: 'user/message', seq: 9, data: { content: [{ type: 'text', text: '[插件状态]\n用户汇报 warning（不阻断，插件 notice，非用户发言）：x\n本次 ship 已放行（不是审批门）。\n这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。' }], source: { kind: 'dsh-context-relay', form: 'notice', summary: 'x' } } }];
   assert.deepEqual(confirmBoundaryNotices(sessionId, fakeSession({ id: sessionId, log: userGateLog })), { confirmed: 1, dropped: 1 }, 'build→verify 无证据被丢弃；user-gate 有证据确认');
   clearNoticeMemory();
 });

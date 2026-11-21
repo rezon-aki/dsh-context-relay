@@ -82,7 +82,9 @@ test('planNotices：容量上升沿与到线提醒合并为一条；单独时一
   assert.equal(merged.capacityRising, true);
   assert.equal(merged.notice.kind, 'phase', '与到线提醒同 step 合并（仍是一条）');
   assert.match(merged.notice.text, /容量保全/);
-  assert.match(merged.notice.text, /56\.0%（容量线 55\.0%）/);
+  assert.match(merged.notice.text, /容量保全：上下文 56\.0%（容量线 55\.0%）/);
+  assert.match(merged.notice.text, /收尾当前动作、停止开新活/, '合并保留容量动作');
+  assert.ok(merged.notice.text.indexOf('容量保全') < merged.notice.text.indexOf('下一步：三选一'), '容量结论排在「下一步」前');
   assert.doesNotMatch(merged.notice.text, /band=/);
   assert.deepEqual(merged.claims.capacity, { used: 420000 });
   assert.ok(merged.notice.text.length <= NOTICE_MAX);

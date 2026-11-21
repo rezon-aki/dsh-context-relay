@@ -344,7 +344,7 @@ test('哨兵容量保全 notice：上升沿一次性注入、同档不重复、�
   bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 560_000 };
   await step();
   assert.equal(injected.length, 3, '回落重置后再次上升沿提醒');
-  assert.match(injected[2].content[0].text, /容量保全（最坏兜底，独立配置/);
+  assert.match(injected[2].content[0].text, /容量保全：上下文 56\.0%/);
   assert.match(injected[2].content[0].text, /56\.0%（容量线 55\.0%）/, '再次上升沿合并后阈值仍完整');
   // 窗口未知：不注入容量 notice。
   resetSharedState();

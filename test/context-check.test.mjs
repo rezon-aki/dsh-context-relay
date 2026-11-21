@@ -154,8 +154,8 @@ test('planNotices：context-check 分支（面板之后、台账之前）；clai
   const plan = planNotices(facts({ contextCheck: ccFact() }));
   assert.equal(plan.notice.kind, 'context-check');
   assert.match(plan.notice.text, /新阶段开始「探索 → 决策」/);
-  assert.match(plan.notice.text, /下一步：三选一：压缩继续 \/ 清空复用 \/ 交接新会话/);
-  assert.match(plan.notice.text, /三选一/);
+  assert.match(plan.notice.text, /下一步：四选一：继续 \/ 压缩继续 \/ 清空复用 \/ 交接新会话/);
+  assert.match(plan.notice.text, /四选一/);
   assert.deepEqual(plan.claims.contextCheck, { keys: ['phase:discover>decide#1'] });
   assert.ok(plan.notice.text.length <= NOTICE_MAX);
 
@@ -205,9 +205,13 @@ test('文案：warn 三选一/现在就该动手且不含继续做完；organize
   const organize = contextCheckText({ band: 'organize', recommendation: contextCheckChoice({ band: 'organize' }), panel: {} });
   assert.match(organize, /兜底告警/);
   assert.match(organize, /本应已在 warn/);
+  assert.doesNotMatch(organize, /35%/, '阈值不写死在文案里');
+  assert.match(organize, /推荐：压缩继续/, 'organize 推荐标签不是「问我」');
   const relay = contextCheckText({ band: 'relay', recommendation: contextCheckChoice({ band: 'relay' }), panel: {} });
   assert.match(relay, /兜底告警升级/);
   assert.match(relay, /已超预期/);
+  assert.match(relay, /已到硬上限/);
+  assert.doesNotMatch(relay, /再涨进入兜底档/, '最高档不再说「再涨进入兜底档」');
 
   const capacity = capacityNoticeText({ ratio: 0.56, threshold: 0.55 });
   assert.match(capacity, /最坏兜底/);
@@ -240,8 +244,8 @@ test('sentinel：首个 pre-step 只 seed；phase 变化 1 条、同 phase 重�
   const text = bundle.injected[0].content[0].text;
   assert.match(text, /新阶段开始「探索 → 决策」/);
   assert.match(text, /^\[插件状态\]\n上下文自查：/);
-  assert.match(text, /下一步：三选一：压缩继续 \/ 清空复用 \/ 交接新会话/);
-  assert.match(text, /三选一/);
+  assert.match(text, /下一步：四选一：继续 \/ 压缩继续 \/ 清空复用 \/ 交接新会话/);
+  assert.match(text, /四选一/);
   session.setSeq(3);
   await bundle.step();
   assert.equal(bundle.injected.length, 1, '同 phase 不重复');
@@ -469,7 +473,7 @@ test('到线文案：warn/organize/relay/capacity 四档语义与面板优先（
   assert.doesNotMatch(warn, /继续做完当前任务/);
   const organize = sentinelText('build', { band: 'organize', used: 42000, window: 100000, ratio: 0.42 }, false, { defaultOperation: null });
   assert.match(organize, /兜底告警/);
-  assert.match(organize, /本应已在 warn 30% 前处理/);
+  assert.match(organize, /本应已在 warn 前处理/);
   const relay = sentinelText('build', { band: 'relay', used: 52000, window: 100000, ratio: 0.52 }, false, { defaultOperation: null });
   assert.match(relay, /兜底告警升级/);
   const panel = sentinelText('build', { band: 'warn', used: 36000, window: 100000, ratio: 0.36 }, false, { defaultOperation: 'handoff' });
