@@ -651,6 +651,12 @@ test('R4 归档：status: archived 不移动、不进默认索引、不算活跃
     assert.equal(check.ok, true);
     assert.equal(check.archivedDocs, 1);
     assert.match(check.detail, /归档 1/);
+    // 渲染层同样排除 archived（docs-review FAIL：默认 L0 的 architecture 组曾把旧稿算进计数）。
+    w(join(r, 'architecture', 'old-design.md'), '---', 'status: archived', '---', '# 旧设计');
+    w(join(r, 'architecture', 'new-design.md'), '# 新设计');
+    const rendered = renderDocIndex(buildDocIndex(cwd));
+    assert.ok(!rendered.text.includes('old-design.md'), '默认 L0 不渲染 archived');
+    assert.match(rendered.text, /architecture\/ — 1 份/, '组计数只算活跃稿');
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
@@ -697,6 +703,42 @@ test('提议/未来路径标记：proposed: 前缀与段级 doc-lint:ignore-poin
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
+test('external:/proposed: 逐条声明计数；段级 ignore 被跳过但计数并 WARN', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-declared-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'architecture', 'design.md'),
+      '---', 'role: 设计', 'layer: L2', 'when: 改前', 'constraints: none', '---', '# 设计',
+      '', '外部证据 ' + BT + 'external:README.zh.md:10' + BT + ' 与未来路径 ' + BT + 'proposed:lib/future.js' + BT,
+      '', '<!-- doc-lint:ignore-pointers -->', '旧段 ' + BT + 'docs/missing-a.md' + BT + ' 与 ' + BT + 'docs/missing-b.md' + BT,
+      '', '## 真指针（可解析）', '见 ' + BT + 'architecture/design.md' + BT);
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.deepEqual(check.pointers, [], 'external/proposed 与段级 ignore 都不产出坏指针');
+    assert.equal(check.activePointers, 0);
+    assert.deepEqual(check.declaredPointers, { external: 1, proposed: 1 });
+    assert.equal(check.ignoredSegments, 1);
+    assert.equal(check.ignoredPointers, 2);
+    assert.deepEqual(check.ignoredByFile, { 'architecture/design.md': { segments: 1, pointers: 2 } });
+    assert.match(check.detail, /显式 external 1 \/ proposed 1/);
+    const line = check.warnings.find((item) => item.includes('ignored 2 refs / 1 segments'));
+    assert.ok(line, '段级 ignore 要 WARN：' + check.warnings.join('；'));
+    assert.match(line, /architecture\/design\.md/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('searchDocs：>512KB 文档跳过但计数（不静默漏）', () => {
+  const fx = fixture();
+  try {
+    w(join(fx.r, 'docs', 'big.md'), '# 大文件', 'needle ' + 'x'.repeat(DOC_LIMITS.maxReadBytes));
+    w(join(fx.r, 'docs', 'small.md'), '# 小文件', 'needle 命中');
+    const out = searchDocs(fx.cwd, 'needle');
+    assert.equal(out.ok, true);
+    assert.equal(out.matches.length, 1, '大文件不整读，小文件照常命中');
+    assert.equal(out.skippedLarge, 1);
+    assert.deepEqual(out.skippedLargePaths, ['docs/big.md']);
+  } finally { fx.cleanup(); }
+});
+
 test('doc_lint docs 检查 PASS：归档/历史/raw 指针只计数，活跃为 0 时无 warning', async () => {
   const { docLint } = await import('../lib/lint.js');
   const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-pass-'));
@@ -732,6 +774,8 @@ test('progress.key_docs 超 PIN_LIMIT 不静默：lint WARN 报保留/丢弃数'
     const line = check.warnings.find((item) => item.includes('progress.key_docs'));
     assert.ok(line, '超 PIN_LIMIT 要给 WARN：' + check.warnings.join('；'));
     assert.match(line, /32\/35 保留，3 条未展示/);
+    const passedPins = checkSessionDocs({ workspaceRoot: cwd, pins: Array.from({ length: 40 }, (_, i) => 'docs/q' + i + '.md') });
+    assert.ok(passedPins.warnings.some((item) => item.includes('传入 pins 超 PIN_LIMIT')), '调用方传入的 pins 超限也要 WARN');
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 

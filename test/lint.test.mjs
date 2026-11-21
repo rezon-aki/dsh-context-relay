@@ -307,6 +307,19 @@ test('docLint rejects paths outside the workspace without reading them', () => {
   assert.equal(result.checks.find((check) => check.name === 'quota').ok, true);
 });
 
+test('docLint：paths 超过 20 条上限时 WARN 报数（不静默截断）', () => {
+  const root = workspace();
+  writeFileSync(join(root, 'AGENTS.md'), '# ok\n');
+  const paths = Array.from({ length: 25 }, (_, index) => 'note-' + index + '.md');
+  const result = docLint({ workspaceRoot: root, paths });
+  const check = result.checks.find((item) => item.name === 'paths-limit');
+  assert.ok(check, '超上限必须出现 paths-limit 检查：' + result.checks.map((item) => item.name).join(','));
+  assert.equal(check.ok, false);
+  assert.match(check.detail, /传入 25/);
+  assert.match(check.detail, /丢弃 5/);
+  assert.equal(result.level, 'WARN');
+});
+
 test('formatDocLint / docLintEvidence stay within budgets', () => {
   const root = workspace();
   writeFileSync(join(root, 'AGENTS.md'), 'x'.repeat(5000));
