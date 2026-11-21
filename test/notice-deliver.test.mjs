@@ -182,10 +182,6 @@ test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入
   // A-15：同一 previous→phase 的第三次真实 crossing 仍给提示（旧实现「每会话仅一次」会吞）
   assert.equal(claimBoundaryNotice(sessionId, 'build', 'verify'), true);
   assert.equal(boundaryStateOf(sessionId).counters['build→verify'], 3);
-  // user-gate 边界同样两段式
-  assert.equal(claimBoundaryNotice(sessionId, 'user-gate', 'ship'), true);
-  const userGateLog = [{ type: 'user/message', seq: 9, data: { content: [{ type: 'text', text: '[插件状态]\n用户汇报 warning（不阻断，插件 notice，非用户发言）：x\n本次 ship 已放行（不是审批门）。\n这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。' }], source: { kind: 'dsh-context-relay', form: 'notice', summary: 'x' } } }];
-  assert.deepEqual(confirmBoundaryNotices(sessionId, fakeSession({ id: sessionId, log: userGateLog })), { confirmed: 1, dropped: 1 }, 'build→verify 无证据被丢弃；user-gate 有证据确认');
   clearNoticeMemory();
 });
 

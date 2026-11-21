@@ -711,10 +711,7 @@ test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻
   assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-format'));
   assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-internal-details'));
   assert.equal('report' in shipped.user_gate, false, '不落 report 原文');
-  assert.equal(injected.length, 1, '一次性 notice 提示 warning（不阻断）');
-  assert.match(injected[0].source.summary, /用户汇报 warning/);
-  assert.match(injected[0].content[0].text, /不阻断/);
-  assert.match(injected[0].content[0].text, /^\[插件状态\]\n用户汇报 warning/, 'ship 提醒走机器头');
+  assert.equal(injected.length, 0, 'warnings 只在结果里返回，不再重复注入 notice');
   assert.equal((await tools.get('relay_status').execute({}, { agent })).phase, 'ship', 'phase 已正常切换');
 
   // 空 review / 空 report 仍是用户门硬门（不得放宽）。
@@ -761,9 +758,7 @@ test('relay_phase → ship：details_requested 仅放宽细节展开提示（不
   assert.equal(authorized.user_gate.detailsRequested, true, 'details_requested 透传结果');
   assert.match(String(authorized.user_gate.info ?? ''), /用户已授权展开/, 'info 提示透传结果');
   assert.equal('report' in authorized.user_gate, false, '不落 report 原文');
-  assert.equal(authorizedRun.injected.length, 1, 'details_requested 附一次提示 notice');
-  assert.match(authorizedRun.injected[0].content[0].text, /用户已授权展开细节/);
-  assert.doesNotMatch(authorizedRun.injected[0].content[0].text, /x{50}/, 'notice 不落报告原文');
+  assert.equal(authorizedRun.injected.length, 0, 'details_requested 只在结果里提示，不再重复注入 notice');
 });
 
 test('relay_phase 跨 phase：strict 拒绝未收口；carry 显式带走；items 开分点并落 currentPhase', async () => {
