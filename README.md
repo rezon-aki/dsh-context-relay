@@ -10,6 +10,12 @@
 
 它不换模型、不删你的对话，也不替你拍板。
 
+## 快速介绍
+
+![输入框菜单与架构师模型](docs/images/composer-menu.png)
+
+输入框下方的菜单：模型、推理等级、架构师模型、启用智能体团队协作。
+
 ## 它解决什么问题
 
 1. **上下文一直待在高效区间**：长任务不会越聊越飘、越聊越贵；
@@ -116,9 +122,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ### 界面截图
 
-接力面板历史截图（当前表盘为：问我 / 继续 / 压缩继续 / 接力新会话）：
+接力面板：表盘（问我 / 继续 / 压缩继续 / 接力新会话）、压缩免审批、交接免审批、授权下一次操作、新会话注入「预算无上限」，以及工作台账：
 
-![接力面板](https://github.com/rezon-aki/dsh-context-relay/blob/main/docs/images/relay-panel.png?raw=true)
+![接力面板](docs/images/relay-panel.png)
 
 ## 它会替你做什么、什么时候会来问你
 

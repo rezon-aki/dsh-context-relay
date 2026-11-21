@@ -10,6 +10,12 @@
 
 It doesn't swap your model, delete your conversation, or make your decisions for you.
 
+## Quick intro
+
+![Composer menu and architect model](docs/images/composer-menu.png)
+
+The menu below the composer: model, reasoning effort, architect model, and enabling official agent team collaboration.
+
 ## The problems it solves
 
 1. **The context stays where it works efficiently.** Long tasks don't drift, and they don't get more expensive the longer they run.
@@ -116,9 +122,9 @@ Either way you still need to reload the profile, refresh the page, and then crea
 
 ### Screenshot
 
-A historical screenshot of the relay panel (the current dial is ask me / keep going / compact and continue / hand off):
+The relay panel: the dial (ask me / keep going / compact and continue / hand off), per-session exemption from approval for compaction and for handoff, authorization for the next operation, "unlimited budget" injected into the new session, and the work ledger:
 
-![Relay panel](https://github.com/rezon-aki/dsh-context-relay/blob/main/docs/images/relay-panel.png?raw=true)
+![Relay panel](docs/images/relay-panel.png)
 
 ## What it does for you, and when it comes to ask
 
