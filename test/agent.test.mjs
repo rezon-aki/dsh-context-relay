@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { apply } from '../lib/agent.js';
 import { createRelayTools } from '../lib/agent/tools.js';
 import { createDelegationTools } from '../lib/agent/delegation-tools.js';
+import { composeDispatchBrief } from '../lib/agent/delegation.js';
 import { ROUTER_DENY_TOOLS } from '../lib/agent/protocol.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
@@ -21,7 +23,7 @@ import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
 
 const HANDOFF_KEY = Symbol.for('dsh-context-relay.handoffs');
 /** 每次切 phase 必填的契约自检（两条用户契约的工作时落地）。 */
-const CONTRACT_CHECK = { requirement: '需求已定：用户要两条契约；边界：只改 relay 插件', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：用户要两条契约；边界：只改 relay 插件', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md' };
 /** 进 ship 的用户门（新上下文独立审查 + 大白话汇报；宿主只校验非空）。 */
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针。 */
@@ -165,7 +167,13 @@ async function seedSquadRoster(cwd, leadSessionId, names) {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-test-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-test-'));
+  // 设计门×台账：设计稿必须真实存在（path 验真）；测试夹具统一落盘。
+  for (const path of ['.scratch/context-relay/architecture/complete-form-2026-11-16.md', '.scratch/context-relay/architecture/w1.md']) {
+    mkdirSync(join(cwd, path, '..'), { recursive: true });
+    writeFileSync(join(cwd, path), '# design\n');
+  }
+  return cwd;
 }
 
 /** v0.10.x 完成确认门：新变 done 的条目必须带三项均 true 的 lead_confirm。 */
@@ -659,7 +667,8 @@ test('relay_organize below-threshold refusal is side-effect free (no doc_lint, n
   // P2#2 守卫前移：被拒路径零副作用——不跑 doc_lint（同步 git 子进程）、不写盘、不返回 lint/brief。
   assert.equal(result.docLint, undefined);
   assert.equal(result.briefPath, undefined);
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, 'refusal must not write a brief file');
+  // tmpCwd 预落设计门夹具（architecture/<design>.md）：拒绝路径不得再写其它文件/目录。
+  assert.deepEqual(readdirSync(join(cwd, '.scratch', 'context-relay')), ['architecture'], 'refusal must not write a brief file');
 });
 
 test('relay_organize force calls compaction engine and reports freed tokens', async () => {
@@ -1738,7 +1747,7 @@ test('relay_handoff refuses subagent/teammate callers before side effects', asyn
   );
   assert.equal(refused.ok, false);
   assert.match(refused.error, /Lead-only/);
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, 'refusal must not write a handoff file');
+  assert.deepEqual(readdirSync(join(cwd, '.scratch', 'context-relay')), ['architecture'], 'refusal must not write a handoff file');
 });
 
 test('reminder listener stays inside the relay preset scope (no {global:true})', () => {
@@ -1901,7 +1910,7 @@ test('relay_organize refuses a second compression unless the human forces it', a
   assert.match(refused.summary, /already compressed once/);
   // 二次压缩拒绝同样零副作用：不写 brief、不跑 doc_lint。
   assert.equal(refused.briefPath, undefined);
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, 'second-compression refusal must not write a brief file');
+  assert.deepEqual(readdirSync(join(cwd, '.scratch', 'context-relay')), ['architecture'], 'second-compression refusal must not write a brief file');
   const forced = await tools.get('relay_organize').execute({ phase: 'build', brief: 'again', force: true }, { agent: { session, options: {} } });
   assert.equal(forced.ok, true, JSON.stringify(forced));
   assert.ok(forced.organizeCount >= 2);
@@ -2636,7 +2645,7 @@ test('relay projection drives phase/organizeCount/phaseMeta and skips snapshotEv
 
   // relay_phase 的 previous 也来自投影；超预算（420k=organize）按面板一次性默认操作「继续」放行
   updatePanelState(session.id, { defaultOperation: 'continue' });
-  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'ship', user_gate: SHIP_GATE }, { agent: { session, options: {} } });
+  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, risk: { tier: 'T1', reason: '投影/状态机测试', paths: ['test/agent.test.mjs'], lines: 3 }, phase: 'ship', user_gate: SHIP_GATE }, { agent: { session, options: {} } });
   assert.equal(switched.previous, 'verify');
   assert.equal(switched.phase, 'ship');
   assert.match(switched.reminder, /继续/);
@@ -2891,7 +2900,7 @@ test('v0.9.0 批次3 非 build→verify 不检查闸门；ship 结果带 delegat
     toolCalls: 57, executionCalls: 3, dispatchCalls: 2, collectCalls: 1,
   });
   const ship = await applyAgent(shipBundle.services).tools.get('relay_phase')
-    .execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: { session: shipSession, options: {} } });
+    .execute({ phase: 'ship', risk: { tier: 'T1', reason: '只验 delegation 快照', paths: ['test/agent.test.mjs'], lines: 3 }, contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: { session: shipSession, options: {} } });
   assert.equal(ship.phase, 'ship');
   assert.deepEqual(ship.delegation, {
     execRatio: 0.053,
@@ -4312,7 +4321,7 @@ test('P3：队友 relay_organize 返回结构化 lead-only（零副作用，与 
   assert.equal(result.ok, false);
   assert.equal(result.code, 'lead-only');
   assert.match(result.summary, /only the Lead may run relay_organize/);
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, '被拒路径零副作用');
+  assert.deepEqual(readdirSync(join(cwd, '.scratch', 'context-relay')), ['architecture'], '被拒路径零副作用');
 });
 
 test('P3：relay_handoff 非法 status.phase 返回结构化 handoff-invalid（不裸抛）', async () => {
@@ -4324,7 +4333,7 @@ test('P3：relay_handoff 非法 status.phase 返回结构化 handoff-invalid（�
   assert.equal(result.ok, false);
   assert.equal(result.code, 'handoff-invalid');
   assert.match(result.summary, /unknown phase/);
-  assert.equal(existsSync(join(cwd, '.scratch', 'context-relay')), false, '非法输入不写 handoff 文件');
+  assert.deepEqual(readdirSync(join(cwd, '.scratch', 'context-relay')), ['architecture'], '非法输入不写 handoff 文件');
 });
 
 test('Lead 缺口：handedOff=true 的重复接力仍执行（兼容）但 summary 明确警告会再建会话/耗额度', async () => {
@@ -4426,7 +4435,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // fix3（confirmKey 契约）：relay_work_items.lead_confirm 补 auto/confirmKey/diffHash + 复用 anyOf → 实测 14022，
   // 预算按实测+~2% 上调到 14300。
   // v0.13 P1 ②：user_gate.review_ref 结构化字段 → 实测 14539，预算按实测+~1.8% 上调到 14800。
-  assert.ok(parameterChars <= 14800, '参数 schema 总字符 <=14800（v0.13 P1 实测 14539），实际 ' + parameterChars);
+  // 设计门×台账（v2）：relay_phase 新增 design_change{reason,user_approved} + contract_check.design_path、relay_work_items.designRef → 实测 15663，
+  // 预算按实测+~0.9% 上调到 15800（#68：只调预算，不删语义/约束；仍逐条受 ≤400/单行约束）。
+  assert.ok(parameterChars <= 15800, '参数 schema 总字符 <=15800（设计门×台账实测 15663），实际 ' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -4470,7 +4481,7 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
 
 test('relay_phase: ship 用户门 = 新上下文独立审查 + 大白话汇报（仅 verify 进；宿主只校验非空，不机械校验内容）', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-ship-gate', seq: 0 });
+  const session = fakeSession({ id: 'session-ship-gate', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
@@ -4490,9 +4501,10 @@ test('relay_phase: ship 用户门 = 新上下文独立审查 + 大白话汇报�
   assert.equal(shipped.user_gate.review, 'done', '宿主只回 done（不机械回显/校验内容）');
   assert.equal(shipped.user_gate.questions, 5);
   // 短内容放行：证明宿主不机械校验内容（对不对由用户判断）
-  const shortSession = fakeSession({ id: 'session-ship-gate-short', seq: 0 });
+  const shortSession = fakeSession({ id: 'session-ship-gate-short', cwd: tmpCwd(), seq: 0 });
   const shortTools = applyAgent(fakeServices({ session: shortSession }).services).tools;
   const shortAgent = { session: shortSession, options: {} };
+  await shortTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: shortAgent });
   await shortTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: shortAgent });
   const allowed = await shortTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review: '无', report: '好' } }, { agent: shortAgent });
   assert.equal(allowed.phase, 'ship');
@@ -4515,7 +4527,7 @@ test('relay_phase: subagent/Agent Teams 队友不做验收声明（ship → lead
 
 test('contract_check 仅 ship 必填（C9）：普通 phase 缺失不告警；主动传入但残缺才 warning', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-contract', seq: 0 });
+  const session = fakeSession({ id: 'session-contract', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const missing = await tools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE }, { agent });
@@ -4526,7 +4538,7 @@ test('contract_check 仅 ship 必填（C9）：普通 phase 缺失不告警；�
   const ok = await tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent });
   assert.equal(ok.contractWarning, undefined, '自检完整不告警');
   // 超预算 + 面板「继续」：跨 phase 缺自检同样不 warning；模式持久不消费。
-  const overSession = fakeSession({ id: 'session-contract-over', seq: 0 });
+  const overSession = fakeSession({ id: 'session-contract-over', cwd: tmpCwd(), seq: 0 });
   const overBundle = fakeServices({ session: overSession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const overTools = applyAgent(overBundle.services).tools;
   const overAgent = { session: overSession, options: {}, inject() {} };
@@ -4536,15 +4548,16 @@ test('contract_check 仅 ship 必填（C9）：普通 phase 缺失不告警；�
   assert.equal(crossed.contractWarning, undefined, '超预算普通 phase 缺自检也不 warning');
   assert.equal(panelStateOf(overSession.id).defaultOperation, 'continue', '模式持久（不消费）');
   // ship 前必须自检（唯一必填点）。
-  const shipSession = fakeSession({ id: 'session-contract-ship', seq: 0 });
+  const shipSession = fakeSession({ id: 'session-contract-ship', cwd: tmpCwd(), seq: 0 });
   const shipTools = applyAgent(fakeServices({ session: shipSession }).services).tools;
   const shipAgent = { session: shipSession, options: {} };
+  await shipTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: shipAgent });
   await shipTools.get('relay_phase').execute({ phase: 'verify', contract_check: CONTRACT_CHECK }, { agent: shipAgent });
   await assert.rejects(shipTools.get('relay_phase').execute({ phase: 'ship', user_gate: SHIP_GATE }, { agent: shipAgent }), /contract_check/);
   const shipped = await shipTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }, { agent: shipAgent });
   assert.equal(shipped.phase, 'ship');
   // 队友普通 phase 缺自检同样不 warning。
-  const teammateSession = fakeSession({ id: 'session-contract-team', seq: 0 });
+  const teammateSession = fakeSession({ id: 'session-contract-team', cwd: tmpCwd(), seq: 0 });
   const teammateTools = applyAgent(fakeServices({ session: teammateSession, extra: { agentTeams: { tryMembership: () => ({ role: 'teammate', name: 'rev' }), listMembers: () => [] } } }).services).tools;
   const teammate = await teammateTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE }, { agent: { session: teammateSession, options: {} } });
   assert.equal(teammate.phase, 'build');
@@ -5084,7 +5097,7 @@ test('v081 relay_doc forwards byteOffset and validates nonnegative integers', as
 
 test('w2 风险分级：T0 文档改动免设计门/独立审查/契约三问并可 ship；T2 仍强制', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-risk-t0', seq: 0 });
+  const session = fakeSession({ id: 'session-risk-t0', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
@@ -5102,7 +5115,7 @@ test('w2 风险分级：T0 文档改动免设计门/独立审查/契约三问并
   assert.equal(shipped.risk.tier, 'T0');
 
   // T2：显式声明 → 设计门/user_gate 全强制。
-  const t2 = fakeSession({ id: 'session-risk-t2', seq: 0 });
+  const t2 = fakeSession({ id: 'session-risk-t2', cwd: tmpCwd(), seq: 0 });
   const t2agent = { session: t2, options: {} };
   const t2tools = applyAgent(fakeServices({ session: t2 }).services).tools;
   const call2 = (args) => t2tools.get('relay_phase').execute(args, { agent: t2agent });
@@ -5112,7 +5125,7 @@ test('w2 风险分级：T0 文档改动免设计门/独立审查/契约三问并
   await call2({ phase: 'verify', contract_check: CONTRACT_CHECK });
   await assert.rejects(call2({ phase: 'ship', contract_check: CONTRACT_CHECK }), /user_gate/, 'T2 仍要求 user_gate');
   // 无 risk 声明的新会话默认保守 T2（缺 design_gate 被拒）。
-  const dflt = fakeSession({ id: 'session-risk-default', seq: 0 });
+  const dflt = fakeSession({ id: 'session-risk-default', cwd: tmpCwd(), seq: 0 });
   const dfltTools = applyAgent(fakeServices({ session: dflt }).services).tools;
   await assert.rejects(dfltTools.get('relay_phase').execute({ phase: 'build' }, { agent: { session: dflt, options: {} } }), /设计门/, '无信号默认 T2');
 });
@@ -5142,7 +5155,7 @@ test('w2 风险分级：T1 设计进 phase goal、ship 做一次 diff 审查、�
 
 test('P1-2 去重键：T2 复用必须带 diff_hash；reopen/新任务清键，同 diff 也不复用', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-p1-dedupe', seq: 0 });
+  const session = fakeSession({ id: 'session-p1-dedupe', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
@@ -5152,12 +5165,12 @@ test('P1-2 去重键：T2 复用必须带 diff_hash；reopen/新任务清键，�
   const first = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '独立审查：无问题', report: '汇报一' } });
   assert.match(first.user_gate.reviewKey, /^[0-9a-f]{16}$/);
   // reopen 即视为新 diff：清掉审查去重键，同 diff_hash 的空 review 也必须重新审。
-  await call({ phase: 'build', reopen: { reason: '修一处小问题', user_approved: true }, risk });
+  await call({ phase: 'build', reopen: { reason: '修一处小问题', user_approved: true }, risk, design_gate: DESIGN_GATE });
   await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
   await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '', report: '汇报二' } }), /review/, 'reopen 后旧 reviewKey 必须清掉');
 
   // 新任务（ship→discover）同样清键：上一任务的审查结论不跨任务复用。
-  const next = fakeSession({ id: 'session-p1-newtask', seq: 0 });
+  const next = fakeSession({ id: 'session-p1-newtask', cwd: tmpCwd(), seq: 0 });
   const nextTools = applyAgent(fakeServices({ session: next }).services).tools;
   const call2 = (args) => nextTools.get('relay_phase').execute(args, { agent: { session: next, options: {} } });
   await call2({ phase: 'build', risk, design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
@@ -5193,38 +5206,37 @@ test('P1-1 复用仍跑 user_gate 校验：heavy 授权 / questions / report 不
   await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '' } }), /report/, '复用仍要求 report');
 });
 
-test('P1-3 风险判档：T0 只给 reason 降 T1；publicSurface 升 T2 强制设计门', async () => {
+test('P1-3 风险判档：build 入口无 diff 证据的自报 T0 升 T2 强制设计门；带 paths+lines 仍可 T0', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-p1-risk', seq: 0 });
+  const session = fakeSession({ id: 'session-p1-risk', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
-  const built = await call({ phase: 'build', risk: { tier: 'T0', reason: '只改 docs 文案' } });
-  assert.equal(built.risk.tier, 'T1', '只凭 reason、无实际 diff 证据的 T0 降 T1');
-  assert.ok(built.risk.reasons.some((reason) => /actual diff evidence/.test(reason)), '降档原因可审计');
-  assert.ok(built.gateWaived.includes('design_gate'), 'T1 仍免独立设计稿（设计进 phase goal）');
-  const uv = fakeSession({ id: 'session-p1-risk-uv', seq: 0 });
+  // 只给 reason、无 paths+lines 实际 diff 证据：build 入口升 T2（自报低档不能绕过设计门）。
+  await assert.rejects(call({ phase: 'build', risk: { tier: 'T0', reason: '只改 docs 文案' } }), /设计门/, '无证据的自报 T0 升 T2 → 设计门强制');
+  // publicSurface 自动升 T2：同样要求设计门。
+  const uv = fakeSession({ id: 'session-p1-risk-uv', cwd: tmpCwd(), seq: 0 });
   const uvTools = applyAgent(fakeServices({ session: uv }).services).tools;
   const call2 = (args) => uvTools.get('relay_phase').execute(args, { agent: { session: uv, options: {} } });
   await assert.rejects(call2({ phase: 'build', risk: { tier: 'T0', reason: 'README 文案', paths: ['README.md'], lines: 2, public_surface: true } }), /设计门/, 'publicSurface 升 T2 → 设计门强制');
-  // fix-p1b：证据校验移到派生之后——只传 paths 的派生探针不再落 T0。
-  const dv = fakeSession({ id: 'session-p1-risk-derived', seq: 0 });
+  // 只传 paths 的派生探针缺 lines：升 T2，不再落到免门 T1。
+  const dv = fakeSession({ id: 'session-p1-risk-derived', cwd: tmpCwd(), seq: 0 });
   const dvTools = applyAgent(fakeServices({ session: dv }).services).tools;
   const callDv = (args) => dvTools.get('relay_phase').execute(args, { agent: { session: dv, options: {} } });
-  const derived = await callDv({ phase: 'build', risk: { paths: ['docs/a.md'] } });
-  assert.equal(derived.risk.tier, 'T1', '派生 T0 缺 lines/reason → T1（不豁免设计门/独立审查）');
-  assert.ok(derived.risk.reasons.some((reason) => /actual diff evidence/.test(reason)), '派生降档原因可审计');
-  const dvOk = fakeSession({ id: 'session-p1-risk-derived-ok', seq: 0 });
+  await assert.rejects(callDv({ phase: 'build', risk: { paths: ['docs/a.md'] } }), /设计门/, '派生 T0 缺 lines → T2，不豁免设计门');
+  // 带 paths+lines+reason 的派生 T0 仍放行（免设计门）。
+  const dvOk = fakeSession({ id: 'session-p1-risk-derived-ok', cwd: tmpCwd(), seq: 0 });
   const dvOkTools = applyAgent(fakeServices({ session: dvOk }).services).tools;
   const callDvOk = (args) => dvOkTools.get('relay_phase').execute(args, { agent: { session: dvOk, options: {} } });
   const derivedOk = await callDvOk({ phase: 'build', risk: { paths: ['docs/a.md'], lines: 3, reason: '只改文档' } });
   assert.equal(derivedOk.risk.tier, 'T0', '派生 T0 带 paths+lines+reason 仍放行');
+  assert.ok(derivedOk.gateWaived.includes('design_gate'), 'T0 免独立设计稿（设计进 phase goal）');
 });
 
 
 test('w2 reopen：T0/T1 只需 reason，不要求 user_approved；T2 仍强制', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-risk-reopen', seq: 0 });
+  const session = fakeSession({ id: 'session-risk-reopen', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
@@ -5236,7 +5248,7 @@ test('w2 reopen：T0/T1 只需 reason，不要求 user_approved；T2 仍强制',
   assert.equal(reopened.reopen.userApproved, false);
   assert.ok(reopened.gateWaived.includes('reopen.user_approved'), 'T0 reopen 免用户批准');
   // T2：同流程 reopen 缺 user_approved 被严格拒绝。
-  const t2 = fakeSession({ id: 'session-risk-reopen-t2', seq: 0 });
+  const t2 = fakeSession({ id: 'session-risk-reopen-t2', cwd: tmpCwd(), seq: 0 });
   const t2Tools = applyAgent(fakeServices({ session: t2 }).services).tools;
   const t2Agent = { session: t2, options: {} };
   const call2 = (args) => t2Tools.get('relay_phase').execute(args, { agent: t2Agent });
@@ -5248,7 +5260,7 @@ test('w2 reopen：T0/T1 只需 reason，不要求 user_approved；T2 仍强制',
 
 test('w1 设计门回显：T2 缺 ask_ref/not_doing 零副作用拒绝；齐全通过并回显', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-w1-design-echo', seq: 0 });
+  const session = fakeSession({ id: 'session-w1-design-echo', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
@@ -5272,4 +5284,181 @@ test('w1 设计门回显：T2 缺 ask_ref/not_doing 零副作用拒绝；齐全�
   assert.equal(built.design.ask_ref, askRef);
   assert.deepEqual(built.design.not_doing, ['不发布 npm', '不改本机配置']);
   assert.match(built.text, /ask_ref 16 字 · not_doing 2 条/);
+});
+
+// ── 设计门×台账（v2）：T2 四入口全拦 + path 验真 + ship 漂移/缺 designRef ──────────────
+
+test('设计门×台账：T2 四入口（discover/verify/reopen/exit）缺有效设计全拒，且零副作用', async () => {
+  resetSharedState();
+  // ① discover→build：缺 design_gate 直接拒（零副作用：不切 phase、不写台账）。
+  const c1 = tmpCwd();
+  const s1 = fakeSession({ id: 'session-dg-fresh', cwd: c1, seq: 0 });
+  const t1 = applyAgent(fakeServices({ session: s1 }).services).tools;
+  const a1 = { session: s1, options: {} };
+  await assert.rejects(t1.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: a1 }), /设计门/);
+  assert.equal((await t1.get('relay_status').execute({}, { agent: a1 })).phase, 'discover', '拒绝后 phase 未变');
+  assert.equal(readWorkItems(c1, { scopeId: s1.id }).exists, false, '拒绝不写台账');
+
+  // ② verify→build：日志派生 verify、台账无 design → 拒（旧门只看 discover/decide）。
+  const c2 = tmpCwd();
+  const log2 = [
+    { type: 'tool/ptc-dispatch', seq: 1, data: { name: 'relay_phase', arguments: { phase: 'build' }, isError: false, content: [] } },
+    { type: 'tool/ptc-dispatch', seq: 2, data: { name: 'relay_phase', arguments: { phase: 'verify' }, isError: false, content: [] } },
+  ];
+  const s2 = fakeSession({ id: 'session-dg-verify', cwd: c2, seq: 0, log: log2 });
+  const t2 = applyAgent(fakeServices({ session: s2 }).services).tools;
+  const a2 = { session: s2, options: {} };
+  await assert.rejects(t2.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: a2 }), /设计门/);
+  assert.equal((await t2.get('relay_status').execute({}, { agent: a2 })).phase, 'verify', '拒绝后仍在 verify');
+
+  // ③ ship→build(reopen)：T2 清空旧设计，缺 design_gate 拒；带有效设计才放行。
+  const c3 = tmpCwd();
+  const s3 = fakeSession({ id: 'session-dg-reopen', cwd: c3, seq: 0 });
+  const t3 = applyAgent(fakeServices({ session: s3 }).services).tools;
+  const a3 = { session: s3, options: {} };
+  const call3 = (args) => t3.get('relay_phase').execute(args, { agent: a3 });
+  await call3({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call3({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  await call3({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  await assert.rejects(call3({ phase: 'build', reopen: { reason: '修一处验收问题', user_approved: true }, risk: { tier: 'T2', reason: 'schema' }, contract_check: CONTRACT_CHECK }), /设计门/, 'reopen 重新过门');
+  const reopened = await call3({ phase: 'build', reopen: { reason: '修一处验收问题', user_approved: true }, risk: { tier: 'T2', reason: 'schema' }, design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  assert.equal(reopened.phase, 'build');
+  assert.equal(reopened.previous, 'ship');
+
+  // ④ exit 恢复：同一 phase 已有有效设计可复用；无设计则拒。
+  const c4 = tmpCwd();
+  const s4 = fakeSession({ id: 'session-dg-exit', cwd: c4, seq: 0 });
+  const t4 = applyAgent(fakeServices({ session: s4 }).services).tools;
+  const a4 = { session: s4, options: {} };
+  const call4 = (args) => t4.get('relay_phase').execute(args, { agent: a4 });
+  await call4({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call4({ phase: 'blocked', exit_reason: '等用户确认' });
+  const resumed = await call4({ phase: 'build', contract_check: CONTRACT_CHECK });
+  assert.equal(resumed.phase, 'build', '同一 phase 的有效设计可复用（出口恢复不重复过门）');
+  assert.equal(resumed.previous, 'blocked');
+  // discover→blocked→build：从未有过设计 → 拒。
+  const c5 = tmpCwd();
+  const s5 = fakeSession({ id: 'session-dg-exit-empty', cwd: c5, seq: 0 });
+  const t5 = applyAgent(fakeServices({ session: s5 }).services).tools;
+  const a5 = { session: s5, options: {} };
+  const call5 = (args) => t5.get('relay_phase').execute(args, { agent: a5 });
+  await call5({ phase: 'blocked', exit_reason: '等用户确认' });
+  await assert.rejects(call5({ phase: 'build', contract_check: CONTRACT_CHECK }), /设计门/, '出口恢复同样要过设计门');
+});
+
+test('设计门×台账：假 path / 越界 / 目录 path 均零副作用拒绝', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-dg-fake', cwd, seq: 0 });
+  const tools = applyAgent(fakeServices({ session }).services).tools;
+  const agent = { session, options: {} };
+  const call = (path) => tools.get('relay_phase').execute({ phase: 'build', design_gate: { ...DESIGN_GATE, path }, contract_check: CONTRACT_CHECK }, { agent });
+  await assert.rejects(call('.scratch/context-relay/architecture/missing-design.md'), /path/, '不存在的 path 拒');
+  await assert.rejects(call('../outside-design.md'), /path/, '越界 path 拒');
+  await assert.rejects(call('.scratch/context-relay/architecture'), /path/, '目录不是设计稿');
+  assert.equal((await tools.get('relay_status').execute({}, { agent })).phase, 'discover', '拒绝后 phase 未变');
+  assert.equal(readWorkItems(cwd, { scopeId: session.id }).exists, false, '拒绝不写台账');
+});
+
+test('设计门×台账：过门写 currentPhase.design{path,hash,ask_ref,not_doing,approvedAt} + 条目 designRef + dispatch 带设计', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-dg-bind', cwd, seq: 0 });
+  const tools = applyAgent(fakeServices({ session }).services).tools;
+  const agent = { session, options: {} };
+  const built = await tools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK, items: ['实现设计绑定'] }, { agent });
+  assert.equal(built.phase, 'build');
+  const ledger = readWorkItems(cwd, { scopeId: session.id });
+  assert.equal(ledger.exists, true);
+  const design = ledger.currentPhase.design;
+  assert.equal(design.path, DESIGN_GATE.path, 'currentPhase.design.path 持久化');
+  assert.equal(design.ask_ref, DESIGN_GATE.ask_ref);
+  assert.deepEqual(design.not_doing, DESIGN_GATE.not_doing);
+  assert.match(design.hash, /^[0-9a-f]{64}$/, 'sha256 落账');
+  assert.equal(design.hash, createHash('sha256').update(readFileSync(join(cwd, DESIGN_GATE.path))).digest('hex'), 'hash 与文件一致');
+  assert.equal(typeof design.approvedAt, 'string');
+  assert.equal(ledger.items.length, 1);
+  assert.equal(ledger.items[0].designRef, DESIGN_GATE.path, 'build 条目回填 designRef');
+  const brief = composeDispatchBrief({ itemId: ledger.items[0].id, brief: 'x', docs: [], writeScope: ['lib/a.js'], acceptance: 'ok', reportPath: 'r.md', designRef: DESIGN_GATE.path });
+  assert.match(brief, /设计（用户已确认，不得擅自改范围）/, 'dispatch brief 带设计绑定');
+  assert.ok(brief.includes(DESIGN_GATE.path));
+});
+
+test('设计门×台账：T2 ship 校验 contract_check.design_path + hash 漂移（design_change）+ 缺 designRef', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-dg-ship', cwd, seq: 0 });
+  const tools = applyAgent(fakeServices({ session }).services).tools;
+  const agent = { session, options: {} };
+  const call = (args) => tools.get('relay_phase').execute(args, { agent });
+  await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  // design_path 不符：拒。
+  await assert.rejects(call({ phase: 'ship', contract_check: { ...CONTRACT_CHECK, design_path: '.scratch/context-relay/architecture/other.md' }, user_gate: SHIP_GATE }), /design-path-mismatch|不等于/, 'design_path 不符拒');
+  // 设计稿在过门后被改：hash 漂移 → 拒；带 design_change（用户确认）才放行并更新 hash。
+  writeFileSync(join(cwd, DESIGN_GATE.path), '# design changed by user\n');
+  await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }), /design-drift|已修改/, 'hash 漂移拒');
+  const shipped = await call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE, design_change: { reason: '用户确认设计微调', user_approved: true } });
+  assert.equal(shipped.phase, 'ship');
+  const after = readWorkItems(cwd, { scopeId: session.id });
+  assert.equal(after.currentPhase.design.hash, createHash('sha256').update('# design changed by user\n').digest('hex'), 'design_change 后 hash 更新');
+
+  // 缺 designRef：done 的 verify 条目没有 designRef → ship 拒；回填后放行。
+  const cwd2 = tmpCwd();
+  const s2 = fakeSession({ id: 'session-dg-ship-ref', cwd: cwd2, seq: 0 });
+  const t2 = applyAgent(fakeServices({ session: s2 }).services).tools;
+  const a2 = { session: s2, options: {} };
+  const call2 = (args) => t2.get('relay_phase').execute(args, { agent: a2 });
+  await call2({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
+  await call2({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  const l2 = readWorkItems(cwd2, { scopeId: s2.id });
+  const written = await writeWorkItems(cwd2, {
+    items: [{ id: 'v-review', title: '验收', status: 'done', phase: 'verify', evidence: ['review:done'], lead_confirm: LEAD_CONFIRM }],
+    currentPhase: l2.currentPhase,
+    scopeId: s2.id,
+    updatedBy: s2.id,
+    rev: l2.rev,
+  });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  await assert.rejects(call2({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE }), /design-unbound/, 'done 条目缺 designRef 拒');
+  const l3 = readWorkItems(cwd2, { scopeId: s2.id });
+  const backfilled = await writeWorkItems(cwd2, { items: [{ ...l3.items[0], designRef: DESIGN_GATE.path }], currentPhase: l3.currentPhase, scopeId: s2.id, updatedBy: s2.id, rev: l3.rev });
+  assert.equal(backfilled.ok, true, JSON.stringify(backfilled));
+  const ship2 = await call2({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
+  assert.equal(ship2.phase, 'ship', '回填 designRef 后 T2 ship 放行');
+});
+
+test('设计门×台账：legacy 只对升级前 phase 放行一次，新 phase 仍硬拒', async () => {
+  resetSharedState();
+  // ① 升级前写入的 currentPhase（无 gateVersion、无 design）：迁移放行一次并记 designBinding=legacy。
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-dg-legacy', cwd, seq: 0 });
+  const written = await writeWorkItems(cwd, {
+    items: [],
+    scopeId: session.id,
+    updatedBy: session.id,
+    currentPhase: { phase: 'discover', goal: 'legacy 迁移', since: 1, openedAtRev: 1 },
+  });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  const tools = applyAgent(fakeServices({ session }).services).tools;
+  const agent = { session, options: {} };
+  const migrated = await tools.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent });
+  assert.equal(migrated.phase, 'build', '升级前 phase 首次进 build 放行（legacy 迁移）');
+  assert.ok(migrated.gateWaived.includes('design_gate'), 'legacy 迁移免设计稿');
+  const ledger = readWorkItems(cwd, { scopeId: session.id });
+  assert.equal(ledger.currentPhase.designBinding, 'legacy', '迁移后记 designBinding=legacy');
+  assert.equal(ledger.currentPhase.gateVersion, 2, '新写的 phase 带 gateVersion=2');
+
+  // ② 新 phase（gateVersion=2、无 design）：同一入口不再享受 legacy，硬拒。
+  const cwd2 = tmpCwd();
+  const s2 = fakeSession({ id: 'session-dg-legacy-new', cwd: cwd2, seq: 0 });
+  const w2 = await writeWorkItems(cwd2, {
+    items: [],
+    scopeId: s2.id,
+    updatedBy: s2.id,
+    currentPhase: { phase: 'discover', goal: 'new phase', since: 1, openedAtRev: 1, gateVersion: 2 },
+  });
+  assert.equal(w2.ok, true, JSON.stringify(w2));
+  const t2 = applyAgent(fakeServices({ session: s2 }).services).tools;
+  await assert.rejects(t2.get('relay_phase').execute({ phase: 'build', contract_check: CONTRACT_CHECK }, { agent: { session: s2, options: {} } }), /设计门/, '新 phase 无 design 仍硬拒');
 });

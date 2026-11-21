@@ -12,7 +12,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
@@ -21,7 +21,7 @@ import { clearDeriveMemory } from '../lib/agent/derive.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { internalKeysIn } from '../lib/output.js';
 
-const CONTRACT_CHECK = { requirement: '需求已定：C9 用户门两段式；边界：只改 relay 协议/工具/测试', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：C9 用户门两段式；边界：只改 relay 协议/工具/测试', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 
@@ -36,7 +36,10 @@ function resetSharedState() {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-gate-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-gate-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/complete-form-2026-11-16.md'), '# design\n');
+  return cwd;
 }
 
 function fakeCtx(services = {}) {
@@ -107,7 +110,11 @@ test('设计门：discover→build 带 design_gate{path,user_approved:true} 放�
   const result = await h.call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   assert.equal(result.phase, 'build');
   assert.equal(result.previous, 'discover');
-  assert.deepEqual(result.design, DESIGN_GATE, '结果回显 design（path+已确认+ask_ref+not_doing）');
+  assert.equal(result.design.path, DESIGN_GATE.path);
+  assert.equal(result.design.user_approved, true);
+  assert.equal(result.design.ask_ref, DESIGN_GATE.ask_ref);
+  assert.deepEqual(result.design.not_doing, DESIGN_GATE.not_doing);
+  assert.match(result.design.hash, /^[0-9a-f]{64}$/, '设计门记录 sha256（ship 漂移校验）');
   assert.match(result.text, /^design: 设计门已过（用户已确认）· /m);
   assert.equal((await h.status()).phase, 'build');
 });

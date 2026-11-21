@@ -8,6 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -20,7 +21,7 @@ import { thresholdsFromPercent } from '../lib/policy.js';
 import { readWorkItems } from '../lib/agent/work-items.js';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
-const CONTRACT_CHECK = { requirement: '需求已定：状态机出口+容量保全；边界：本文件写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：状态机出口+容量保全；边界：本文件写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针。 */
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
@@ -38,7 +39,10 @@ function resetSharedState() {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-exit-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-exit-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/complete-form-2026-11-16.md'), '# design\n');
+  return cwd;
 }
 
 function fakeCtx(overrides = {}) {
@@ -149,7 +153,7 @@ test('relay_phase 出口：任意 phase 可进 blocked/cancel；status 带 exit�
   assert.deepEqual({ kind: status.exit.kind, reason: status.exit.reason }, { kind: 'blocked', reason: '等用户裁决 X' });
   assert.match(status.text, /^phase: blocked/m);
   // 恢复：从出口回主链，resumed=true（不要求 budget_plan）。
-  const resumed = await call({ phase: 'build', contract_check: CONTRACT_CHECK, goal: 'g' });
+  const resumed = await call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK, goal: 'g' });
   assert.equal(resumed.phase, 'build');
   assert.equal(resumed.previous, 'blocked');
   assert.equal(resumed.resumed, true);
@@ -231,6 +235,10 @@ test('relay_phase：ship 出口恢复的退出来源可从会话日志重建（�
   resetSharedState();
   const cwd = tmpCwd();
   // 冷启动：内存派生缓存为空，只有会话日志（build→verify→ship→blocked）。
+  // T2 ship 需要 currentPhase.design 绑定（设计门×台账）：冷启动只从日志重建出口，但台账里的设计绑定必须存在。
+  const designPath = DESIGN_GATE.path;
+  const designHash = createHash('sha256').update(readFileSync(join(cwd, designPath))).digest('hex');
+  writeLedger(cwd, [], { rev: 4, currentPhase: { phase: 'ship', goal: 'g', since: 1, openedAtRev: 4, risk: { tier: 'T2', source: 'declared', reasons: [] }, gateVersion: 2, design: { path: designPath, hash: designHash, ask_ref: DESIGN_GATE.ask_ref, not_doing: DESIGN_GATE.not_doing, approvedAt: '2026-11-21T00:00:00.000Z' } } });
   const log = [
     { type: 'tool/ptc-dispatch', seq: 1, data: { name: 'relay_phase', arguments: { phase: 'build' }, isError: false, content: [] } },
     { type: 'tool/ptc-dispatch', seq: 2, data: { name: 'relay_phase', arguments: { phase: 'verify' }, isError: false, content: [] } },

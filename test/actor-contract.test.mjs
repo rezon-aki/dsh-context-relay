@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -167,12 +167,14 @@ test('A2 actor lint：Lead 文本不得直接调 checkpoint/freshen，跨角色�
 
 
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/actor-tools.md', user_approved: true, ask_ref: '用户确认：按设计推进', not_doing: ['不发布 npm'] };
-const CONTRACT_CHECK = { requirement: '需求已定：工具结果文本 actor 化', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：工具结果文本 actor 化', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/actor-tools.md' };
 
 /** 工具结果文本夹具：Lead + 一名到线队友，触发 relay_phase triage 与 relay_team_status 的 action 文案。 */
 async function toolResultTexts() {
   resetSharedState();
   const cwd = mkdtempSync(join(tmpdir(), 'relay-actor-tools-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/actor-tools.md'), '# design\n');
   const session = { id: 'session-actor-tools-lead', header: { cwd }, seq: 0, snapshotEvents: () => [], requestHeader: () => ({ config: { provider: 'deepseek-official', model: 'deepseek-flash' } }) };
   const teams = {
     tryMembership: () => ({ role: 'lead', root: { session: { id: session.id } } }),

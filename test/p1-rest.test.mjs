@@ -24,7 +24,7 @@ import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 
 const LEAD_CONFIRM = { no_drift: true, no_missing: true, no_regression: true };
 const thresholds = thresholdsFromPercent(35);
-const CONTRACT_CHECK = { requirement: 'r', fidelity: 'f', attention: 'a' };
+const CONTRACT_CHECK = { requirement: 'r', fidelity: 'f', attention: 'a', design_path: '.scratch/design.md' };
 const DESIGN_GATE = { path: '.scratch/design.md', user_approved: true, ask_ref: 'go', not_doing: ['no npm'] };
 
 function tmpCwd() {
@@ -183,7 +183,7 @@ async function shipWithReviewRef({ tag, receiptVerify, revisionOf }) {
   return { call, gate, cwd, head, reportPath, session };
 }
 
-test('② user_gate.review_ref：合法 → verified；revision 不符 → warn（ship 放行）；strict 拒；off 跳过', async () => {
+test('② user_gate.review_ref：合法 → verified；T2 revision 不符默认拒；strict 拒；off 跳过', async () => {
   resetShared();
   const okPath = await shipWithReviewRef({ tag: 'ok', revisionOf: (head) => head });
   const shipped = await okPath.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: okPath.gate });
@@ -194,15 +194,11 @@ test('② user_gate.review_ref：合法 → verified；revision 不符 → warn�
 
   resetShared();
   const warnPath = await shipWithReviewRef({ tag: 'warn', revisionOf: () => 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
-  const warned = await warnPath.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: warnPath.gate });
-  assert.equal(warned.phase, 'ship', '默认 warn：ship 放行');
-  assert.equal(warned.user_gate.review_ref.status, 'unverified');
-  assert.deepEqual(warned.user_gate.review_ref.problems, ['revision-mismatch']);
-  assert.ok(warned.user_gate.warnings.some((obj) => obj.code === 'review-ref:revision-mismatch'), JSON.stringify(warned.user_gate.warnings));
+  await assert.rejects(warnPath.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: warnPath.gate }), /review_ref|review ref/, 'T2 review_ref 默认严格：revision 不符拒绝 ship（不再降级成 warning）');
 
   resetShared();
   const strictPath = await shipWithReviewRef({ tag: 'strict', receiptVerify: 'strict', revisionOf: () => 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });
-  await assert.rejects(strictPath.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: strictPath.gate }), /review_ref|review ref/, 'strict 才拒');
+  await assert.rejects(strictPath.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: strictPath.gate }), /review_ref|review ref/, 'receiptVerify=strict 同样拒');
 
   resetShared();
   const offPath = await shipWithReviewRef({ tag: 'off', receiptVerify: 'off', revisionOf: () => 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef' });

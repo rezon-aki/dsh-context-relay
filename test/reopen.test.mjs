@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
@@ -18,7 +18,7 @@ import { foldRelayEvent, initialState } from '../lib/projection.js';
 
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
-const CONTRACT_CHECK = { requirement: '需求已定', fidelity: '实现忠实，无偏移', attention: '不打扰' };
+const CONTRACT_CHECK = { requirement: '需求已定', fidelity: '实现忠实，无偏移', attention: '不打扰', design_path: '.scratch/context-relay/architecture/ctx-hardening.md' };
 const SHIP_GATE = { review: 'fresh 独立审查：需求已定、实现忠实', report: '结论：完成\n影响：无\n需要你做什么：无需\n证据位置：x:1' };
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/ctx-hardening.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 const REOPEN = { reason: '用户提出返修：补边界用例', user_approved: true };
@@ -33,7 +33,10 @@ function resetSharedState() {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-reopen-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-reopen-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/ctx-hardening.md'), '# design\n');
+  return cwd;
 }
 
 function fakeCtx(services) {
@@ -129,7 +132,7 @@ test('P0-C warn：缺/不完整 reopen 放行 + warning + 记录 missing；合�
   await h.call({ phase: 'build', contract_check: CONTRACT_CHECK });
   await h.call({ phase: 'verify', contract_check: CONTRACT_CHECK });
   await h.call({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: SHIP_GATE });
-  const incomplete = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK, reopen: { reason: '返修' } });
+  const incomplete = await h.call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK, reopen: { reason: '返修' } });
   assert.equal(incomplete.warning, 'reopen-missing');
   // 可观测契约：已提供的 reason 原样保留（不丢审计事实），缺失项进 missing；未提供的 userApproved 不虚构。
   assert.deepEqual(incomplete.reopen, { from: 'ship', to: 'build', reason: '返修', missing: ['reopen.user_approved'] });
@@ -154,7 +157,7 @@ test('P0-C off：缺失 reopen 放行且不记录（v0.10 旧行为）；非 shi
   assert.equal(allowed.reopen, undefined);
   assert.equal(allowed.warning, undefined);
   // 非 ship 提供 reopen：off 忽略（不拒绝、不记录）。
-  const ignored = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK, reopen: { reason: 'x', user_approved: true } });
+  const ignored = await h.call({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK, reopen: { reason: 'x', user_approved: true } });
   assert.equal(ignored.phase, 'build');
   assert.equal(ignored.reopen, undefined);
 });

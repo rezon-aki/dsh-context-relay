@@ -20,7 +20,7 @@ import { phaseFocusLine, readWorkItems } from '../lib/agent/work-items.js';
 import { emptyRoster, ensureLineage, retireGeneration, writeRoster } from '../lib/agent/team.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 
-const CONTRACT_CHECK = { requirement: '需求已定：上下文管理防遗忘', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户' };
+const CONTRACT_CHECK = { requirement: '需求已定：上下文管理防遗忘', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户', design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 const TEAM_CONTEXT_REL = TEAM_CONTEXT_DIR.join('/');
@@ -28,7 +28,10 @@ const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
 const thresholds = thresholdsFromPercent(35);
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-tc-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-tc-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/complete-form-2026-11-16.md'), '# design\n');
+  return cwd;
 }
 
 /** v0.11 P0-B：把 catalog 成员登记为当前 squad（默认视图/闸门只认 squad）。 */

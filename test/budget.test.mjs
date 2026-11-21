@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,12 +29,16 @@ const CONTRACT_CHECK = {
   requirement: '需求已定：relay v0.2.2 phase 优先预算协议（边界：只新增 test/budget.test.mjs）',
   fidelity: '实现忠实，无偏移/劣化/偷懒/缺失',
   attention: '本阶段不打扰用户（无最小高影响点）',
+  design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md',
 };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-budget-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-budget-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/complete-form-2026-11-16.md'), '# design\n');
+  return cwd;
 }
 
 /** 每个测试前重置进程级共享状态（派生内存/哨兵/共享锁/面板/handoff 发布箱）。 */
@@ -341,8 +345,8 @@ test('relay_phase 出口不参与预算闸门：warn 档 build→blocked 无需 
   assert.equal(blocked.resumed, false);
   assert.equal(blocked.budget, undefined, '出口不返回预算事实');
   assert.equal((await h.status()).phase, 'blocked');
-  // 恢复：不要求 budget_plan（仍 warn 档）。
-  const resumed = await h.phase({ phase: 'build', contract_check: CONTRACT_CHECK });
+  // 恢复：不要求 budget_plan（仍 warn 档）；T2 进 build 仍要设计门（出口恢复同口径）。
+  const resumed = await h.phase({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
   assert.equal(resumed.phase, 'build');
   assert.equal(resumed.resumed, true);
 });

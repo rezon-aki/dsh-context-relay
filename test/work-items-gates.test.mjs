@@ -23,7 +23,7 @@ import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
-const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：工作台账闸门接入；边界：只改 T2 写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md' };
 const SHIP_GATE = { review: 'fresh subagent 独立审查：需求已定、实现忠实，无偏移/劣化/偷懒/缺失', report: '大白话汇报：需求 → 实现 + 证据 → 无偏差、边界已说明' };
 /** C9 设计门：首次进 build 必须带用户确认过的设计文档指针（AUDIT §12）。 */
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/complete-form-2026-11-16.md', user_approved: true, ask_ref: '用户确认：按这份设计推进', not_doing: ['不发布 npm', '不改本机配置'] };
@@ -41,7 +41,10 @@ function resetSharedState() {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-wi-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-wi-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/complete-form-2026-11-16.md'), '# design\n');
+  return cwd;
 }
 
 function fakeCtx(overrides = {}) {
@@ -105,7 +108,12 @@ function applyAgentScoped(services, config = {}) {
 function writeLedger(cwd, items, { rev = 1, currentPhase } = {}) {
   const path = join(cwd, WORK_ITEMS_REL);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify({ version: 1, rev, updatedAt: '2026-11-10T00:00:00.000Z', updatedBy: 'test', ...(currentPhase === undefined ? {} : { currentPhase }), items }, null, 2));
+  // 整表改写测试夹具默认保留已落盘的 currentPhase（设计门 design/designRef 绑定不得因改条目而丢）。
+  let phase = currentPhase;
+  if (phase === undefined) {
+    try { phase = JSON.parse(readFileSync(path, 'utf8')).currentPhase; } catch { phase = undefined; }
+  }
+  writeFileSync(path, JSON.stringify({ version: 1, rev, updatedAt: '2026-11-10T00:00:00.000Z', updatedBy: 'test', ...(phase === undefined ? {} : { currentPhase: phase }), items }, null, 2));
   return path;
 }
 

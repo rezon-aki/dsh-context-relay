@@ -14,7 +14,7 @@ import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 
 const WORK_ITEMS_REL = '.scratch/context-relay/work-items.json';
-const CONTRACT_CHECK = { requirement: '需求已定：风险档落盘探针；边界：只改写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）' };
+const CONTRACT_CHECK = { requirement: '需求已定：风险档落盘探针；边界：只改写范围', fidelity: '实现忠实，无偏移/劣化/偷懒/缺失', attention: '本阶段不打扰用户（无最小高影响点）', design_path: '.scratch/context-relay/architecture/risk-probe.md' };
 const DESIGN_GATE = { path: '.scratch/context-relay/architecture/risk-probe.md', user_approved: true, ask_ref: '用户确认：按设计推进', not_doing: ['不发布 npm'] };
 
 function resetSharedState() {
@@ -62,7 +62,10 @@ function applyAgent({ cwd, sessionId }) {
 }
 
 function tmpCwd() {
-  return mkdtempSync(join(tmpdir(), 'relay-risk-'));
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-risk-'));
+  mkdirSync(join(cwd, '.scratch/context-relay/architecture'), { recursive: true });
+  writeFileSync(join(cwd, '.scratch/context-relay/architecture/risk-probe.md'), '# design\n');
+  return cwd;
 }
 
 test('relay_phase 风险档落盘：空分点也写 currentPhase.risk，status/work_items 读回同一 tier', async () => {
@@ -90,13 +93,14 @@ test('relay_phase 风险档落盘：空分点也写 currentPhase.risk，status/w
   assert.equal(read.phase.risk.tier, 'T1', 'relay_work_items 读回同一 tier');
   assert.match(read.text, /阶段：decide · risk T1\(declared\)/);
 
-  // 未显式声明时继承本会话上一档，并继续落盘（不是每次新建 T2）。
+  // 设计门×台账：进 build 不继承旧档（省略 risk 按 T2）；非 build 入口仍未声明时继承。
   const second = await phase({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK });
-  assert.equal(second.risk.tier, 'T1', '未声明时继承本会话风险档');
+  assert.equal(second.risk.tier, 'T2', '进 build 省略 risk 按 T2（不继承旧档）');
   const after = JSON.parse(readFileSync(join(cwd, WORK_ITEMS_REL), 'utf8'));
   assert.equal(after.currentPhase.phase, 'build');
-  assert.equal(after.currentPhase.risk.tier, 'T1');
-  assert.equal(after.currentPhase.risk.source, 'declared', '继承档保留来源');
+  assert.equal(after.currentPhase.risk.tier, 'T2');
+  const third = await phase({ phase: 'verify', contract_check: CONTRACT_CHECK });
+  assert.equal(third.risk.tier, 'T2', '非 build 入口仍未声明时继承本会话档');
 });
 
 test('旧台账缺 risk：relay_status/relay_work_items 保持 absent（不伪造 T2）', async () => {
