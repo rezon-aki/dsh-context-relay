@@ -3092,8 +3092,20 @@ test('live sidebar settings: 只剩 threshold；超预算切 phase 由面板而�
   const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
   assert.equal(report.lead.band, 'ok', 'sidebar threshold 70% moves 40% usage into the ok band');
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40 };
-  // 超预算 + 未预设面板 → relay_phase 抛错（旧 autoPhase 已不存在）
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } }), (error) => /阶段切换未完成/.test(error.message) && String(error.code).startsWith('band') && !/band=/.test(error.message), 'band 拒绝也是四段 human、不贴内部键');
+  // 超预算 + 未预设面板 → relay_phase 抛结构化内部事实（旧 autoPhase 已不存在）。
+  // 0.14.0-dev W2：拒绝路径不再产四段 human 用户段；message 保留 band= 排障细节，结构化字段给 effects/retryable/next。
+  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } }), (error) => {
+    assert.match(error.message, /阶段切换未完成/);
+    assert.match(error.message, /band=organize/, 'message 保留内部排障细节');
+    assert.ok(String(error.code).startsWith('band'), 'code 带 band 前缀');
+    assert.equal(error.human, undefined, '无 human 用户段');
+    assert.equal(error.user, undefined, '无 user 用户段');
+    assert.match(error.facts.effects, /零副作用/, '拒绝路径零副作用');
+    assert.equal(error.facts.retryable, true, '结构化 retryable');
+    assert.ok(typeof error.facts.next === 'string' && error.facts.next !== '', '结构化 next');
+    assert.doesNotMatch(error.message, /\[给用户\]|你看到什么：/, 'message 不贴用户段');
+    return true;
+  }, 'band 拒绝返回内部事实（无用户段）');
   // 面板一次性默认操作「继续」→ 放行
   updatePanelState(session.id, { defaultOperation: 'continue' });
   const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });

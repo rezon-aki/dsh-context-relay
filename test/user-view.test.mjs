@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -171,7 +171,7 @@ test('status/phase：内部事实与下一步，无用户段；teammate 不返�
   assert.match(tools.get('relay_phase').parameters.properties.user_gate.properties.report.description, /三问/);
 });
 
-function handoffHarness(cwd, { jobs } = {}) {
+function handoffHarness(cwd, { jobs, agents, sessionId = 'old' } = {}) {
   clearPanelMemory(); configurePanelStore({ panelPath: join(cwd, 'panel.json') });
   const calls = [];
   const inbox = { nextTurn: [], nextStep: [] };
@@ -182,13 +182,13 @@ function handoffHarness(cwd, { jobs } = {}) {
     cancel() { inbox.nextTurn.length = 0; },
   };
   const services = {
-    agents: { async create() { calls.push('create'); return { agent: child, async dispose() { calls.push('dispose'); } }; }, get: () => child },
+    agents: agents ?? { async create() { calls.push('create'); return { agent: child, async dispose() { calls.push('dispose'); } }; }, get: () => child },
     agentPresets: { async mount() {} },
     jobs: jobs ?? { list: () => [], kill() { calls.push('kill'); } },
     workspaceRegistry: { async resolveByPath() { return { id: 'ws', async attachSession() {} }; } },
   };
   const ctx = { get: (name) => services[name], logger: { warn() {}, info() {} }, on: () => () => {}, effect: (fn) => fn() };
-  const session = { id: 'old', header: { cwd }, snapshotEvents: () => [], requestHeader: () => undefined };
+  const session = { id: sessionId, header: { cwd }, snapshotEvents: () => [], requestHeader: () => undefined };
   const tool = createRelayHandoffTool({ ctx, currentThresholds: () => ({ baseline: 0.35 }), presetId: 'relay', inheritOnHandoff: false, workItems: { enabled: false } });
   return { tool, session };
 }
@@ -257,4 +257,56 @@ test('handoff：预接受失败仍是内部错误，不伪造部分成功', asyn
   assert.match(rendered, /可否重试：否/);
   assert.match(rendered, /先向用户取得明确 Go\/No-go/);
   assert.doesNotMatch(rendered, FORBIDDEN);
+});
+
+test('handoff：预接受、写盘后失败——effects 非空/不可重试/交接单可见，不伪造零副作用', async () => {
+  resetShared();
+  const cwd = tmpCwd();
+  const { tool, session } = handoffHarness(cwd, {
+    sessionId: 'session-preaccept-write-fail',
+    agents: { async create() { throw new Error('create boom'); } },
+  });
+  const result = await tool.execute({ human_approved: true, status: { goal: 'create fail', next_actions: ['finish'] } }, { agent: { session, options: {} } });
+  assert.equal(result.ok, false, JSON.stringify(result));
+  assert.equal(result.code, 'session-create-failed');
+  assert.notEqual(result.partial, true, '预接受失败不是部分成功');
+  assert.ok(typeof result.handoffPath === 'string' && result.handoffPath !== '', '带交接单路径');
+  assert.match(result.handoffPath, /handoff-\d+\.md$/, '交接单路径是已写盘文件');
+  assert.equal(existsSync(result.handoffPath), true, '交接单确实已写盘');
+  assert.ok(typeof result.effects === 'string' && result.effects !== '', 'effects 非空');
+  assert.doesNotMatch(result.effects, /零副作用|没有产生任何改动/, '不伪称零副作用');
+  assert.ok(result.effects.includes('交接单已写盘') && result.effects.includes(result.handoffPath), 'effects 说明交接单已写盘');
+  assert.match(result.effects, /创建失败\/半创建|没有建出新会话/, 'effects 说明没有可用新会话');
+  assert.match(result.effects, /旧会话仍活跃/, 'effects 说明旧会话仍活跃');
+  assert.equal(result.retryable, false, '写盘后失败不可原地重试');
+  assert.ok(typeof result.next === 'string' && /不要重复 relay_handoff/.test(result.next), '恢复动作明确不重复交接');
+  assert.equal(result.facts.effects, result.effects, 'facts 与顶层 effects 同源');
+  assert.equal(result.user, undefined);
+  assert.equal(result.human, undefined);
+  const rendered = renderOf(tool, result);
+  assert.ok(rendered.startsWith(INTERNAL_ERROR_MARK));
+  assert.match(rendered, /交接单：/);
+  assert.ok(rendered.includes(result.handoffPath), 'render 显示 handoffPath');
+  assert.match(rendered, /事实：/, 'render 显示 summary');
+  assert.match(rendered, /已经发生：/);
+  assert.match(rendered, /可否重试：否/);
+  assert.doesNotMatch(rendered, /零副作用/);
+  assert.doesNotMatch(rendered, FORBIDDEN);
+});
+
+test('W2 schema：status/phase/collect/handoff 的 output.schema 声明事实形状（不再只是 object）', async () => {
+  resetShared();
+  const { ctx, tools } = fakeCtx();
+  apply(ctx, {});
+  const { collect } = collectHarness(tmpCwd(), 'session-w2-schema');
+  const { tool: handoff } = handoffHarness(tmpCwd());
+  const fields = ['ok', 'status', 'phase', 'effects', 'retryable', 'next', 'evidence', 'risk', 'facts', 'summary'];
+  for (const [name, tool] of [['relay_status', tools.get('relay_status')], ['relay_phase', tools.get('relay_phase')], ['relay_collect', collect], ['relay_handoff', handoff]]) {
+    assert.ok(tool !== undefined, name + ' 存在');
+    assert.ok(tool.output?.schema !== undefined, name + ' 有 output.schema');
+    assert.equal(tool.output.schema.type, 'object', name + ' schema 类型');
+    assert.equal(tool.output.schema.additionalProperties, true, name + ' 允许工具扩展字段');
+    for (const field of fields) assert.ok(field in (tool.output.schema.properties ?? {}), name + ' schema 缺事实字段: ' + field);
+    assert.doesNotMatch(JSON.stringify(tool.output.schema), /用户可见|给用户正文/);
+  }
 });

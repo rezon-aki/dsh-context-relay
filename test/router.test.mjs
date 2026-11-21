@@ -147,7 +147,7 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER ≤2250 / TEAMMATE ≤1320', () => {
+test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
   // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
@@ -156,8 +156,9 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER �
   // A1 actor 化：Lead 面 checkpoint/freshen 必须写「发消息让队友自己执行」→ ROUTER 实测 2,028，上限随实测到 2,060（硬约束不删）。
   // v0.13 D2/D5：用户汇报默认三问 + 来源约束 + 架构师机制/协议诊断 → PROTOCOL 实测 7,236、ROUTER 1,976？按实测上调（硬约束不删）。
   // v0.13 fix5（解释口径）：ROUTER +50 → 2,246（上限 2,250）；TEAMMATE +18 → 1,311（上限 1,320）。
-  assert.ok(PROTOCOL_TEXT.length <= 7300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
-  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2250, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
+  // 0.14.0-dev W1/W2：协议补风险档免门矩阵/裁决卡/工具只给内部事实 → PROTOCOL 8,074、ROUTER 2,395（预算按实测+~1% 上调）。
+  assert.ok(PROTOCOL_TEXT.length <= 8200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2450, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
   // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
@@ -213,7 +214,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤7300 / ROUTER �
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
   const routerRequired = [
-    '用户汇报规范', '你看到什么：', '要你做什么：', '有什么影响：', '四段', '只提醒不拒绝', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
+    '用户汇报规范', '你看到什么：', '要你做什么：', '有什么影响：', '默认三问', '只给 warning', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
     "不设自做额度",
     "用户交互、决策、派活、验收抽样",
     "验收抽样（≤3 次/phase",
@@ -297,7 +298,7 @@ test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（
   }
 });
 
-test('v0.9.0 批次4 P3：root 常驻合计预算（≤12500 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
+test('v0.9.0 批次4 P3：root 常驻合计预算（≤14300 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
   // 本条是「文本资产自身」的常量合计预算；C11/A-09 起 root 实际注入量以 apply 装配实测快照为准
   // （test/budget-snapshot.test.mjs 的 ROLE_SNAPSHOT.lead），两者互为交叉校验。
   const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
@@ -307,7 +308,8 @@ test('v0.9.0 批次4 P3：root 常驻合计预算（≤12500 且 ≥11000，防�
   // v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 11,704 → 上限同步到 11,720。
   // w1 设计门回显/深度模板（PROTOCOL +534）后实测 12,250 → 上限同步到 12,400。
   // A1 actor 化（Lead 面 checkpoint/freshen 改队友执行）后实测 12,403 → 上限 12,500。
-  assert.ok(resident <= 12850, 'root 常驻合计超预算: ' + resident);
+  // 0.14.0-dev W1/W2 后实测 14,098（PROTOCOL 8,074 / ROUTER 2,395 / TEAM_LEAD 933）→ 上限 14,300。
+  assert.ok(resident <= 14300, 'root 常驻合计超预算: ' + resident);
   assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
 });
 
@@ -345,7 +347,8 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
 
 test('v0.3.2/v0.9.0 批次4 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
   // 批次4 P3：TEAM_LEAD 796→614（删与 ROUTER/base 重复的「默认 4 人小队」与「不轮询」段），预算 = 实测+50 向上取整。
-  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 670, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
+  // 0.14.0-dev W1/W2：架构师例外（只 checkpoint，Lead 用 relay_architect fresh）后实测 933 → 上限 950。
+  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 950, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
   for (const phrase of ['队友是长期资产', 'relay_team_status', 'relay_checkpoint', 'relay_renew', '没有 checkpoint 不换代', 'escalation', 'ledger/roster']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
@@ -405,7 +408,8 @@ test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，
   // 预算与短语：v0.10.0 删掉退役档（压缩→新会话/两段式）句与 LONG 派生后，base 仍承载全部硬约束。
   // v0.11 P0-E 容量线 55% 后实测 6,490；v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 6,552 → 预算同步到 6,560。
   // w1 设计门回显/深度模板后实测 7,086 → 预算同步到 7,200；v0.13 D2 三问后实测 7,236 → 7,300。
-  assert.ok(PROTOCOL_TEXT.length <= 7300, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  // 0.14.0-dev W1/W2（风险档矩阵/裁决卡/内部事实）后实测 8,074 → 预算 8,200。
+  assert.ok(PROTOCOL_TEXT.length <= 8200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision']) {
     assert.ok(!PROTOCOL_TEXT.includes(retiredPhrase), '退役句不得回到常驻协议: ' + retiredPhrase);
   }
@@ -770,9 +774,12 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承', '专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
     assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
   }
-  for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', 'relay_freshen({reset:true, brief:新任务})', '不改产品代码', '**设计门材料**', 'design_gate{path,user_approved:true,ask_ref', '未确认只交付文档、不开工', '验收默认最小必要', '重型验证须用户明确授权']) {
+  // 0.14.0-dev W1 新契约：架构师只写 checkpoint，清空由 Lead 用 relay_architect({mode:'fresh'}) 新开代；
+  // 架构师没有 relay_freshen，不再要求它自己 freshen。
+  for (const phrase of ['低上下文', '只读必须的上下文', '.scratch/context-relay/architecture/', '待决策', '报 Lead', 'relay_checkpoint', '不要自行 freshen', '只写 checkpoint', "relay_architect({mode:'fresh'", '不改产品代码', '**设计门材料**', 'design_gate{path,user_approved:true,ask_ref', '未确认只交付文档、不开工', '验收默认最小必要', '重型验证须用户明确授权']) {
     assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_WORKER 缺短语: ' + phrase);
   }
+  assert.ok(!ARCHITECT_WORKER_PROTOCOL_TEXT.includes('relay_freshen({reset:true'), '架构师不执行 freshen（清空由 Lead 走 relay_architect fresh）');
   assert.ok(!ARCHITECT_WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });
 

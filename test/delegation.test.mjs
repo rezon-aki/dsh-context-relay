@@ -460,6 +460,10 @@ test('composeDispatchBrief：5 字段 + dispatchId + reportPath + verdict 枚举
   assert.ok(lines[5].includes('task: a1'), 'brief 含回执头 task 字段');
   assert.ok(lines[5].includes('revision: d-a1-test'), 'brief 含 revision=dispatchId');
   assert.ok(lines[5].includes('verdict: done|needs-human|blocked'), 'brief 含 verdict 枚举');
+  // 0.14.0-dev W2：回执只给纯事实，不再要求 worker 写「给用户正文/## 用户可见/## 需要你决定」。
+  assert.ok(lines[5].includes('结论/证据(file:line)/改动/验证/未验证/风险/下一步'), 'brief 要求纯事实回执节');
+  assert.match(lines[5], /头 3 行.*是机器契约、不贴用户/, 'brief 保留头 3 行机器契约');
+  assert.doesNotMatch(brief, /给用户正文|## 用户可见|## 需要你决定/, 'brief 不再要求用户段');
   assert.match(lines[6], /^收尾：落盘后只发 1 条 ≤200 字消息给 Lead/);
   assert.ok(lines[6].includes('task-a1 report .scratch/context-relay/reports/a1.md verdict=<...>'));
 });
