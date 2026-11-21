@@ -1,5 +1,5 @@
 /**
- * v0.13 D2/D3/D5 探针：用户汇报三问 / 旧四段只 warning / user_visible 默认 false / 架构师机制诊断触发句。
+ * v0.13 D2/D3/D5 探针（0.14.0-dev 更新）：用户汇报三问 / 旧四段只 warning / 工具无用户段 / 架构师机制诊断触发句。
  * 只读纯函数与协议常量；台账探针用 tmp 工作区。
  */
 import { test } from 'node:test';
@@ -24,16 +24,18 @@ test('D2 三问：合规零 warning；旧四段只给 legacy warning（不拒）
   assert.ok(!userReportWarnings(four, { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-four-part-legacy'), '用户要细节时四段免迁移提示');
 });
 
-test('D5 协议：汇报默认三问 + 来源约束/默认沉默 + 机制/协议诊断归 architect、Lead 不自行拍', () => {
+test('D5 协议：汇报默认三问 + Lead 自写（不从工具用户段起稿）+ 机制/协议诊断归 architect', () => {
   assert.match(PROTOCOL_TEXT, /汇报默认三问/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /## 用户汇报规范（默认三问/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /来源约束.*\[给用户\]/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /没有 \[给用户\] 段就不发进度消息/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /## 用户汇报规范（Lead 是唯一对用户说话的人；默认三问）/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /工具返回只是内部事实/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /Lead 自己写三问/);
+  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /\[给用户\]/);
+  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
   assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /机制\/协议\/汇报方式的诊断与设计也先交 architect/);
   assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /Lead 不自行拍这类方案/);
 });
 
-test('D3 user_visible：默认 false 不落字段；true 原样读回', async () => {
+test('D3 用户段字段已删除：旧台账带可见标记也不落、不读回', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'relay-d3-'));
   const written = await writeWorkItems(cwd, {
     items: [
@@ -44,6 +46,5 @@ test('D3 user_visible：默认 false 不落字段；true 原样读回', async ()
   });
   assert.equal(written.ok, true, JSON.stringify(written));
   const read = readWorkItems(cwd, { scopeId: 'session-d3' });
-  assert.equal(read.items.find((item) => item.id === 'silent').user_visible, undefined, '缺字段 = false（不落）');
-  assert.equal(read.items.find((item) => item.id === 'visible').user_visible, true, 'true 持久化');
+  assert.equal(read.items.find((item) => item.id === 'visible').user_visible, undefined, '旧字段被忽略');
 });

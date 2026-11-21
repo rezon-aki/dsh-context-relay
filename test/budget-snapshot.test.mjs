@@ -183,23 +183,23 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [370, 8074],
+  relay_phase: [370, 8020],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
-  relay_work_items: [392, 3016],
+  relay_work_items: [392, 2844],
   relay_handoff: [384, 1534],
   relay_team_status: [496, 1518],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
-  relay_dispatch: [248, 1536],
+  relay_dispatch: [248, 1314],
   relay_collect: [659, 1839],
   relay_checkpoint: [338, 1207],
   relay_freshen: [416, 952],
 };
 
-/** 15 工具 schema 合计（fix3：desc 5,504 / params 21,400 / schema 26,904；v0.13 B1 maintain 后 relay_team_status desc +122 / params +367 → 5,626 / 21,767 / 27,393；v0.13 fix5 report schema 三问化 params +44）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22857, schema: 28483 };
+/** 15 工具 schema 合计（0.14.0-dev W2：删除 dispatch/work_items 用户段字段、risk 的 user_visible → params 22,409；desc 5,626；schema 28,035）。 */
+const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22409, schema: 28035 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -249,26 +249,28 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
  *   worker: 只 relay_doc（1,305）；fix3 补 lead_confirm 复用字段后 Lead 13 工具 23,991 schema（relay_phase params 7,513）。
  * v0.13 B1 维护入口（manage.maintain）：relay_team_status desc +122 / params +367（含 brief/reset）→ lead 面 +489。
  * v0.13 P1 ② review_ref：relay_phase params +517（user_gate.review_ref）；协议 PROTOCOL 7160→7200 / ROUTER 2028→2052（D3 只读例外句）。
+ * 0.14.0-dev W1/W2：协议补风险档矩阵/裁决卡、删工具用户段起稿；工具删 user_visible 字段。
+ * 实测：PROTOCOL 8,074 / ROUTER 2,395 / TEAM_LEAD 933 / ARCHITECT(worker) 845；lead schema 25,122。
  */
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 7236],
+      ['context-relay:protocol', 8074],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 1853],
-      ['context-relay:architect', 772],
-      ['context-relay:router', 2246],
-      ['context-relay:team-lead', 654],
+      ['context-relay:architect', 828],
+      ['context-relay:router', 2395],
+      ['context-relay:team-lead', 933],
     ],
-    sectionChars: 12776,
+    sectionChars: 14098,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
     toolDescChars: 4872,
     // v0.13 fix4：collect lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）。
     // v0.13 fix5：relay_phase report schema 三问化 +44；router 2196→2246。
-    toolSchemaChars: 25570,
-    totalChars: 38346,
+    toolSchemaChars: 25122,
+    totalChars: 39220,
   },
   teammate: {
     sections: [
@@ -283,23 +285,23 @@ const ROLE_SNAPSHOT = {
     tools: [...TEAMMATE_TOOL_NAMES],
     toolDescChars: 1815,
     // v0.13 fix5：relay_phase report schema 三问化 +44 同样进队友面。
-    toolSchemaChars: 13070,
-    totalChars: 14396,
+    toolSchemaChars: 13016,
+    totalChars: 14342,
   },
   architect: {
     sections: [
-      ['context-relay:protocol', 796],
+      ['context-relay:protocol', 845],
       ['context-relay:unlimited-budget', 15],
       ['context-relay:work-ledger', 0],
       ['context-relay:architect', 0],
     ],
-    sectionChars: 811,
+    sectionChars: 860,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint'],
     tools: [...ARCHITECT_TOOL_NAMES],
     toolDescChars: 683,
     toolSchemaChars: 2850,
-    totalChars: 3661,
+    totalChars: 3710,
   },
   worker: {
     sections: [

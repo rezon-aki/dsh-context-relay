@@ -307,12 +307,15 @@ test('relay_phase warn 档缺 budget_plan：拒绝且零副作用（phase/面板
   }));
   assert.match(error.message, /budget_plan/);
   assert.match(error.message, /先估计|先做预算可行性估计/);
-  // relay-audit §2.4：拒绝统一四段 human，内部键只进 error.code/facts（用户文案干净）。
-  for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) assert.ok(error.message.includes(label), '缺 ' + label);
-  assert.deepEqual(internalKeysIn(error.message), [], '拒绝文案不含内部键');
+  // W2/W3：拒绝只带可行动内部事实，不再伪装成四段用户文案。
+  assert.equal(error.human, undefined, '不产 human 用户段');
+  assert.match(error.message, /本次没有切换阶段/, 'message 只作内部事实');
   assert.equal(error.code, 'budget plan');
   assert.ok(error.facts.detail.startsWith('relay_phase refused (budget plan)'), '原始技术细节只进 facts');
-  assert.ok(Array.from(error.message).length <= 300, '拒绝文案统一 ≤300 字，实际 ' + Array.from(error.message).length);
+  assert.match(error.facts.effects, /零副作用/, '已经发生什么');
+  assert.equal(error.facts.retryable, true, '可否重试');
+  assert.ok(typeof error.facts.next === 'string' && error.facts.next !== '', '下一步');
+  assert.ok(Array.from(error.message).length <= 400, '拒绝文案有界，实际 ' + Array.from(error.message).length);
 
   const report = await h.status();
   assert.equal(report.phase, 'discover', '拒绝不切换 phase');

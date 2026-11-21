@@ -1,13 +1,10 @@
 /**
- * w3 说人话（relay-audit §2.4）：用户四段式 + 内部键黑名单。
- * 锁定：notice/状态/阶段/交接/报错的用户文案必须是四段、≤ 上限、不含内部键；
- * 机器字段只出现在 summary/facts/结构化结果。
+ * notice 四段式（插件 notice，非用户发言）+ 失败事实契约。
+ * 工具结果不再产用户段（见 user-view.test.mjs）；这里只锁 notice 文案与 fail(facts)。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  failureHumanOf, handoffHumanOf, humanParts, internalKeysIn, phaseHumanOf, renderFourPart, statusHumanOf, userViewOf,
-} from '../lib/output.js';
+import { noticeParts, internalKeysIn, renderNoticeText } from '../lib/output.js';
 import {
   NOTICE_MAX, capacityNoticeText, contextCheckText, panelChangeText, phaseBoundaryText, planeIssueOf,
   recoveryNoticeText, sentinelText, unavailableNoticeText,
@@ -15,10 +12,9 @@ import {
 import { contextCheckChoice } from '../lib/policy.js';
 import { fail } from '../lib/agent/shared.js';
 
-const FORBIDDEN = ['band=', 'headroomTo', 'dispatchId', 'revision', 'code:', 'seq', 'autoCompress'];
 const PANEL = { defaultOperation: null, autoCompress: false, autoHandoff: false, authorizeNext: false };
 
-/** 断言一段用户文案：四段齐全、内部键为零、字符 ≤ 上限。 */
+/** 断言一段 notice 文案：四段齐全、内部键为零、字符 ≤ 上限。 */
 function assertHuman(text, name, max = NOTICE_MAX) {
   for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) {
     assert.ok(text.includes(label), name + ' 缺「' + label + '」');
@@ -27,8 +23,8 @@ function assertHuman(text, name, max = NOTICE_MAX) {
   assert.ok(Array.from(text).length <= max, name + ' 超长：' + Array.from(text).length);
 }
 
-test('四段式：固定顺序 + evidence 数组归一 + 空段占位', () => {
-  const rendered = renderFourPart({
+test('notice 四段式：固定顺序 + evidence 数组归一 + 空段占位', () => {
+  const rendered = renderNoticeText({
     conclusion: '阶段已切换',
     impact: '没有额外可见影响',
     action: '按目标推进',
@@ -36,7 +32,7 @@ test('四段式：固定顺序 + evidence 数组归一 + 空段占位', () => {
   });
   assert.deepEqual(rendered.split('\n').map((line) => line.split('：')[0]), ['结论', '影响', '需要你做什么', '证据']);
   assert.match(rendered, /证据：docs\/a\.md:12；docs\/b\.md:3/);
-  assert.deepEqual(humanParts({ conclusion: 'a', impact: 'b', action: 'c' }).evidence, ['无']);
+  assert.deepEqual(noticeParts({ conclusion: 'a', impact: 'b', action: 'c' }).evidence, ['无']);
 });
 
 test('内部键黑名单：band= / headroomTo / dispatchId / revision / code: / seq / autoCompress 全部命中', () => {
@@ -64,6 +60,7 @@ test('notice 正文：到线/容量/边界/面板/自查/不可用/恢复/平面
     '恢复': recoveryNoticeText({ path: '.scratch/context-relay/recovery/compaction-x.md' }),
     '恢复失败': recoveryNoticeText({ writeFailed: true, error: 'EACCES band=warn' }),
     '平面': planeIssueOf({ role: 'lead', installed: true, degradations: [{ seam: 'schedule', level: 'degraded', reason: 'list shape' }] }).text,
+    '平面-架构师': planeIssueOf({ role: 'architect', installed: true, degradations: [{ seam: 'schedule', level: 'degraded' }] }).text,
   };
   for (const [name, text] of Object.entries(notices)) assertHuman(text, name);
 });
@@ -75,65 +72,7 @@ test('notice summary 保留机器标记（band= 只进 summary）', () => {
   assert.deepEqual(internalKeysIn(summary), ['band='], '机器标记由黑名单发现，但只允许在 summary');
 });
 
-test('relay_status / relay_phase / handoff：用户段只解释（无原值/路径），human 四段无内部键，事实留在结构化字段', () => {
-  const status = statusHumanOf({
-    phase: 'build',
-    lead: { used: 36000, window: 100000, ratio: 0.36, band: 'warn' },
-    organizeCount: 0,
-    budget: { headroomToWarn: 1000, headroomToOrganize: 2000, currentPhaseCostTokens: 500 },
-    capacity: { atRisk: false, ratio: 0.36, threshold: 0.55 },
-    continue: { preset: null },
-    compaction: { count: 0, debt: false },
-    panel: { defaultOperation: null, autoCompress: true, autoHandoff: false, authorizeNext: true },
-    team: [],
-    workItems: { relativePath: '.scratch/context-relay/work-items.json' },
-  });
-  assertHuman(renderFourPart(status), 'relay_status.human', 3000);
-  const statusUser = userViewOf(status);
-  assert.ok(statusUser !== null, 'status 用户段可投影');
-  const statusText = [statusUser.see, statusUser.need, statusUser.impact].join('；');
-  assert.doesNotMatch(statusText, /%|\btokens\b|已压缩 \d/, 'status 用户段不给百分比/token/计数');
-  assert.match(statusText, /余量/, 'status 用户段解释余量够不够');
-
-  const phase = phaseHumanOf({
-    phase: 'build',
-    previous: 'decide',
-    band: 'warn',
-    budget: { band: 'warn', headroomToOrganize: 1200, lastPhaseCostTokens: 3000 },
-    ledger: { done: 1, planned: 2, pending: 1 },
-    design: { path: '.scratch/context-relay/architecture/x.md' },
-    hint: '先摸清事实与边界，再开工',
-  });
-  assertHuman(renderFourPart(phase), 'relay_phase.human', 3000);
-  const phaseUser = userViewOf(phase);
-  assert.ok(phaseUser !== null, 'phase 用户段可投影');
-  const phaseText = [phaseUser.see, phaseUser.need, phaseUser.impact].join('；');
-  assert.doesNotMatch(phaseText, /\btokens\b|工作台账|分点 \d/, 'phase 用户段不给 token/台账计数');
-  assert.match(phaseUser.see, /构建/, 'phase 用户段说明这步在做什么');
-  assert.match(phaseUser.see, /验证/, 'phase 用户段说明下一步');
-
-  const handoff = handoffHumanOf({
-    title: '接力测试',
-    sessionId: 'session-internal-id',
-    handoffPath: 'handoff-x.md',
-    caps: { bytes: { used: 1024, limit: 16384 }, fullBytes: 20480 },
-    progress: { updated: true, path: '.scratch/context-relay/progress.md' },
-    handover: {
-      inventory: { jobs: [{ id: 'j1' }], schedules: [], teammates: [], subagents: [], skipped: [] },
-      cleanup: { jobs: [{ id: 'j1', action: 'killed' }], schedules: [], teammates: [], subagents: [], errors: [], skipped: [] },
-    },
-  });
-  assertHuman(renderFourPart(handoff), 'relay_handoff.human', 3000);
-  assert.doesNotMatch(renderFourPart(handoff), /session-internal-id/, 'human 不贴 session id');
-  const handoffUser = userViewOf(handoff);
-  assert.ok(handoffUser !== null, 'handoff 用户段可投影');
-  const handoffText = [handoffUser.see, handoffUser.need, handoffUser.impact].join('；');
-  assert.doesNotMatch(handoffText, /\.scratch\/|KB/, 'handoff 用户段不给内部路径/原始数字');
-  assert.match(handoffText, /progress\.md/, 'handoff 用户段给关键文件名');
-  assert.match(handoffText, /交接单/, 'handoff 用户段说明交接文件');
-});
-
-test('fail()：统一失败文案 ≤300 字四段；技术细节/内部键只留结构化字段', () => {
+test('fail()：失败必须带 effects/reason/retryable/next，不产 human/user 用户段', () => {
   const result = fail(
     'below-threshold',
     'not organized: band=organize · headroomToOrganize=1200 · dispatchId=d-1 · revision=2 · code:below · seq=3 · autoCompress=on',
@@ -142,9 +81,24 @@ test('fail()：统一失败文案 ≤300 字四段；技术细节/内部键只�
   assert.equal(result.ok, false);
   assert.equal(result.code, 'below-threshold');
   assert.match(result.error, /band=organize/, '结构化 error 保留排障原文');
-  assertHuman(renderFourPart(result.human), 'fail.human', 300);
-  assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
-  // 直接调用（无四段入参）也统一成四段，而不是单行技术报错。
-  const bare = failureHumanOf('revision=3 seq=9 code:x');
-  assertHuman(renderFourPart(bare), 'failureHumanOf', 300);
+  assert.equal(result.reason, result.error);
+  assert.match(result.effects, /零副作用|没有产生/);
+  assert.equal(result.retryable, true);
+  assert.match(result.next, /重试/);
+  assert.equal(result.facts.code, 'below-threshold');
+  assert.equal(result.facts.retryable, true);
+  assert.equal(result.human, undefined);
+  assert.equal(result.user, undefined);
+  const partial = fail('handoff-cleanup-failed', 'Destination accepted; cleanup failed', {
+    partial: true,
+    sessionId: 'session-new',
+    handoffPath: 'handoff.md',
+    effects: '新会话已创建；旧会话清理未完成。',
+    retryable: false,
+    next: '按 recovery 完成清理；不要重复交接。',
+    facts: { partial: true, unclean: ['job j1'] },
+  });
+  assert.equal(partial.partial, true);
+  assert.equal(partial.retryable, false);
+  assert.deepEqual(partial.facts.unclean, ['job j1']);
 });

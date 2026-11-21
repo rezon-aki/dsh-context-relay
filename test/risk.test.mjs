@@ -23,8 +23,8 @@ test('classifyRisk：T0 文档/≤20 行；T1 单模块；T2 公共面；未知�
   assert.equal(classifyRisk({ paths: ['docs/a.md'], lines: 10, reason: 'docs' }).source, 'derived');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['lib/x.js'] }).tier, 'T1', '自动升级优先于声明');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['scripts/x.mjs'], lines: 3 }).tier, 'T1', 'T0 声明不能覆盖非文档路径');
-  assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 3, userVisible: true }).tier, 'T2', '用户可见 → T2');
-  assert.match(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 3, userVisible: true }).reasons.join(';'), /user-visible/);
+  assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 3, publicSurface: true }).tier, 'T2', '用户可见/公开面 → T2');
+  assert.match(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], lines: 3, publicSurface: true }).reasons.join(';'), /public surface/);
   assert.equal(classifyRisk({ paths: ['lib/agent/tools.js'], lines: 5 }).tier, 'T2', '工具 schema 公开面 → T2');
   assert.equal(classifyRisk({ paths: ['lib/index.js'], lines: 5 }).tier, 'T2', 'preset/seam 公开面 → T2');
   assert.equal(classifyRisk({ tier: 'T0', reason: 'docs', paths: ['docs/a.md'], publicSurface: true }).tier, 'T2');

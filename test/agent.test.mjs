@@ -11,7 +11,7 @@ import { createDelegationTools } from '../lib/agent/delegation-tools.js';
 import { ROUTER_DENY_TOOLS } from '../lib/agent/protocol.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
-import { INTERNAL_DETAILS_MARK, MODEL_STATE_MARK, internalKeysIn, renderFourPart, renderUserBlock, userViewOf } from '../lib/output.js';
+import { MODEL_STATE_MARK } from '../lib/output.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
@@ -438,9 +438,9 @@ test('relay_status reports phase/band/advice', async () => {
   assert.equal(report.phase, 'discover');
   assert.equal(report.lead.band, 'ok');
   assert.match(report.text, /phase: discover/);
-  // w3 说人话：状态结果带用户四段 human；内部事实进 facts，不混进 human。
-  assert.deepEqual(Object.keys(report.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
-  assert.deepEqual(internalKeysIn(renderFourPart(report.human)), []);
+  // W2/D3：状态结果只带内部事实，不产 human/user 用户段。
+  assert.equal(report.human, undefined);
+  assert.equal(report.user, undefined);
   assert.equal(report.facts.phase, 'discover');
   // 2026-10-25：organize 档 advice 只挡「开新 phase」，并要求收尾三清单
   const overSession = fakeSession({ id: 'session-advice-organize', seq: 0 });
@@ -1268,9 +1268,9 @@ test('relay_handoff creates a new root session, bounded handoff, and records it 
   assert.match(result.summary, /定时任务 3→3 已迁移/);
   assert.match(result.summary, /队友 1→1 已中断/);
   assert.match(result.summary, /子智能体 2→1 已中断/);
-  // w3 说人话：handoff 结果带用户四段 human（sessionId 等内部字段只留结构化结果/facts）。
-  assert.deepEqual(Object.keys(result.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
-  assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
+  // W2/D3：handoff 结果只带内部事实，不产 human/user 用户段。
+  assert.equal(result.human, undefined);
+  assert.equal(result.user, undefined);
   assert.equal(result.facts.sessionId, 'session-new');
   // handoff 文件追加交接清单 + 清理结果（首条消息有 handoffPath 指路）
   const handoffFile = readFileSync(result.handoffPath, 'utf8');
@@ -2924,7 +2924,7 @@ test('v0.9.0 批次3 集成：build 分点全流程 dispatch→回执→collect�
   assert.equal(collected.ok, true, JSON.stringify(collected));
   assert.equal(collected.status, 'collected');
   assert.equal(collected.verdict, 'done');
-  assert.match(collected.digest, /度量接线完成/, 'user_visible 未标（默认 false）→ digest 仍是技术摘要');
+  assert.match(collected.digest, /度量接线完成/, 'collect 只回技术摘要，不再有用户段');
   assert.equal(collected.user, undefined, '默认静默：不产用户段');
   assert.ok(!collected.text.includes('## 证据'), 'collect 只回 digest，不返回报告正文');
   const doneItem = readWorkItems(cwd, { scopeId: leadSessionId }).items.find((item) => item.id === 'wire-metrics');
@@ -3440,12 +3440,10 @@ test('v0.9.0 P2：relay_phase 成功结果带人类可读 text，output.render �
   assert.doesNotMatch(result.text, /^warnings: /m, '非 ship 缺 contract_check 不再 warning');
   assert.ok(!result.text.startsWith('{'), 'text 不是 JSON 包络');
   const rendered = tool.output.render({}, result);
-  // v0.13 P4（D1）：带 human 的工具 render 默认先给 [给用户] 三问，再 [内部细节] + text（模型状态不丢）。
-  const userBlock = renderUserBlock(userViewOf(result.human));
-  assert.deepEqual(rendered, [{ type: 'text', text: userBlock + '\n\n' + INTERNAL_DETAILS_MARK + '\n' + result.text }], 'render = [给用户] 三问 + [内部细节] + text');
-  // w3 说人话：phase 结果带用户四段 human；内部事实（band/headroom）只留 facts。
-  assert.deepEqual(Object.keys(result.human).sort(), ['action', 'conclusion', 'evidence', 'impact']);
-  assert.deepEqual(internalKeysIn(renderFourPart(result.human)), []);
+  // W2/D3：phase render 只给内部事实标记 + text。
+  assert.deepEqual(rendered, [{ type: 'text', text: MODEL_STATE_MARK + '\n' + result.text }], 'render = 内部事实 + text');
+  assert.equal(result.human, undefined);
+  assert.equal(result.user, undefined);
   assert.equal(result.facts.phase, 'build');
   assert.ok(!rendered[0].text.startsWith('{'), 'render 非 JSON');
   // 防御性 fallback：无 text 的旧值仍回 JSON（不丢结构化事实）。
@@ -4343,9 +4341,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // v0.10.x 完成确认门：relay_work_items 条目新增 lead_confirm{no_drift,no_missing,no_regression} 结构化 schema
   // → 实测 10540，预算按实测+~1.5% 上调到 10700（#68：只调预算，不删语义/约束）。
   // v0.11 P0-C：relay_phase 新增 reopen{reason,user_approved}（设计 §4.4 预计 +250B）→ 实测 10966。
-  // w2（relay-audit §2.5.2）：relay_phase 新增 risk{tier,reason,paths,lines,public_surface,data_format,permissions,irreversible,external,user_visible} + diff_hash → 合计 12531，预算按实测+~1.3% 上调到 12700。
+  // w2（relay-audit §2.5.2）：relay_phase 新增 risk{tier,reason,paths,lines,public_surface,data_format,permissions,irreversible,external} + diff_hash → 合计 12531，预算按实测+~1.3% 上调到 12700。
   // w1（relay-docs-v2 §2.5 P5）：design_gate 新增 ask_ref/not_doing 回显字段 → 合计 12988，预算按实测+~0.9% 上调到 13100。
-  // fix-p1（risk 判档）：T0 实际 diff 证据、userVisible/lib 公开面升级口径写进 relay_phase.risk/diff_hash 描述 → 合计 13344，
+  // fix-p1（risk 判档）：T0 实际 diff 证据、publicSurface/lib 公开面升级口径写进 relay_phase.risk/diff_hash 描述 → 合计 13344，
   // 预算按实测+~1.2% 上调到 13500（#68：只调预算，不删语义/约束，仍逐条受 ≤400/单行约束）。
   // fix3（confirmKey 契约）：relay_work_items.lead_confirm 补 auto/confirmKey/diffHash + 复用 anyOf → 实测 14022，
   // 预算按实测+~2% 上调到 14300。
@@ -4379,7 +4377,7 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // v0.11 P0-B：relay_team_status 新增 include_legacy/include_retired/manage{...} → 实测 4732，预算按实测+~1.5% 上调到 4800。
   // fix3：relay_collect.lead_confirm 补 auto/confirmKey/diffHash → 实测 5219，预算按实测+~3.5% 上调到 5400。
   // v0.13 B1：manage.maintain 新增 brief/reset/action 枚举 → 实测 5586，预算按实测+~2% 上调到 5700。
-  // v0.13 D3：dispatch/work_items 加 user_visible → 实测 5943，预算按实测+~2% 上调到 6050。
+  // 0.14.0-dev：dispatch/work_items 删除用户段字段 → lead-only 参数预算按实测重定。
   assert.ok(leadParameterChars <= 6050, 'lead-only 5 条参数总字符 <=6050（v0.13 D3 实测 5943），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
@@ -5125,7 +5123,7 @@ test('P1-1 复用仍跑 user_gate 校验：heavy 授权 / questions / report 不
   await assert.rejects(call({ phase: 'ship', contract_check: CONTRACT_CHECK, diff_hash: 'h1', user_gate: { review: '' } }), /report/, '复用仍要求 report');
 });
 
-test('P1-3 风险判档：T0 只给 reason 降 T1；userVisible 升 T2 强制设计门', async () => {
+test('P1-3 风险判档：T0 只给 reason 降 T1；publicSurface 升 T2 强制设计门', async () => {
   resetSharedState();
   const session = fakeSession({ id: 'session-p1-risk', seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
@@ -5138,7 +5136,7 @@ test('P1-3 风险判档：T0 只给 reason 降 T1；userVisible 升 T2 强制设
   const uv = fakeSession({ id: 'session-p1-risk-uv', seq: 0 });
   const uvTools = applyAgent(fakeServices({ session: uv }).services).tools;
   const call2 = (args) => uvTools.get('relay_phase').execute(args, { agent: { session: uv, options: {} } });
-  await assert.rejects(call2({ phase: 'build', risk: { tier: 'T0', reason: 'README 文案', paths: ['README.md'], lines: 2, user_visible: true } }), /设计门/, 'userVisible 升 T2 → 设计门强制');
+  await assert.rejects(call2({ phase: 'build', risk: { tier: 'T0', reason: 'README 文案', paths: ['README.md'], lines: 2, public_surface: true } }), /设计门/, 'publicSurface 升 T2 → 设计门强制');
   // fix-p1b：证据校验移到派生之后——只传 paths 的派生探针不再落 T0。
   const dv = fakeSession({ id: 'session-p1-risk-derived', seq: 0 });
   const dvTools = applyAgent(fakeServices({ session: dv }).services).tools;

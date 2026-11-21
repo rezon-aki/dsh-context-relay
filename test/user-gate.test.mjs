@@ -217,14 +217,16 @@ test('contract_check：ship 必填——缺失即拒，带齐放行', async () =
   assert.equal(shipped.phase, 'ship');
 });
 
-test('relay_phase 拒绝统一四段 human：结论/影响/需要你做什么/证据，无内部键，code 只进结构化字段', async () => {
-  const h = harness('session-refusal-human');
+test('relay_phase 拒绝：可行动内部事实（code/facts/effects/retryable/next），零副作用', async () => {
+  const h = harness('session-refusal-facts');
   const error = await h.call({ phase: 'build', contract_check: CONTRACT_CHECK }).then(() => undefined, (err) => err);
   assert.ok(error instanceof Error);
-  for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) assert.ok(error.message.includes(label), '缺 ' + label);
-  assert.deepEqual(internalKeysIn(error.message), [], '用户文案不含内部键');
   assert.equal(error.code, 'design gate');
   assert.ok(error.facts.detail.startsWith('relay_phase refused (design gate)'), '原始细节只进 facts');
-  assert.ok(error.human.conclusion.includes('设计'), 'human 四段可被 UI 复用');
+  assert.match(error.facts.effects, /零副作用/, '已发生什么');
+  assert.equal(error.facts.retryable, true, '能否重试');
+  assert.ok(typeof error.facts.next === 'string' && error.facts.next !== '', '下一步');
+  assert.equal(error.human, undefined, '不再产 human 用户段');
+  assert.match(error.message, /本次没有切换阶段/, 'message 只作内部事实');
   assert.equal((await h.status()).phase, 'discover', '拒绝零副作用（不切 phase）');
 });
