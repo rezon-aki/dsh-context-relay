@@ -198,14 +198,25 @@ function createEnv(options = {}) {
     throw new Error('unknown client module: ' + name);
   };
   const captured = { exports: null };
+  // v0.14 popover 顶层回归：按选项伪造 popover API / body 计算样式 / body rect / 滚动。
+  const bodyStyle = options.bodyStyle ?? { position: 'static', willChange: 'auto', transform: 'none', perspective: 'none', filter: 'none', backdropFilter: 'none', contain: 'none' };
+  const bodyRect = options.bodyRect ?? { left: 0, top: 0, right: 1200, bottom: 800, width: 1200, height: 800 };
+  const fakeBody = { tag: 'body', getBoundingClientRect: () => bodyRect, setAttribute: () => {} };
   const fakeWindow = {
-    innerWidth: 1200, innerHeight: 800,
+    innerWidth: options.innerWidth ?? 1200, innerHeight: options.innerHeight ?? 800,
+    scrollX: options.scrollX ?? 0, scrollY: options.scrollY ?? 0,
+    getComputedStyle: () => bodyStyle,
     addEventListener: add(listeners.window), removeEventListener: remove(listeners.window),
     requestAnimationFrame: (fn) => { fn(); return 1; }, cancelAnimationFrame: () => {},
     __ModuleLoader__: { load: ({ factory }) => { captured.exports = factory(requireStub); } },
   };
+  if (options.topLayer === true) {
+    fakeWindow.HTMLElement = function HTMLElement() {};
+    fakeWindow.HTMLElement.prototype.showPopover = function(){ this.__shown = true; };
+    fakeWindow.HTMLElement.prototype.hidePopover = function(){ this.__shown = false; };
+  }
   const fakeDocument = {
-    visibilityState: 'visible', body: { tag: 'body' }, head: { appendChild: () => {} },
+    visibilityState: 'visible', body: fakeBody, head: { appendChild: () => {} },
     querySelector: () => null,
     createElement: () => ({ dataset: {}, textContent: '' }),
     addEventListener: add(listeners.document), removeEventListener: remove(listeners.document),
@@ -274,6 +285,93 @@ async function openPopover(instance) {
   await instance.flush();
   return byClass(instance.tree, 'relay-v3-popover')[0];
 }
+
+/** 给 chip 包裹层（order=1/2）塞一个视口 rect 桩，供 layout 回归用。 */
+function setChipRect(instance, rect, order = 1) {
+  const wrapper = find(instance.tree, (node) => node.props?.style?.order === order)[0];
+  assert.ok(wrapper, 'chip 包裹层（order=' + order + '）');
+  assert.ok(wrapper.props.ref !== undefined && wrapper.props.ref !== null, '包裹层 ref 存在');
+  wrapper.props.ref.current = { getBoundingClientRect: () => rect };
+}
+
+test('panel top layer：popover=manual + showPopover/hidePopover（RelayPanel 与台账面板同修；坐标仍按视口）', async () => {
+  // 真 bug 场景：宿主 body 有 will-change:transform；top layer 仍按视口坐标准确贴 chip。
+  const env = createEnv({ topLayer: true, bodyStyle: { position: 'static', willChange: 'transform', transform: 'none', perspective: 'none', filter: 'none', backdropFilter: 'none', contain: 'none' } });
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  const RelayPanel = env.slots['conversation.composer.dock'];
+  const instance = env.mount(RelayPanel, { sessionId: 'A' });
+  await instance.flush();
+  setChipRect(instance, { left: 100, top: 200, width: 200, height: 30 });
+  const panel = await openPopover(instance);
+  assert.ok(panel);
+  assert.equal(panel.props.popover, 'manual', 'popover 属性 = manual');
+  assert.equal(panel.props.style.position, 'fixed', 'top layer 内仍用视口 fixed 坐标');
+  assert.equal(panel.props.style.left, 30, '100 + 100 - 340/2；水平居中');
+  assert.equal(panel.props.style.bottom, 608, '800 - 200 + 8；贴 chip 上方');
+  assert.equal(panel.props.style.top, 'auto');
+  assert.equal(panel.props.style.right, 'auto');
+  const node = { attrs: {}, shown: false, setAttribute(name, value) { this.attrs[name] = value; }, matches() { return false; }, showPopover() { this.shown = true; }, hidePopover() { this.shown = false; } };
+  panel.props.ref(node);
+  assert.equal(node.attrs.popover, 'manual', '进顶层前写 popover=manual');
+  assert.equal(node.shown, true, 'ref 挂载后 showPopover');
+  panel.props.ref(null);
+  assert.equal(node.shown, false, '卸载时 hidePopover');
+
+  // 台账面板同修
+  env.server.workItems = ledgerPayload();
+  const Ledger = env.slots['relay-ledger'];
+  const ledger = env.mount(Ledger, { sessionId: 'A' });
+  await ledger.flush();
+  env.pollAll();
+  await ledger.flush();
+  setChipRect(ledger, { left: 500, top: 300, width: 100, height: 30 }, 2);
+  byClass(ledger.tree, 'relay-v3-chip')[0].props.onClick();
+  await ledger.flush();
+  const ledgerPanel = byClass(ledger.tree, 'relay-v3-popover')[0];
+  assert.ok(ledgerPanel);
+  assert.equal(ledgerPanel.props.popover, 'manual');
+  assert.equal(ledgerPanel.props.style.position, 'fixed');
+  assert.equal(ledgerPanel.props.style.left, 360, '500 + 50 - min(380,1176)/2');
+  assert.equal(ledgerPanel.props.style.bottom, 508, '800 - 300 + 8');
+  const ledgerNode = { attrs: {}, shown: false, setAttribute(name, value) { this.attrs[name] = value; }, matches() { return false; }, showPopover() { this.shown = true; }, hidePopover() { this.shown = false; } };
+  ledgerPanel.props.ref(ledgerNode);
+  assert.equal(ledgerNode.attrs.popover, 'manual');
+  assert.equal(ledgerNode.shown, true);
+});
+
+test('panel 回退：无 popover API 时 absolute+body 偏移；body will-change:transform 仍贴 chip', async () => {
+  const env = createEnv({
+    bodyStyle: { position: 'static', willChange: 'transform', transform: 'none', perspective: 'none', filter: 'none', backdropFilter: 'none', contain: 'none' },
+    bodyRect: { left: 0, top: 0, right: 1200, bottom: 2400, width: 1200, height: 2400 },
+    scrollY: 500,
+  });
+  env.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  const RelayPanel = env.slots['conversation.composer.dock'];
+  const instance = env.mount(RelayPanel, { sessionId: 'A' });
+  await instance.flush();
+  setChipRect(instance, { left: 100, top: 200, width: 200, height: 30 });
+  const panel = await openPopover(instance);
+  assert.ok(panel);
+  assert.equal(panel.props.popover, undefined, '不支持 popover 不写属性');
+  assert.equal(panel.props.style.position, 'absolute', 'absolute 回退');
+  assert.equal(panel.props.style.left, 30, '换算到 body 局部坐标');
+  assert.equal(panel.props.style.bottom, 2208, 'body.bottom - chip.top + 8（2400-200+8）');
+
+  // 无包含块时用 ICB（document 原点）坐标：滚动量进入 bottom，视觉仍贴 chip。
+  const env2 = createEnv({
+    bodyStyle: { position: 'static', willChange: 'auto', transform: 'none', perspective: 'none', filter: 'none', backdropFilter: 'none', contain: 'none' },
+    scrollY: 500,
+  });
+  env2.server.panel.A = { relay: true, panel: { ...PANEL_DEFAULT }, live: LIVE() };
+  const RelayPanel2 = env2.slots['conversation.composer.dock'];
+  const instance2 = env2.mount(RelayPanel2, { sessionId: 'A' });
+  await instance2.flush();
+  setChipRect(instance2, { left: 100, top: 200, width: 200, height: 30 });
+  const panel2 = await openPopover(instance2);
+  assert.equal(panel2.props.style.position, 'absolute');
+  assert.equal(panel2.props.style.left, 30, 'ICB x = viewport left + scrollX');
+  assert.equal(panel2.props.style.bottom, 108, '800 - 200 - 500 + 8');
+});
 
 test('RelayPanel：会话切换重置 popover 展开态与 layout（B-P2-13，宿主复用组件实例）', async () => {
   const env = createEnv();
