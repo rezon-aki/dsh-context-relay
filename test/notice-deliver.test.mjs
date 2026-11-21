@@ -385,7 +385,7 @@ test('M-12：队友到线 notice 不含 Lead 台账行/计数，也不教用被�
   await preStepOf(bundle)({ agent: { session: sub, inject(message) { injected.push(message); } } }, async () => undefined);
   assert.equal(injected.length, 1);
   const text = injected[0].content[0].text;
-  assert.match(text, /队友会话·到线请示/);
+  assert.match(text, /队友会话·到线提醒/);
   assert.doesNotMatch(text, /工作台账/);
   assert.doesNotMatch(text, /relay_work_items/);
   assert.doesNotMatch(text, /共 1/);

@@ -898,6 +898,54 @@ test('checkPhaseGate：phase=null 条目纳入关闸（C7/A-03 strict 不可绕�
   assert.equal(applied.find((item) => item.id === 'phased').phase, 'build');
 });
 
+test('checkPhaseGate：T2 designRef 与 ship 同口径（缺设计/缺 ref/漂移拒；legacy 放行；非 T2 不查）', () => {
+  const done = { id: 'a', title: 'A', status: 'done', phase: 'build', evidence: ['e:1'] };
+  const base = { exists: true, items: [done] };
+  // 缺 design：T2 → design-unbound。
+  const unbound = checkPhaseGate({ ...base, currentPhase: { phase: 'discover', gateVersion: 2 } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(unbound.ok, false);
+  assert.equal(unbound.code, 'design-unbound');
+  assert.match(unbound.message, /currentPhase\.design/);
+  // 早期 phase 还没有 build/verify done 交付：不因「未进 build」被 design-unbound 卡关。
+  const early = checkPhaseGate({ exists: true, currentPhase: { phase: 'discover', gateVersion: 2 }, items: [{ id: 'd', title: 'D', status: 'done', phase: 'discover', evidence: ['e:1'] }] }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(early.ok, true);
+  // done build 条目缺 designRef / 漂移：同 code，给 ids。
+  const missing = checkPhaseGate({ ...base, currentPhase: { phase: 'discover', gateVersion: 2, design: { path: 'design.md' } } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(missing.ok, false);
+  assert.deepEqual(missing.ids, ['a']);
+  const drifted = checkPhaseGate({ ...base, items: [{ ...done, designRef: 'old.md' }], currentPhase: { phase: 'discover', gateVersion: 2, design: { path: 'design.md' } } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(drifted.ok, false);
+  assert.deepEqual(drifted.ids, ['a']);
+  // 绑定一致 → 过（done 不在关闸 leftover 里）。
+  const matched = checkPhaseGate({ ...base, items: [{ ...done, designRef: 'design.md' }], currentPhase: { phase: 'discover', gateVersion: 2, design: { path: 'design.md' } } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(matched.ok, true);
+  // legacy 绑定 / 非 T2：不查设计（旧 phase 迁移放行）。
+  const legacy = checkPhaseGate({ ...base, currentPhase: { phase: 'discover', gateVersion: 2, designBinding: 'legacy' } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(legacy.ok, true);
+  // 升级前旧 phase（无 gateVersion=2）：等同 legacy，不因设计门卡关（旧台账兼容）。
+  const preDesign = checkPhaseGate({ ...base, currentPhase: { phase: 'discover' } }, { phase: 'discover', gate: 'strict', tier: 'T2' });
+  assert.equal(preDesign.ok, true);
+  const t1 = checkPhaseGate({ ...base, currentPhase: { phase: 'discover' } }, { phase: 'discover', gate: 'strict', tier: 'T1' });
+  assert.equal(t1.ok, true);
+});
+
+test('currentPhase.pins 超限：截断可见（pinsTruncated + readWorkItems.warnings），不静默', async () => {
+  const cwd = tempCwd();
+  const pins = Array.from({ length: 35 }, (_, index) => 'docs/p' + index + '.md');
+  const written = await writeWorkItems(cwd, {
+    items: [{ id: 'a1', title: 'A', status: 'open' }],
+    scopeId: 'scope-pins',
+    currentPhase: { phase: 'build', pins },
+  });
+  assert.equal(written.ok, true, JSON.stringify(written));
+  const read = readWorkItems(cwd, { scopeId: 'scope-pins' });
+  assert.equal(read.currentPhase.pins.length, 32, '只保留 PIN_LIMIT 条');
+  assert.deepEqual(read.currentPhase.pinsTruncated, { total: 35, kept: 32, dropped: 3 }, '截断事实落账可读');
+  assert.ok(Array.isArray(read.warnings) && read.warnings.length > 0, '读侧给可见 warning');
+  assert.match(read.warnings[0], /pins 超上限/);
+  assert.match(read.warnings[0], /35/);
+});
+
 test('readWorkItems migrateLegacy:false：只读路径不迁移写盘（C14）；默认仍迁移', async () => {
   const scopeId = 'scope-readonly';
   const writeLegacy = (cwd) => {

@@ -65,8 +65,9 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
     panelPrevious: undefined,
   }));
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^\[插件状态\]\n队友会话·到线请示/);
-  assert.match(plan.notice.text, /队友会话·到线请示/);
+  assert.match(plan.notice.text, /^\[插件状态\]\n队友会话·到线提醒/);
+  assert.match(plan.notice.text, /队友会话·到线提醒/);
+  assert.doesNotMatch(plan.notice.text, /等答复期间|请决定|向上一级（Lead）请示/, '到线不再请示/等答复');
   assert.ok(Buffer.byteLength(plan.notice.text, 'utf8') <= NOTICE_MAX_BYTES, 'notice ≤600 B');
   assert.doesNotMatch(plan.notice.text, /band=/);
   assert.doesNotMatch(plan.notice.text, /向上一级|send_message|已自动/);

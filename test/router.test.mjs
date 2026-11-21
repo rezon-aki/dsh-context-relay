@@ -145,10 +145,11 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
   for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认允许', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
-test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
+test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL 仅记录 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
   // 常驻协议每个请求都在上下文里：体量回归（v0.14 P1 合并后重新定格）与「不得为省字牺牲硬约束」双保险。
   // 0.14.0-dev P1：Lead 的 6 个静态段合并为 1 段（PROTOCOL_TEXT，字节预算见下一条）；字符上限保持原量级。
-  assert.ok(PROTOCOL_TEXT.length <= 8200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  // R1：提示词体积只做 diagnostic，不设失败门（PROTOCOL 体积变化记录，不阻断测试）。
+  console.log('[diagnostic] PROTOCOL_TEXT chars=' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2450, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，防无界漂移。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
@@ -331,7 +332,8 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
     '≤200 字',
     '报告路径',
     '到线',
-    '只向 Lead 请示',
+    '不请示',
+    '继续做完',
     '不直接问人类',
     '交回 Lead',
     '写范围',
@@ -404,8 +406,8 @@ test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，
   // 预算与短语：v0.10.0 删掉退役档（压缩→新会话/两段式）句与 LONG 派生后，base 仍承载全部硬约束。
   // v0.11 P0-E 容量线 55% 后实测 6,490；v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 6,552 → 预算同步到 6,560。
   // w1 设计门回显/深度模板后实测 7,086 → 预算同步到 7,200；v0.13 D2 三问后实测 7,236 → 7,300。
-  // 0.14.0-dev W1/W2（风险档矩阵/裁决卡/内部事实）后实测 8,074 → 预算 8,200。
-  assert.ok(PROTOCOL_TEXT.length <= 8200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
+  // 0.14.0-dev W1/W2（风险档矩阵/裁决卡/内部事实）后实测 8,074；R1：体积只记录，不设失败门。
+  console.log('[diagnostic] PROTOCOL_TEXT chars=' + PROTOCOL_TEXT.length);
   for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision']) {
     assert.ok(!PROTOCOL_TEXT.includes(retiredPhrase), '退役句不得回到常驻协议: ' + retiredPhrase);
   }

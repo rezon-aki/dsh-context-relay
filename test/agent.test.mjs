@@ -1062,16 +1062,16 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   await preStepListener(applyAgent(subServices.services).events)({ agent: { session: sub, inject(message) { subInjected.push(message); } } }, async () => undefined);
   assert.equal(subInjected.length, 1);
   const text = subInjected[0].content[0].text;
-  assert.match(text, /^\[插件状态\]\n队友会话·到线请示/);
+  assert.match(text, /^\[插件状态\]\n队友会话·到线提醒/);
   assert.match(subInjected[0].source.summary, /band=organize/);
-  assert.match(text, /队友会话·到线请示/);
+  assert.match(text, /队友会话·到线提醒/);
   assert.match(text, /到线已记 incident/, 'B/C：到线只提醒并记 incident（不请示）');
   assert.match(text, /阶段边界再管理/);
   assert.match(text, /不自行压缩\/交接/);
   assert.doesNotMatch(text, /relay_organize|relay_handoff/);
   assert.match(text, /不询问用户/);
   assert.ok(!text.includes('向人类要一次 Go/No-go'), 'subagent must not be told to ask the human');
-  assert.match(subInjected[0].source.summary, /队友会话到线请示/);
+  assert.match(subInjected[0].source.summary, /队友会话到线提醒/);
   assert.ok(subInjected[0].source.summary.length <= 120);
 
   // delegationDepth>0 是同一事实的持久化兜底
@@ -1079,7 +1079,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   const depthServices = fakeServices({ session: depth, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const depthInjected = [];
   await preStepListener(applyAgent(depthServices.services).events)({ agent: { session: depth, inject(message) { depthInjected.push(message); } } }, async () => undefined);
-  assert.match(depthInjected[0].content[0].text, /队友会话·到线请示/);
+  assert.match(depthInjected[0].content[0].text, /队友会话·到线提醒/);
 });
 
 test('reminders: 队友到线只记 incident/提醒，不向 Lead 请示', async () => {
@@ -4224,14 +4224,15 @@ test('B-P2-4：队友 relay_phase 到线不再请示/拒绝（B/C）；band 上�
   assert.equal(sent.length, 0, 'band 上升也不请示');
 });
 
-test('B-P2-5：队友 relay_status advice 改为向 Lead 请示（不自行 relay、不问人类、跳过面板预设命令）', async () => {
+test('B-P2-5：队友 relay_status advice 改为到线提醒继续做完（不请示/不等答复、不自行 relay、不问人类）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const sub = fakeSession({ id: 'session-status-subagent', header: { cwd, origin: 'subagent' } });
   const { tools } = applyAgent(fakeServices({ session: sub, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services);
   updatePanelState(sub.id, { defaultOperation: 'handoff' });
   const report = await tools.get('relay_status').execute({}, { agent: { session: sub, options: {} } });
-  assert.match(report.advice, /send_message/, '队友必须被指引用 send_message 向 Lead 请示');
+  assert.match(report.advice, /继续做完/, '到线后继续做完，不等答复');
+  assert.match(report.advice, /不请示/);
   assert.match(report.advice, /Lead/);
   assert.match(report.advice, /不自行 relay/);
   assert.doesNotMatch(report.advice, /现在调 tools\.relay_handoff|现在调 tools\.relay_organize/, '不得给队友 lead-only 操作指令');
@@ -4435,9 +4436,9 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   // fix3（confirmKey 契约）：relay_work_items.lead_confirm 补 auto/confirmKey/diffHash + 复用 anyOf → 实测 14022，
   // 预算按实测+~2% 上调到 14300。
   // v0.13 P1 ②：user_gate.review_ref 结构化字段 → 实测 14539，预算按实测+~1.8% 上调到 14800。
-  // 设计门×台账（v2）：relay_phase 新增 design_change{reason,user_approved} + contract_check.design_path、relay_work_items.designRef → 实测 15663，
-  // 预算按实测+~0.9% 上调到 15800（#68：只调预算，不删语义/约束；仍逐条受 ≤400/单行约束）。
-  assert.ok(parameterChars <= 15800, '参数 schema 总字符 <=15800（设计门×台账实测 15663），实际 ' + parameterChars);
+  // 设计门×台账（v2）：relay_phase 新增 design_change{reason,user_approved} + contract_check.design_path、relay_work_items.designRef。
+  // v0.14 团队收尾：schema/提示词体积只做 diagnostic，不设失败门（R1）；逐条字段约束仍由其它断言保证。
+  console.log('[diagnostic] parameter schema chars=' + parameterChars);
   // C11/A-06（M-09）：此前只测常驻 8 条，root 独有 5 条（team 3 + dispatch/collect）无断言。
   // 装配实测：走 agent/created 在 root agent scope 捕获实际注册的 lead-only 工具定义（不是常量求和）。
   const created = events.find((entry) => entry.name === 'agent/created');
@@ -4980,7 +4981,7 @@ test('v0.3.3 到线提醒：Lead notice（warn/organize）带 relay_recommend �
   }, async () => undefined);
   assert.equal(subInjected.length, 1);
   const subText = subInjected[0].content[0].text;
-  assert.match(subText, /队友会话·到线请示/);
+  assert.match(subText, /队友会话·到线提醒/);
   assert.doesNotMatch(subText, /relay_recommend/);
   assert.doesNotMatch(subText, /模型推荐=/);
 });

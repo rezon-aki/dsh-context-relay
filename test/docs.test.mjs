@@ -351,6 +351,15 @@ test('relay_doc 工具：index/list/read/search/related/lint 六个动作可用�
     const lint = await docTool.execute({ action: 'lint' }, exec);
     assert.equal(lint.action, 'lint');
     assert.match(lint.text, /relay_doc lint: (PASS|WARN)/);
+    // v0.14 团队收尾：lint 失败（check.ok=false）不得被 failureRenderText 吞掉正文——
+    // 工具本身执行成功（ok=true），lint 结论走 lintOk，正文/ warnings 可见。
+    w(join(fx.r, 'docs', 'no-frontmatter.md'), '# 缺 frontmatter 的文档');
+    const warned = await docTool.execute({ action: 'lint' }, exec);
+    assert.equal(warned.ok, true, 'lint 执行成功（WARN 不是工具失败）');
+    assert.equal(warned.lintOk, false, 'lint 结论 WARN');
+    assert.match(warned.text, /relay_doc lint: WARN/);
+    assert.match(warned.text, /缺 frontmatter/);
+    assert.ok(warned.warnings.some((item) => item.includes('缺 frontmatter')), 'warnings 正文可见');
     const bad = await docTool.execute({ action: 'nope' }, exec);
     assert.equal(bad.ok, false);
     assert.equal(bad.code, 'invalid-action');

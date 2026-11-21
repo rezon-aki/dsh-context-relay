@@ -510,10 +510,10 @@ test('relay_status warn 档返回 budget（headroom/thresholds/text budget 行�
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// §4 队友会话：warn 档 action=relay 改为 Lead 请示（lead-only）
+// §4 队友会话：warn 档 action=relay 仍是 lead-only；到线只提醒，不再请示
 // ────────────────────────────────────────────────────────────────────────────
 
-test('relay_phase 队友会话 warn 档 action=relay：lead-only，请示 Lead 而非自行 relay', async () => {
+test('relay_phase 队友会话 warn 档 action=relay：lead-only，回执 Lead 但不请示/不中断', async () => {
   const sent = [];
   const h = harness({
     id: 'session-budget-teammate',
@@ -541,7 +541,9 @@ test('relay_phase 队友会话 warn 档 action=relay：lead-only，请示 Lead �
   assert.equal(panelStateOf(h.session.id).defaultOperation, 'compress', '队友拒绝路径不消费预设');
   assert.equal((await h.status()).phase, 'discover');
   const report = await h.status();
-  assert.match(report.advice, /Lead/, '队友 status 建议是向 Lead 请示口径');
+  assert.match(report.advice, /Lead/, '队友 status 建议仍指向 Lead 回执');
+  assert.match(report.advice, /继续做完/, '到线不再等答复：继续做完');
+  assert.match(report.advice, /不请示/);
 });
 
 // ────────────────────────────────────────────────────────────────────────────
