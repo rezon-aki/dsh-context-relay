@@ -2,9 +2,18 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计草稿、验收、审计与研究记录不随发布提供（公开架构/迁移文档见 docs/design）。
 
-## Unreleased（0.14.0-dev；package.json 仍 0.13.0，未发布）
+## 0.14.0-beta.1（测试版；2026-11-22）
+
+> 测试版，仅供试用：接口、文案与门禁行为可能继续调整；生产请用正式版。安装请显式指定版本（`dsh-context-relay@0.14.0-beta.1`）或 GitHub Release 的 tgz。
 
 「工具只返回内部事实 + Lead 是唯一对用户说话的人」：删除工具用户段（`[给用户]` 渲染、`user` 字段、`user_visible` 选项、`renderUserBlock`）；status/phase/collect/handoff 只返回事实；失败/部分成功带 `effects`/`reason`/`retryable`/`next`；collect 未验证显式标 `unverified`；handoff 清理 skipped 写“未检查/不适用”；协议补裁决卡与 T0/T1/T2 免门矩阵；架构师清空改走 Lead `relay_architect({mode:'fresh'})`；恢复文案只承诺链式记忆可取，不重建/不回放/不新增只读入口。
+
+### 本次测试版新增
+
+- 提示词与旁路文案收束（审计 11 条）：三问只用于正式汇报（简单回复不套）、交接首条先自查、队友开工前自评、阈值文案去写死、重复句收束。
+- 提示词体积只记录不设门（R1）：测试里的体积硬上限断言改为诊断输出，不因体积回涨失败。
+- 删除重复的收尾提醒通知：`user_gate.warnings` 仍随 `relay_phase` 结果返回，不再二次注入 notice（避免 600B 截断）。
+- 测试 1084/1084，`npm run check` 通过。
 
 ### 行为变更（升级前必读）
 
@@ -19,7 +28,7 @@
 
 - 删除字段：`relay_dispatch.user_visible`、`relay_work_items.*.user_visible`、`relay_phase.risk.user_visible`（用 `public_surface:true` 表达用户可见行为变化）与工具结果 `human`/`user`。旧台账里残留的 `user_visible` 会被忽略，不报错。
 - 无数据迁移；旧会话/旧台账可继续读。回退：revert 本批渲染/事实/文案改动；notice 四段式层不动。
-- 未发布：package.json 维持 0.13.0；README/EN 标记 v0.14.0-dev。
+- 测试版：package.json 已升 0.14.0-beta.1；README/EN 标记测试版；正式版仍待发布。
 
 ### 验证
 
