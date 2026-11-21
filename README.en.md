@@ -51,7 +51,7 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 
 - In the only mode, the Lead splits work, dispatches it and checks it; the actual building goes to teammates, so context pressure is shared across two layers.
 - When a teammate's context is dirty, it can be wiped in place and started over, or replaced under a new identity, without losing the work record.
-- When the Lead itself reaches a line, it hands over to a new session: teammates and background jobs still running in the old session are interrupted first, and the new session rebuilds the team from the handover sheet — a rebuild, not a takeover of the old team.
+- When the Lead itself reaches a line, it hands over to a new session: teammates and background jobs still running in the old session are interrupted first. The handoff guarantees **chain memory can be retrieved** (`chain.ndjson` + progress + handover pointers, read back by `session_event_read` with a seq); it does **not** guarantee the team comes back, and it neither rebuilds nor replays. `adopt` only sees the current live tree (a historical name already in the roster returns already-known even if live); `allowSpawn=true` only enables new members via `renew`/`dispatch`, not handoff recovery.
 - The Lead doesn't idle after dispatching: teammates' reports arrive on their own, and it waits only when genuinely blocked.
 
 ## Before you install
@@ -63,7 +63,8 @@ The test is simple: would it change the outcome, the boundaries or the cost? If 
 - **Version requirements:** DSH `>=0.2.2-rc.2` (this kernel generation only), Node.js `>=20`. It has only been verified in the DSH Web environment; headless is untested.
 - **v0.10.0 is a breaking release.** The old classic `relay` alias, the dual-mode configuration and the old config keys are all gone, and the panel authorization contract moves to version 3 (old authorizations expire once after the upgrade; mode and architect settings are kept). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
 - **v0.11.0 changes defaults:** capacity 55% (independently configured), spawn off, squad-only display by default, explicit reopen for post-delivery repair, and host-compaction fallback. See [CHANGELOG.md](CHANGELOG.md) and the migration guide.
-- **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review, but only with actual diff evidence; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), four-part plain-language output, a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
+- **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review, but only with actual diff evidence; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), plain-language output (three questions since v0.13), a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
+- **v0.14.0-dev (unreleased)** tightens the contract: tool returns are internal facts only (state / what happened / where it is stuck / next / evidence / risk), never a user segment; the Lead writes the three questions and must present a decision card when your call is needed; failures and partial success carry `effects`/`retryable`/`next`; `collect` marks `unverified` explicitly, and skipped handoff cleanup says "not checked / not applicable".
 
 ## Install
 
@@ -150,14 +151,15 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 ### Reports and questions
 
 - It talks to you in plain language: no command output, logs or long diffs, no piles of internal fields and jargon; a term is explained the first time it appears.
-- A report before delivery has four parts: conclusion → impact → what you need to do → where the evidence is, and stays within 600 characters by default.
-- **Notices and errors use the same four parts:** line notices, failure returns and status/handoff results are all organised as conclusion / impact / what you need to do / evidence; internal fields stay on the machine side (`facts`/structured results) and never appear in panel titles.
+- A report before delivery uses the default three questions: what you see → what you need to do → what impact it has, within 600 characters by default; use four parts only when you ask for detail or for a long ship report.
+- **Tool returns are not user speech:** status, handoff, collect and failure results are internal facts for the Lead (reason / what already happened / whether it can be retried / next / evidence / risk); the Lead turns them into the three questions. No user segment is produced, and nothing is meant to be pasted verbatim.
+- **When your call is needed, a decision card is mandatory:** question, options A/B, impact of each, benefits/risks, recommendation, default, and what happens if you do not choose; documents are evidence only, never the whole answer.
 - Anything the agent can check for itself, it checks first; only the questions that genuinely need your call come to you, all at once, with a recommendation, a default and the consequences.
 - Irreversible, external, paid, credential or delete actions are announced first — what will be done, why, and how to undo it — and only happen after an explicit yes.
 
 ## The team: Lead, teammates and the architect
 
-- **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate, adopt a historical member, or rebuild the team at a phase boundary.
+- **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate or adopt a historical member. A phase-boundary handoff archives the old session but **does not rebuild the squad**; new members need `allowSpawn=true` plus `dispatch`/`renew` (or a manual official subagent).
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
 - **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead (`context-relay`/`doc-governance` stay global); `doc_lint` and questions meant for a human (`ask_user_question`) go to the Lead only; teammates keep status/phase/doc plus checkpoint/freshen, workers keep only `relay_doc` (bounded reads of briefs/handoffs); the architect and workers drop `relay_status` and `relay_phase`. Tool names and parameters are unchanged.
 - **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
@@ -169,7 +171,7 @@ The most expensive mistake in a long task is starting to write before the route 
 
 - **The Lead does two things:** align requirements with you (boundaries, acceptance, trade-offs) and read the project docs to understand the current state.
 - **The architect turns requirements into an engineering route:** every task starts from a low context, reads only what it must, and produces an engineering implementation document (requirement alignment, technical route, module interfaces, risks and trade-offs, open decisions, implementation steps and acceptance).
-- **The decisions that are yours:** the architect writes them into the document's "open decisions" and reports them to the Lead; the Lead brings them to you, gets an answer and passes it back. The architect never asks you directly, and never decides for you.
+- **The decisions that are yours:** the architect writes each into the document's "open decisions" with question / options / impact / benefits and risks / recommendation / default / consequence of not choosing, and reports them to the Lead. The Lead must turn them into a **decision card and ask you directly** (documents are evidence only), then pass the answer back. The architect never asks you directly, and never decides for you.
 - **The switch:** the small "architect" pill next to "unlimited budget" in the composer (relay sessions only, on by default) controls per session whether route design is handed to the architect.
 - **The model:** open the composer's model picker; under **Model / effort** there are two more rows, **Architect model / Architect effort**. They follow the model you picked by default and can be set separately (an explicit choice has to be inside the official subagent allowlist).
 
@@ -270,7 +272,11 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 
 ## Upgrade and uninstall
 
-**v0.12.0 refines behaviour (no data migration):** risk-tier gates, the T2 design-gate echo, four-part output, the v2 document index, role trimming and the constraints/relations semantic layer; old T2 `design_gate` calls now need `ask_ref`/`not_doing`. Tool count and data formats are unchanged.
+**v0.14.0-dev (unreleased; no data migration):** tool returns are internal facts only and the user segment/`user_visible` are removed; the Lead writes the three questions and decision cards; the protocol gains a risk-tier gate matrix; handoff recovery copy now guarantees chain memory only (no rebuild/replay/new read-only entry); failures and partial success carry `effects`/`retryable`/`next`.
+
+**v0.13.0 was the "user-segment material" release (superseded by 0.14.0-dev):** `[给用户]` three-question output by default, default silence, `manage.maintain`, receipt evidence, `review_ref`, parameter warnings, a single-source config table, legacy golden, persisted risk tier and path-first `isDocItem`. Tool count and data formats are unchanged.
+
+**v0.12.0 refines behaviour (no data migration):** risk-tier gates, the T2 design-gate echo, plain-language output (three questions since v0.13), the v2 document index, role trimming and the constraints/relations semantic layer; old T2 `design_gate` calls now need `ask_ref`/`not_doing`. Tool count and data formats are unchanged.
 
 **v0.11.0 changes defaults/behaviour (no data migration):** capacity 85%→55% independently configured, spawn off, squad-only display by default, four-tier line semantics, explicit reopen for post-delivery repair, and host-compaction fallback. Rollback mapping is in the [migration guide](docs/design/MIGRATION.md).
 
@@ -287,7 +293,7 @@ npm run check   # syntax check for every entry point
 
 There's no build step: the host and the client are hand-written ESM; you can hot-inject while developing, and it ships as a bundle (`cordis.patch.yml`).
 
-Main directories: `lib/policy.js` (the single source for policy), `lib/risk.js` (risk tiers and gate keys), `lib/output.js` (four-part wording), `lib/docs-policy.js` + `lib/docs-metrics.js` (v2 document index and injection metrics), `lib/skills.js` (role-based skill registration), `lib/seams.js` (the official kernel extension contracts), `lib/plane/` (role table and idempotent reconcile), `lib/storage.js` (atomic writes and locks), `lib/panel-store.js` (panel state), `lib/agent.js` + `lib/agent/*` (the preset plane and its tools), `lib/agent/notice/` (notice planning and delivery), `lib/index.js` (host plane / HTTP), `lib/client.js` (Web UI), `lib/preset-base.js` (PTC preset assets), `skills/` (bundled skills).
+Main directories: `lib/policy.js` (the single source for policy), `lib/risk.js` (risk tiers and gate keys), `lib/output.js` (internal-fact rendering and notice wording), `lib/docs-policy.js` + `lib/docs-metrics.js` (v2 document index and injection metrics), `lib/skills.js` (role-based skill registration), `lib/seams.js` (the official kernel extension contracts), `lib/plane/` (role table and idempotent reconcile), `lib/storage.js` (atomic writes and locks), `lib/panel-store.js` (panel state), `lib/agent.js` + `lib/agent/*` (the preset plane and its tools), `lib/agent/notice/` (notice planning and delivery), `lib/index.js` (host plane / HTTP), `lib/client.js` (Web UI), `lib/preset-base.js` (PTC preset assets), `skills/` (bundled skills).
 
 ## Advanced reference (for the curious)
 
@@ -299,7 +305,7 @@ Deeper design and implementation notes live in:
 
 ### Tools and endpoints
 
-15 tools in total: 7 always available + `doc_lint` + 5 Lead-only + 2 shipped with teammates (`relay_checkpoint`/`relay_freshen`; the architect gets only the former). Tools and skills are trimmed by role (`human-loop` is registered only for the Lead; `context-relay`/`doc-governance` stay global):
+15 tools in total: 8 preset-level tools (4 of them Lead-only: `relay_recommend`/`relay_organize`/`relay_handoff`/`relay_work_items`, plus Lead-only `doc_lint`) + 5 agent-scope Lead-only tools (`relay_team_status`/`relay_renew`/`relay_architect`/`relay_dispatch`/`relay_collect`) + 2 shipped with teammates (`relay_checkpoint`/`relay_freshen`; the architect gets only the former). Tools and skills are trimmed by role (`human-loop` is registered only for the Lead; `context-relay`/`doc-governance` stay global):
 
 | Role | Tools | Skills |
 |---|---|---|
@@ -315,14 +321,14 @@ All three subagent roles drop `doc_lint`, `ask_user_question` and the Lead-only 
 | `relay_status` | Context usage, line state, phase, budget left, dispatch/execution ratio, plane self-check, squad summary (teamSummary) and reopen history. |
 | `relay_phase` | Declare or switch phase; the first T2 entry into build checks the design gate (T1 writes the design into the phase goal, T0 writes no separate design doc); delivery requires the independent review and a report; post-delivery repair uses `reopen{reason,user_approved}`, and ship→discover marks a new task. |
 | `relay_organize` | Write the handover page → official compaction → put the page back into the conversation. Once per session by default. |
-| `relay_handoff` | Produce the handover summary and the full handover file, create a new relay session, and clean up the old session tree. |
+| `relay_handoff` | Produce the handover summary and the full handover file, create a new relay session, and clean up the old session tree; it guarantees chain memory only and does not rebuild the squad; cleanup failure returns partial-success facts. |
 | `relay_work_items` | Read or write the Lead's own work ledger (no args = read; a whole-list replace may carry an optimistic lock). |
 | `relay_recommend` | The Lead writes a model suggestion into the panel (a hint only; it never takes the decision away from you). |
 | `doc_lint` | Documentation check (quota / banned wording / index / git), at most 2KB of output. |
 | `relay_doc` | Layers and index for session documents: `index` / `list` / `read` / `search` / `lint` / `related`. |
 | `relay_dispatch` | The Lead takes a point → reuses or creates a worker → sends the standard brief (goal / must-read / write scope / acceptance / report path). |
-| `relay_collect` | The Lead waits briefly for reports (≤120s), reads only the report head and summary, checks freshness, then marks the point done or blocked. |
-| `relay_team_status` | Team health check (current squad only by default): health / band / checkpoints / dispatch counts / reset results; `include_legacy`/`include_retired` reveal history; `manage` does retire/adopt; a repeat query with nothing changed is refused. |
+| `relay_collect` | The Lead waits briefly for reports (≤120s), reads only the report head and summary, checks freshness, then marks the point done or blocked; unverified receipts are marked `unverified` and never shown as "all done / checked". |
+| `relay_team_status` | Team health check (current squad only by default): health / band / checkpoints / dispatch counts / reset results; `include_legacy`/`include_retired` reveal history; `manage` does retire/adopt/maintain; a repeat query with nothing changed is refused. |
 | `relay_renew` | Replace a teammate generation (off by default; only for a change of identity/role with `allowSpawn=true`). |
 | `relay_architect` | Create or continue the fixed architect (`fresh` for a new context / `continue` to keep designing). |
 | `relay_checkpoint` | Teammates and the architect write a checkpoint (conclusion / done / decisions / evidence / constraints / open questions / next steps). |

@@ -2,6 +2,30 @@
 
 面向使用者的版本变更记录（每个版本更新了什么）。内部设计草稿、验收、审计与研究记录不随发布提供（公开架构/迁移文档见 docs/design）。
 
+## Unreleased（0.14.0-dev；package.json 仍 0.13.0，未发布）
+
+「工具只返回内部事实 + Lead 是唯一对用户说话的人」：删除工具用户段（`[给用户]` 渲染、`user` 字段、`user_visible` 选项、`renderUserBlock`）；status/phase/collect/handoff 只返回事实；失败/部分成功带 `effects`/`reason`/`retryable`/`next`；collect 未验证显式标 `unverified`；handoff 清理 skipped 写“未检查/不适用”；协议补裁决卡与 T0/T1/T2 免门矩阵；架构师清空改走 Lead `relay_architect({mode:'fresh'})`；恢复文案只承诺链式记忆可取，不重建/不回放/不新增只读入口。
+
+### 行为变更（升级前必读）
+
+- **工具返回不再是用户话**：status/phase/collect/handoff 与失败结果只含内部事实（状态/发生了什么/卡在哪/下一步/证据/风险），不产任何用户段；teammate 调用也不返回面板授权字段。Lead 自己写三问，必须把工具事实翻译成用户能懂的话。
+- **裁决卡**：需要用户拍板时，Lead 必须当场给问题、选项 A/B、各自影响面、收益/风险、推荐、默认、不选会怎样；文档只作证据，禁止只给路径/“在文档里”。
+- **协议与风险档对齐**：常驻协议新增 T0/T1/T2 免门矩阵，把“不可协商”限定为“除已声明的风险档例外”；T0 免 user_gate/独立审查/contract_check 等，T1 只要求 report + 一次 diff 审查，T2 全门。
+- **架构师真实路径**：架构师不再被要求自己 `relay_freshen`；清空由 Lead 用 `relay_architect({mode:'fresh',...})` 新开代，架构师只写 `relay_checkpoint`。降级 notice 不再让 architect/worker 去看它们没有的 `relay_status`。
+- **失败真实性**：handoff 已建新会话但清理失败 = `partial:true`，带新会话入口 `sessionId`/`handoffPath`、未清项 `facts.unclean`、恢复动作 `next`，并标 `retryable:false`（不要重复建会话）；collect 未验证时 digest 以 `[evidence:unverified:...]` 开头且文本写“尚未验证”，不显示“全部完成/已核对”；handoff cleanup `skipped` 写“未检查/不适用”，不再说“没有需要清理”。
+- **handoff 最小契约**：交接保证链式记忆可取（`chain.ndjson` + progress + 交接指针；`session_event_read` 按 seq 回读）；不保证队伍回来、不回放队友、不重建小队、不自动 spawn，也不新增只读入口。adopt 只认当前 live tree；allowSpawn=true 只影响 renew/dispatch 新开成员。
+
+### 兼容与回退
+
+- 删除字段：`relay_dispatch.user_visible`、`relay_work_items.*.user_visible`、`relay_phase.risk.user_visible`（用 `public_surface:true` 表达用户可见行为变化）与工具结果 `human`/`user`。旧台账里残留的 `user_visible` 会被忽略，不报错。
+- 无数据迁移；旧会话/旧台账可继续读。回退：revert 本批渲染/事实/文案改动；notice 四段式层不动。
+- 未发布：package.json 维持 0.13.0；README/EN 标记 v0.14.0-dev。
+
+### 验证
+
+- 定向：`test/user-view.test.mjs`、`test/actor-contract.test.mjs`、`test/plain-report-copy.test.mjs`、`test/human-output.test.mjs`、`test/p4-protocol.test.mjs`、`test/user-gate.test.mjs`、`test/team.test.mjs`、`test/v081-handoff.test.mjs`、`test/budget.test.mjs`、`test/budget-snapshot.test.mjs` 通过。
+- 未跑：全量 `npm test`、`npm run check`、真机 handoff/面板、插件热注入/宿主重启、发布；不得把定向通过当成全量/真机通过。
+
 ## v0.13.0 (2026-11-20)
 
 「用户段默认投递 + 默认沉默」：把 v0.12 的「说人话」从建议变成材料层默认——工具返回先给 `[给用户]` 三问，内部细节收进内部段；中间进度默认不发（派活 `user_visible` 默认关），没有用户段就不发进度消息；旧四段模板退为 warning。同批补齐执行纪律（文案 actor 化、完成确认单源、回执证据、审查引用、参数 warn）与工程护栏（配置表单一真源、legacy golden、风险档落盘、isDocItem 路径优先），新增存量归档与重启冒烟脚本。工具数与数据格式不变（仍 15 个工具），无迁移。
@@ -302,7 +326,7 @@
 - 新增：**架构师模型 / 推理等级复用 DSH 模型菜单**——挂在 composer 模型菜单「模型 / 推理等级」之后（官方 `conversation.input.model.options` 槽；与 agent-team 团队开关同一扩展点），菜单外壳、定位、键盘与失焦行为全部归官方（选完保持展开以继续调推理等级），不再自造下拉、不再兼容没有该槽的旧内核。数据源 `GET /context-relay/architect-models?sessionId=`（客户端按会话缓存 60s，失败下次菜单打开重试）；模型选择随 handoff 继承。
 - 变更：**架构师模型严格按官方子代理白名单过滤**——读取会话 `subagentModelSelectionPolicy` 投影，只列允许路由；没有投影记录的旧会话按官方语义只允许 Lead 当前路由；`relay_architect` 在 spawn 前双重校验，白名单外的模型直接拒绝（不绕过官方 `assertAllowedModelSelection`）。
 - 变更：工作台账回归 Leader-only（队友/子代理不读写、不在其 UI 展示）；删除队友写台账/owner 换代迁移；完整台账面板保留（用户裁决 C）。
-- 删除：relay_rehydrate（handoff 已重建团队）、releaseOnCompress/releaseRetiredGeneration 与 release.js 的「托管释放」承诺；内部仅保留 activation 句柄用于换代容量。
+- 删除：relay_rehydrate（交接不重建团队；旧文案「已重建」已纠正）、releaseOnCompress/releaseRetiredGeneration 与 release.js 的「托管释放」承诺；内部仅保留 activation 句柄用于换代容量。
 - 删除：handoff 发布箱与 dock 提示（GET /context-relay/api / handoff-store）；新会话由官方会话列表呈现。
 - 变更：关 phase 默认 warn（可配 strict/off）；team_note 队友上下文提醒降为 warning，不再拒绝切 phase；contract_check 每次切 phase 记录 warning，**ship 前必填**。
 - 修复：rc.2 创建瞬间身份识别——`agent/created` 早于 subagents 的 resident 登记（manager 在 create 返回后才 resident.set），此时 `rootOf/namesOf` 必抛 UNAUTHORIZED，旧实现把每个直接队友都判成「身份未知」→ 紧凑队友协议、架构师独立协议、checkpoint/freshen 工具实际全部装不上。现在创建瞬间只读 header 事实（depth 1 = 直接队友、depth ≥2 = 普通子代理），架构师用 `relay_architect` spawn 前登记的 pending 标记认领（roster 的 sessionId 兜底 resume/重启）。

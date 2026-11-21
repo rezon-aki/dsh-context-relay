@@ -84,7 +84,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 - 队友生命周期：checkpoint（写状态）→ freshen(reset)（真清空 + 新 brief）→ renew（换身份才用）；记录按 Lead 会话分区。
 - 派活 brief 强制五字段：目标 / 必读 1–3 份指针（含 when/role）/ 写范围 / 验收 / 回执路径；worker 自读自取，不要求 Lead 口头复述背景。
 - 回执契约：报告文件（头 3 行 task/revision/verdict）+ ≤200 字消息；Lead 只看 digest（≤600 字），验收抽样 ≤3 次/phase。
-- 队友纪律：不做验收声明、不自行压缩/接力、不越权写；P0 上报 Lead；团队重启后由新 Lead 按交接单/progress/checkpoint 手动重建，不提供自动 rehydrate。
+- 队友纪律：不做验收声明、不自行压缩/接力、不越权写；P0 上报 Lead；交接只保证链式记忆可取（chain.ndjson + progress + 指针 + session_event_read 按 seq 回读），不重建小队、不回放、不自动 spawn、不提供自动 rehydrate。
 - 派活前先读队友上下文档位（只读聚合 band 指标、不读队友会话内容），判断直接派还是先管理；phase 边界给队友 triage 建议（keep / checkpoint / reset / renew），但不自动 reset。
 
 ### 4.6 工作台账
