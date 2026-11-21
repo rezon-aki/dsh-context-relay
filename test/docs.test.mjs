@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
@@ -283,7 +283,7 @@ test('checkSessionDocs：缺 frontmatter / 坏指针 / 超 L1 advisory 都给 wa
   } finally { fx.cleanup(); }
 });
 
-test('checkSessionDocs：constraints 覆盖全部 L2（缺就 WARN）；none 与 raw 豁免', async () => {
+test('checkSessionDocs：constraints 只查活跃 L2 且带 frontmatter；none/legacy/非活跃豁免', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-schema-'));
   try {
     const r = join(cwd, '.scratch', 'context-relay');
@@ -294,12 +294,10 @@ test('checkSessionDocs：constraints 覆盖全部 L2（缺就 WARN）；none 与
     w(join(r, 'research', 'r.md'), ...fm('调研'));
     w(join(r, 'reports', 'task.md'), '# 回执');
     const check = checkSessionDocs({ workspaceRoot: cwd });
-    // 原规则只查 architecture/decisions；现在 constraints 覆盖全部 L2（含 research 与无 frontmatter 的旧文档）。
-    for (const rel of ['architecture/missing.md', 'architecture/legacy.md', 'research/r.md']) {
-      assert.ok(check.warnings.some((line) => line.includes('L2 缺 constraints') && line.includes(rel)), rel);
-    }
-    for (const rel of ['architecture/none.md', 'reports/task.md']) {
-      assert.ok(!check.warnings.some((line) => line.includes('L2 缺 constraints') && line.includes(rel)), rel);
+    // 体检只看活跃文档：architecture/ 当前稿缺 constraints → WARN；legacy 无 frontmatter、research（非活跃）、raw 豁免。
+    assert.ok(check.warnings.some((line) => line.includes('活跃 L2 缺 constraints') && line.includes('architecture/missing.md')));
+    for (const rel of ['architecture/none.md', 'architecture/legacy.md', 'research/r.md', 'reports/task.md']) {
+      assert.ok(!check.warnings.some((line) => line.includes('活跃 L2 缺 constraints') && line.includes(rel)), rel);
     }
     const { docLint } = await import('../lib/lint.js');
     const lint = docLint({ workspaceRoot: cwd, sessionDocs: true });
@@ -554,7 +552,8 @@ test('坏指针分级：活跃文档 FAIL、L2/raw 只 WARN；docLint 汇总 FAI
     assert.equal(check.advisoryPointers, 2);
     assert.equal(check.pointersOmitted, 0);
     assert.deepEqual(check.advisoryReasons, { 目标不存在: 2 });
-    assert.match(check.warnings.join('；'), /坏指针 4 条（活跃 2 → FAIL \/ 其余 2 → WARN；advisory 原因 目标不存在 x2）/);
+    assert.equal(check.ok, false);
+    assert.match(check.warnings.join('；'), /活跃坏指针 2 条 → FAIL（另有 advisory 2 条只计数：目标不存在 x2）/);
     assert.match(check.warnings.join('；'), /结构化 pointers 保留活跃全部 \+ 前 20 条 advisory/);
     const failed = docLint({ workspaceRoot: cwd, sessionDocs: true });
     assert.equal(failed.level, 'FAIL', '活跃坏指针让 doc_lint 汇总 FAIL');
@@ -569,7 +568,11 @@ test('坏指针分级：活跃文档 FAIL、L2/raw 只 WARN；docLint 汇总 FAI
       const softCheck = checkSessionDocs({ workspaceRoot: soft });
       assert.equal(softCheck.level, 'soft');
       assert.equal(softCheck.activePointers, 0);
-      assert.equal(docLint({ workspaceRoot: soft, sessionDocs: true }).level, 'WARN');
+      assert.equal(softCheck.ok, true, 'advisory 指针不阻断 docs 检查');
+      assert.equal(softCheck.warnings.length, 0);
+      const softLint = docLint({ workspaceRoot: soft, sessionDocs: true });
+      assert.equal(softLint.checks.find((item) => item.name === 'docs').ok, true);
+      assert.equal(softLint.level, 'WARN', 'git unknown 仍 WARN');
     } finally { rmSync(soft, { recursive: true, force: true }); }
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
@@ -619,12 +622,103 @@ test('advisory pointers 有界：前 20 条进结构化清单，其余按原因�
     const r = join(cwd, '.scratch', 'context-relay');
     for (let i = 0; i < 30; i += 1) w(join(r, 'reports', 'task-' + i + '.md'), '# 回执 ' + i, '看 ' + BT + 'docs/missing-' + i + '.md' + BT);
     const check = checkSessionDocs({ workspaceRoot: cwd });
-    assert.equal(check.level, 'soft', 'raw/reports 只 WARN，不 FAIL');
+    assert.equal(check.level, 'soft', 'raw/reports 只计数，不 FAIL');
+    assert.equal(check.ok, true, 'advisory 指针不再阻断 PASS');
+    assert.equal(check.warnings.length, 0);
     assert.equal(check.advisoryPointers, 30);
     assert.equal(check.pointers.length, 20, '只保留前 20 条 advisory 明细');
     assert.equal(check.pointersOmitted, 10);
     assert.deepEqual(check.advisoryReasons, { 目标不存在: 30 });
-    assert.match(check.warnings.join('；'), /其余 10 条只计数/);
+    assert.match(check.detail, /坏指针 活跃 0 \/ advisory 30/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('R4 归档：status: archived 不移动、不进默认索引、不算活跃；坏指针只计数', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-archived-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'handoff-old.md'), '---', 'status: archived', 'superseded_by: handoff-new.md', 'archived_at: 2026-11-21', '---', '# 旧交接', '读 ' + BT + 'docs/missing-old.md' + BT);
+    w(join(r, 'handoff-new.md'), '# 新交接');
+    const index = buildDocIndex(cwd);
+    const entry = index.all.find((item) => item.relPath === 'handoff-old.md');
+    assert.equal(entry.archived, true);
+    assert.ok(!index.entries.some((item) => item.relPath === 'handoff-old.md'), '默认索引不收录 archived');
+    assert.ok(buildDocIndex(cwd, { include: 'all' }).entries.some((item) => item.relPath === 'handoff-old.md'), 'include=all 用原路径仍可取');
+    assert.ok(existsSync(join(r, 'handoff-old.md')), '不移动文件');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(check.activePointers, 0);
+    assert.equal(check.advisoryPointers, 0, '归档稿不参与体检（不扫描其指针）');
+    assert.equal(check.ok, true);
+    assert.equal(check.archivedDocs, 1);
+    assert.match(check.detail, /归档 1/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('活跃 L1 收窄：旧 handoff/brief 的坏指针只计数，最新 handoff 才 FAIL', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-current-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const base = Date.now() - 120_000;
+    const oldHandoff = join(r, 'handoff-old.md');
+    w(oldHandoff, '# 旧交接', '读 ' + BT + 'docs/missing-old.md' + BT);
+    utimesSync(oldHandoff, new Date(base), new Date(base));
+    const newHandoff = join(r, 'handoff-current.md');
+    w(newHandoff, '# 当前交接');
+    utimesSync(newHandoff, new Date(base + 60_000), new Date(base + 60_000));
+    w(join(r, 'progress.md'), '# 进度');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(check.activePointers, 0, '旧 handoff 不算活跃');
+    assert.equal(check.advisoryPointers, 1);
+    assert.equal(check.ok, true);
+    w(newHandoff, '# 当前交接', '读 ' + BT + 'docs/missing-current.md' + BT);
+    utimesSync(newHandoff, new Date(base + 120_000), new Date(base + 120_000));
+    const after = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(after.activePointers, 1, '最新 handoff 坏指针仍 FAIL');
+    assert.equal(after.level, 'hard');
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('提议/未来路径标记：proposed: 前缀与段级 doc-lint:ignore-pointers 只跳过标记处', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-ignore-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'architecture', 'design.md'),
+      '---', 'role: 设计', 'layer: L2', 'when: 改前', 'constraints: none', '---', '# 设计',
+      '', '## 提议', '未来模块 ' + BT + 'proposed:lib/git.js' + BT + ' 与 ' + BT + 'proposed:test/x.test.mjs' + BT,
+      '', '<!-- doc-lint:ignore-pointers -->', '外部证据 ' + BT + '~/.dsh/x.md' + BT + ' 与 ' + BT + 'DESIGN.md' + BT,
+      '', '## 标题也点名 ' + BT + 'docs/heading-target.md' + BT,
+      '<!-- doc-lint:ignore-pointers -->',
+      '标题紧跟标记：标题行本身也不检查',
+      '', '## 真指针', '缺 ' + BT + 'lib/missing-entry.js' + BT);
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.deepEqual(check.pointers.map((item) => item.path), ['lib/missing-entry.js'], '只报未标记处的真缺失（含标题行）');
+    assert.equal(check.activePointers, 1);
+    assert.equal(check.level, 'hard');
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('doc_lint docs 检查 PASS：归档/历史/raw 指针只计数，活跃为 0 时无 warning', async () => {
+  const { docLint } = await import('../lib/lint.js');
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-pass-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const base = Date.now() - 120_000;
+    const archived = join(r, 'handoff-old.md');
+    w(archived, '---', 'status: archived', '---', '# 旧交接', '读 ' + BT + 'docs/missing-old.md' + BT);
+    utimesSync(archived, new Date(base), new Date(base));
+    const current = join(r, 'handoff-current.md');
+    w(current, '# 当前交接');
+    utimesSync(current, new Date(base + 60_000), new Date(base + 60_000));
+    w(join(r, 'progress.md'), '# 进度');
+    w(join(r, 'reports', 'task.md'), '# 回执', '看 ' + BT + 'docs/missing-report.md' + BT);
+    w(join(r, 'architecture', 'legacy.md'), '# 无 frontmatter 旧设计');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(check.activePointers, 0);
+    assert.equal(check.advisoryPointers, 1, 'reports 的坏指针只计数（归档稿不扫描）');
+    assert.equal(check.ok, true, 'docs 检查可 PASS');
+    assert.deepEqual(check.warnings, []);
+    const lint = docLint({ workspaceRoot: cwd, sessionDocs: true });
+    assert.equal(lint.checks.find((item) => item.name === 'docs').ok, true, lint.checks.find((item) => item.name === 'docs').detail);
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 

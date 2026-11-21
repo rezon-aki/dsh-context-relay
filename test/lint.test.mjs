@@ -348,6 +348,33 @@ test('formatDocLint counts UTF-8 bytes for CJK details and truncates safely', ()
   assert.ok(Buffer.byteLength(formatDocLint({ level: 'PASS', checks: [] }, 10), 'utf8') <= 10);
 });
 
+test('design-depth：status: archived 旧稿不算活跃设计稿（只跳过归档，不豁免活跃稿）', () => {
+  const root = workspace();
+  const dir = join(root, '.scratch', 'context-relay', 'architecture');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'old.md'), '---\nstatus: archived\n---\n# 旧设计\n' + '字'.repeat(5000) + '\n');
+  const result = docLint({ workspaceRoot: root, sessionDocs: true });
+  const depth = result.checks.find((check) => check.name === 'design-depth');
+  assert.ok(depth, '应含 design-depth');
+  assert.equal(depth.ok, true, '归档稿不参与 design-depth：' + depth.detail);
+});
+
+test('design-depth 是 advisory：有告警也不阻断 doc_lint PASS（git 全绿时）', () => {
+  const root = gitRepo();
+  writeFileSync(join(root, 'AGENTS.md'), '# a\n');
+  const dir = join(root, '.scratch', 'context-relay', 'architecture');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'long.md'), '# 长设计\n' + '字'.repeat(5000) + '\n');
+  commitAll(root, 'init');
+  const result = docLint({ workspaceRoot: root, sessionDocs: true });
+  const depth = result.checks.find((check) => check.name === 'design-depth');
+  assert.ok(depth, '应含 design-depth');
+  assert.equal(depth.ok, false, '仍提示超篇幅');
+  assert.equal(depth.advisory, true, '标记为 advisory');
+  assert.equal(result.level, 'PASS', 'advisory 不阻断 PASS：' + depth.detail);
+  assert.equal(result.ok, true);
+});
+
 test('design-depth advisory：活跃设计稿超篇幅 / 提案 >5 / 缺回显或不做只 WARN；合规稿 PASS', () => {
   const bad = workspace();
   const badDir = join(bad, '.scratch', 'context-relay', 'architecture');
