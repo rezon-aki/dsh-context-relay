@@ -1,38 +1,61 @@
 /**
- * v0.13 fix5 探针：四段改三问统一 + 内部段「原文数据，可引用但要讲清楚」。
- * 覆盖协议/SKILL/human-loop 文案与 tools.js 的 report schema/拒绝文案残留。
+ * W1 探针：Lead 是唯一对用户说话的人；工具返回只作内部事实，裁决必须当场给卡片；
+ * 架构师清空走真实路径；协议硬词与 T0/T1 风险档矩阵对齐。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { INTERNAL_DETAILS_MARK, INTERNAL_ERROR_MARK, MODEL_STATE_MARK } from '../lib/output.js';
 
 const read = (path) => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('三问统一：protocol / SKILL / human-loop 不再要求四段汇报', () => {
-  assert.match(PROTOCOL_TEXT, /汇报默认三问/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /默认三问/);
-  assert.match(TEAMMATE_PROTOCOL_TEXT, /默认三问/);
-  assert.doesNotMatch(TEAMMATE_PROTOCOL_TEXT, /汇报正文用四段式/);
-  const skill = read('skills/context-relay/SKILL.md');
-  assert.match(skill, /用户汇报规范（默认三问/);
-  assert.match(skill, /原文数据，可引用但要讲清楚/);
-  assert.match(skill, /status\/phase 保留用户段/);
-  const humanLoop = read('skills/human-loop/SKILL.md');
-  assert.match(humanLoop, /给用户看的内容默认三问/);
-  assert.match(humanLoop, /你看到什么/);
-  assert.doesNotMatch(humanLoop, /永远先给\*\*结论与影响\*\*/);
+test('Sources: no tool user-segment drafting; Lead writes the three questions', () => {
+  for (const [name, text] of [['PROTOCOL', PROTOCOL_TEXT], ['ROUTER', ROUTER_PROTOCOL_TEXT], ['TEAMMATE', TEAMMATE_PROTOCOL_TEXT], ['ARCHITECT_LEAD', ARCHITECT_LEAD_PROTOCOL_TEXT], ['ARCHITECT_WORKER', ARCHITECT_WORKER_PROTOCOL_TEXT]]) {
+    assert.doesNotMatch(text, /\[给用户\]/, name + ' must not mention a user segment');
+  }
+  assert.match(ROUTER_PROTOCOL_TEXT, /工具返回只是内部事实/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /Lead 自己写三问/);
+  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
+  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /没有 .*段就不发进度消息/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /不得把工具段\/字段原样贴给用户/);
 });
 
-test('tools.js：report schema/拒绝文案/T1 提示已改三问（旧四段描述清零）', () => {
+test('Decision card: seven fields, docs only evidence, no path-only decision', () => {
+  assert.match(ROUTER_PROTOCOL_TEXT, /裁决卡（硬规则）/);
+  for (const field of ['问题', '选项 A/B', '各自影响面', '收益/风险', '推荐', '默认', '不选会怎样']) {
+    assert.ok(ROUTER_PROTOCOL_TEXT.includes(field), 'decision card missing: ' + field);
+  }
+  assert.match(ROUTER_PROTOCOL_TEXT, /文档只作证据/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /禁止只说/);
+  assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /裁决卡直接问用户/);
+  assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /七字段/);
+});
+
+test('Risk tiers: declared T0/T1 exceptions qualify the hard gates', () => {
+  assert.match(PROTOCOL_TEXT, /风险档免门矩阵/);
+  assert.match(PROTOCOL_TEXT, /T0[^\n]*免设计门[^\n]*user_gate/);
+  assert.match(PROTOCOL_TEXT, /T1[^\n]*免设计门[^\n]*一次 diff 审查/);
+  assert.match(PROTOCOL_TEXT, /T2[^\n]*全门/);
+  assert.match(PROTOCOL_TEXT, /已声明例外|已声明的风险档例外/);
+});
+
+test('Architect: only checkpoint; clean context via Lead relay_architect fresh', () => {
+  assert.doesNotMatch(ARCHITECT_WORKER_PROTOCOL_TEXT, /由你自己执行|你会收到 relay_freshen|自己执行 freshen/);
+  assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /Lead 用 relay_architect\(\{mode:'fresh'/);
+  assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /只写 checkpoint/);
+});
+
+test('tools.js: report schema still asks for the three questions; no four-part wording', () => {
   const source = read('lib/agent/tools.js');
   assert.doesNotMatch(source, /四段式大白话汇报/);
   assert.doesNotMatch(source, /（四段汇报）/);
   assert.match(source, /默认三问大白话汇报/);
 });
 
-test('内部段标签：原文数据可引用但要讲清楚（不再写不要转述）', () => {
-  const skill = read('skills/context-relay/SKILL.md');
-  assert.match(skill, /原文数据，可引用但要讲清楚/);
-  assert.doesNotMatch(skill, /不要转述给用户/);
+test('Internal marks: facts for the Lead, not user speech', () => {
+  for (const [name, mark] of [['模型状态', MODEL_STATE_MARK], ['内部细节', INTERNAL_DETAILS_MARK], ['内部错误', INTERNAL_ERROR_MARK]]) {
+    assert.match(mark, /供 Lead/, name + ' 新口径');
+    assert.doesNotMatch(mark, /可引用但要讲清楚/, name + ' 不再当用户话术');
+  }
 });

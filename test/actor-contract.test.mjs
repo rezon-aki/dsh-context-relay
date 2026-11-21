@@ -25,7 +25,7 @@ import { subagentsFromLegacy } from './team-fixture.mjs';
 const SETTINGS_KEY = Symbol.for('dsh-context-relay.settings');
 const TOOL_RE = /\b(?:relay_[a-z][a-z0-9_]*|doc_lint)\b/g;
 /** 跨角色执行限定：同一行出现这些词才算「让队友自己执行」，不是 Lead 直接调。 */
-const DELEGATE_RE = /发消息|让队友|队友自己|它自己|你自己|由你自己|收到.*自己/;
+const DELEGATE_RE = /发消息|让队友|队友自己|它自己|你自己|由你自己|收到.*自己|Lead 用/;
 
 /** 进程级共享状态复位（与 budget-snapshot.test.mjs 同口径）。 */
 function resetSharedState() {
@@ -236,12 +236,13 @@ test('A2+ actor lint：工具结果文本也不得让 Lead 直接调队友工具
   }
 });
 
-test('A2 actor lint：架构师文本不得出现 Lead 会发 relay_freshen，须注明自己执行', async () => {
+test('A2 actor lint：架构师只写 checkpoint；清空由 Lead 用 relay_architect fresh（不再要求自己 freshen）', async () => {
   const { architect } = await assemble();
   const offenders = actorViolations(architect.text, ARCHITECT_TOOL_NAMES);
-  assert.deepEqual(offenders, [], '架构师文本直接提到非本部工具且未注明由自己执行：' + JSON.stringify(offenders, null, 1));
-  assert.doesNotMatch(architect.text, /Lead.*(发|调).*relay_freshen/, '架构师文本不得声称 Lead 会发/调 freshen');
-  const line = architect.text.split('\n').find((entry) => entry.includes('relay_freshen'));
-  assert.ok(line, '架构师收尾段必须说明 freshen 归属');
-  assert.match(line, /你自己|自己执行/, '架构师段须写明由自己执行 freshen');
+  assert.deepEqual(offenders, [], '架构师文本直接提到非本部工具且未注明由 Lead 执行：' + JSON.stringify(offenders, null, 1));
+  assert.doesNotMatch(architect.text, /由你自己执行|你会收到 relay_freshen|自己执行 freshen/, '架构师不得被要求自己 freshen/reset');
+  const line = architect.text.split('\n').find((entry) => entry.includes('relay_architect'));
+  assert.ok(line, '架构师收尾段必须说明真实清空路径');
+  assert.match(line, /Lead 用 relay_architect/, '清空路径须写明 Lead 用 relay_architect');
+  assert.match(line, /checkpoint/, '架构师只写 checkpoint');
 });
