@@ -28,6 +28,16 @@ function harness({accept = true, dispatchError, disposeError, killError} = {}) {
 
 test('v081: missing acceptance keeps old work alive and disposes owned child',async()=>{const h=harness({accept:false});const r=await h.run();assert.equal(r.ok,false);assert.equal(r.code,'takeover-unconfirmed');assert.ok(!h.calls.includes('kill'));assert.ok(h.calls.includes('dispose'));assert.equal(panelStateOf('old').handedOff,false);assert.match(readFileSync(r.handoffPath,'utf8'),/takeover-unconfirmed/);});
 test('v081: accepted inbox receipt precedes cleanup and is returned',async()=>{const h=harness();const r=await h.run();assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.takeover.accepted,true);assert.ok(h.calls.indexOf('dispatch')<h.calls.indexOf('kill'));});
+test('v0.14 P2: 首条注入 = [交接摘要] 机器头 + source.kind=user + ≤8KB',async()=>{
+ const h=harness();const r=await h.run();assert.equal(r.ok,true,JSON.stringify(r));
+ const message=h.inbox.nextTurn[0];assert.ok(message,'acceptance inbox holds the first message');
+ assert.equal(message.source.kind,'user','首条仍是用户发言（非插件 notice）');
+ const text=message.content[0].text;
+ assert.ok(text.startsWith('[交接摘要]\n'),'机器头先给交接摘要');
+ assert.ok(Buffer.byteLength(text,'utf8')<=8000,'首条 ≤8KB，实际 '+Buffer.byteLength(text,'utf8'));
+ assert.ok(text.includes('## 完整交接单（全部细节）'),'完整交接单段落保留');
+ assert.match(text,/完整交接单：\.scratch\/context-relay\/handoff-\d+\.md/,'指向完整交接单文件');
+});
 test('v081: stop-old failure persists full recovery and does not silently succeed',async()=>{const detail='failure '.repeat(500);const h=harness({killError:new Error(detail)});const r=await h.run();assert.equal(r.ok,false);assert.equal(r.code,'handoff-cleanup-failed');assert.ok(r.recovery.length);const text=readFileSync(r.handoffPath,'utf8');assert.ok(text.includes(detail));assert.match(text,/job launch command in checkpoint/);assert.match(text,/recovery/);});
 test('v081: async dispose failure is returned, not swallowed',async()=>{const h=harness({accept:false,dispatchError:new Error('dispatch'),disposeError:new Error('dispose failed')});const r=await h.run();assert.equal(r.ok,false);assert.match(JSON.stringify(r.recovery),/dispose failed/);assert.ok(!h.calls.includes('kill'));});
 

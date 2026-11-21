@@ -154,8 +154,8 @@ test('planNotices：context-check 分支（面板之后、台账之前）；clai
   const plan = planNotices(facts({ contextCheck: ccFact() }));
   assert.equal(plan.notice.kind, 'context-check');
   assert.match(plan.notice.text, /新阶段开始「探索 → 决策」/);
-  assert.match(plan.notice.text, /先看当前档位与余量/);
-  assert.match(plan.notice.text, /四选一/);
+  assert.match(plan.notice.text, /下一步：三选一：压缩继续 \/ 清空复用 \/ 交接新会话/);
+  assert.match(plan.notice.text, /三选一/);
   assert.deepEqual(plan.claims.contextCheck, { keys: ['phase:discover>decide#1'] });
   assert.ok(plan.notice.text.length <= NOTICE_MAX);
 
@@ -207,7 +207,7 @@ test('文案：warn 三选一/现在就该动手且不含继续做完；organize
   assert.match(organize, /本应已在 warn/);
   const relay = contextCheckText({ band: 'relay', recommendation: contextCheckChoice({ band: 'relay' }), panel: {} });
   assert.match(relay, /兜底告警升级/);
-  assert.match(relay, /本应已在/);
+  assert.match(relay, /已超预期/);
 
   const capacity = capacityNoticeText({ ratio: 0.56, threshold: 0.55 });
   assert.match(capacity, /最坏兜底/);
@@ -239,9 +239,9 @@ test('sentinel：首个 pre-step 只 seed；phase 变化 1 条、同 phase 重�
   assert.equal(bundle.injected.length, 1);
   const text = bundle.injected[0].content[0].text;
   assert.match(text, /新阶段开始「探索 → 决策」/);
-  assert.match(text, /主路径自查/);
-  assert.match(text, /先看当前档位与余量/);
-  assert.match(text, /四选一/);
+  assert.match(text, /^\[插件状态\]\n上下文自查：/);
+  assert.match(text, /下一步：三选一：压缩继续 \/ 清空复用 \/ 交接新会话/);
+  assert.match(text, /三选一/);
   session.setSeq(3);
   await bundle.step();
   assert.equal(bundle.injected.length, 1, '同 phase 不重复');

@@ -1,12 +1,12 @@
 /**
- * notice 四段式（插件 notice，非用户发言）+ 失败事实契约。
+ * notice 机器体（插件状态头 + 固定尾，≤600 B）+ 失败事实契约。
  * 工具结果不再产用户段（见 user-view.test.mjs）；这里只锁 notice 文案与 fail(facts)。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { failureRenderText, noticeParts, internalKeysIn, renderNoticeText } from '../lib/output.js';
+import { NOTICE_DISCLAIMER, NOTICE_HEAD, NOTICE_MAX_BYTES, failureRenderText, noticeParts, internalKeysIn, renderNoticeText } from '../lib/output.js';
 import {
-  NOTICE_MAX, capacityNoticeText, contextCheckText, panelChangeText, phaseBoundaryText, planeIssueOf,
+  capacityNoticeText, contextCheckText, panelChangeText, phaseBoundaryText, planeIssueOf,
   recoveryNoticeText, sentinelText, unavailableNoticeText,
 } from '../lib/agent/notice/plan.js';
 import { contextCheckChoice } from '../lib/policy.js';
@@ -14,24 +14,27 @@ import { fail } from '../lib/agent/shared.js';
 
 const PANEL = { defaultOperation: null, autoCompress: false, autoHandoff: false, authorizeNext: false };
 
-/** 断言一段 notice 文案：四段齐全、内部键为零、字符 ≤ 上限。 */
-function assertHuman(text, name, max = NOTICE_MAX) {
-  for (const label of ['结论：', '影响：', '需要你做什么：', '证据：']) {
-    assert.ok(text.includes(label), name + ' 缺「' + label + '」');
-  }
+/** 断言一段 notice 文案：机器头 + 固定尾齐全、内部键为零、UTF-8 ≤ 600 B。 */
+function assertHuman(text, name) {
+  assert.ok(text.startsWith(NOTICE_HEAD + '\n'), name + ' 缺机器头');
+  assert.ok(text.endsWith(NOTICE_DISCLAIMER), name + ' 缺固定尾');
+  assert.doesNotMatch(text, /结论：|需要你做什么：|证据：/, name + ' 仍是旧四段式');
   assert.deepEqual(internalKeysIn(text), [], name + ' 含内部键：' + internalKeysIn(text).join(','));
-  assert.ok(Array.from(text).length <= max, name + ' 超长：' + Array.from(text).length);
+  assert.ok(Buffer.byteLength(text, 'utf8') <= NOTICE_MAX_BYTES, name + ' 超长：' + Buffer.byteLength(text, 'utf8') + 'B');
 }
 
-test('notice 四段式：固定顺序 + evidence 数组归一 + 空段占位', () => {
+test('notice 机器体：机器头 + 正文 + 依据归一 + 固定尾', () => {
   const rendered = renderNoticeText({
     conclusion: '阶段已切换',
     impact: '没有额外可见影响',
     action: '按目标推进',
     evidence: ['docs/a.md:12', 'docs/b.md:3'],
   });
-  assert.deepEqual(rendered.split('\n').map((line) => line.split('：')[0]), ['结论', '影响', '需要你做什么', '证据']);
-  assert.match(rendered, /证据：docs\/a\.md:12；docs\/b\.md:3/);
+  const lines = rendered.split('\n');
+  assert.equal(lines[0], NOTICE_HEAD);
+  assert.equal(lines[1], '阶段已切换');
+  assert.match(rendered, /依据：docs\/a\.md:12；docs\/b\.md:3/);
+  assert.equal(lines.at(-1), NOTICE_DISCLAIMER);
   assert.deepEqual(noticeParts({ conclusion: 'a', impact: 'b', action: 'c' }).evidence, ['无']);
 });
 
@@ -44,7 +47,7 @@ test('内部键黑名单：band= / headroomTo / dispatchId / revision / code: / 
   assert.deepEqual(internalKeysIn('结论：上下文 36%，阶段「构建」。'), []);
 });
 
-test('notice 正文：到线/容量/边界/面板/自查/不可用/恢复/平面统一四段且无内部键', () => {
+test('notice 正文：到线/容量/边界/面板/自查/不可用/恢复/平面统一机器体且无内部键', () => {
   const notices = {
     '到线-warn': sentinelText('build', { band: 'warn', ratio: 0.36 }, false, { ...PANEL, autoCompress: true, authorizeNext: true }),
     '到线-organize': sentinelText('build', { band: 'organize', ratio: 0.42 }, false, PANEL),

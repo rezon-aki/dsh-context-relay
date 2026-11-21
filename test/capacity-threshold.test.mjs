@@ -146,7 +146,7 @@ test('P0-E 验收 3：54% 已有 relay 时无容量 notice；56% 容量 notice �
   const text = h.noticeTexts('容量保全')[0];
   assert.match(text, /56\.0%（容量线 55\.0%）/);
   assert.match(text, /最坏兜底/);
-  assert.match(text, /不自动执行（不自动压缩\/不自动接力）/);
+  assert.match(text, /不自动执行/);
   // 同档不重复；回落重置后再次上升沿再提示一次。
   await h.step();
   assert.equal(h.noticeTexts('容量保全').length, 1);

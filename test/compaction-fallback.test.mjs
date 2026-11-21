@@ -189,7 +189,7 @@ test('P1-A host：压缩复位→快照+chain+recovery notice 一次；同 compa
   assert.match(text, /宿主自动压缩已发生/);
   assert.match(text, /recovery\/compaction-session-fallback-/);
   assert.match(text, /session_event_read/);
-  assert.match(text, /压缩继续/);
+  assert.match(text, /到边界主动压缩\/交接/);
   // 快照落盘 ≤2KB + chain 条目。
   const snapshotPath = join(h.cwd, '.scratch', 'context-relay', 'recovery', 'compaction-' + h.session.id + '.md');
   assert.ok(existsSync(snapshotPath), '快照路径 ' + snapshotPath);

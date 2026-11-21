@@ -322,10 +322,10 @@ test('哨兵容量保全 notice：上升沿一次性注入、同档不重复、�
   assert.equal(injected.length, 2, '容量上升沿注入一次');
   const capacityText = injected[1].content[0].text;
   assert.match(capacityText, /容量保全/);
+  // 同 step 合并后仍 ≤600 B：合并只并入容量结论行，阈值保留。
   assert.match(capacityText, /56\.0%（容量线 55\.0%）/);
-  assert.match(capacityText, /阶段中段的唯一例外/);
   assert.match(capacityText, /最坏兜底/, 'P0-D：容量是最坏兜底');
-  assert.match(capacityText, /不自动执行（不自动压缩\/不自动接力）/, '只提示不自动动作');
+  assert.match(capacityText, /不自动执行/, '只提示不自动动作');
   // 同档再走 8 步：不重复。
   for (let index = 0; index < 8; index += 1) await step();
   assert.equal(injected.length, 2, '容量 notice 不重复');
@@ -337,6 +337,7 @@ test('哨兵容量保全 notice：上升沿一次性注入、同档不重复、�
   await step();
   assert.equal(injected.length, 3, '回落重置后再次上升沿提醒');
   assert.match(injected[2].content[0].text, /容量保全（最坏兜底，独立配置/);
+  assert.match(injected[2].content[0].text, /56\.0%（容量线 55\.0%）/, '再次上升沿合并后阈值仍完整');
   // 窗口未知：不注入容量 notice。
   resetSharedState();
   const blindSession = fakeSession({ id: 'session-capacity-blind', cwd: tmpCwd(), seq: 0 });

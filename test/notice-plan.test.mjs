@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, planeIssueOf, unavailableNoticeText } from '../lib/agent/notice/plan.js';
+import { NOTICE_MAX_BYTES } from '../lib/output.js';
 
 /** C4 notice 规划纯函数：事实 → 本步 0/1 条 notice + track/claims（不碰状态、不注入）。 */
 
@@ -32,14 +33,15 @@ test('planNotices：Lead 升线 → 一条到线提醒（带台账行），claim
   const plan = planNotices(facts({ ledger: LEDGER_PENDING }));
   assert.equal(plan.rising, true);
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^结论：到线提醒（插件 notice，非用户发言）/);
-  assert.match(plan.notice.text, /到线提醒（插件 notice，非用户发言）/);
+  assert.match(plan.notice.text, /^\[插件状态\]\n到线提醒：/);
+  assert.match(plan.notice.text, /到线提醒：兜底告警/);
   assert.match(plan.notice.text, /工作台账：未闭合 2 \/ 共 3/);
   assert.doesNotMatch(plan.notice.text, /band=/, '用户文案不带内部键');
   assert.match(plan.notice.summary, /band=organize/);
   assert.match(plan.notice.summary, /relay 到线提醒/);
   assert.deepEqual(plan.claims.lastBand, { band: 'organize', compactionSeq: -1 });
   assert.ok(plan.notice.text.length <= NOTICE_MAX);
+  assert.ok(Buffer.byteLength(plan.notice.text, 'utf8') <= NOTICE_MAX_BYTES, 'notice ≤600 B');
 });
 
 test('planNotices：同档/回退不注入，只 track 当前档位（升线才提醒）', () => {
@@ -63,8 +65,9 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
     panelPrevious: undefined,
   }));
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^结论：队友会话·到线请示/);
+  assert.match(plan.notice.text, /^\[插件状态\]\n队友会话·到线请示/);
   assert.match(plan.notice.text, /队友会话·到线请示/);
+  assert.ok(Buffer.byteLength(plan.notice.text, 'utf8') <= NOTICE_MAX_BYTES, 'notice ≤600 B');
   assert.doesNotMatch(plan.notice.text, /band=/);
   assert.match(plan.notice.text, /已自动向上一级（Lead）发出请示/);
   assert.doesNotMatch(plan.notice.text, /工作台账/, 'M-12：队友看不到 Lead 台账计数');
@@ -209,7 +212,7 @@ test('planNotices：指标不可用（M-14）一次性保守提示，claim basis
   assert.equal(again.notice, null, '同段只提示一次（压缩复位后 guard 清除可再提示）');
 });
 
-test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条 ≤900 字符', () => {
+test('planNotices：纯函数（重复调用结果一致）、每步 ≤1 条（单条渲染 ≤600 B，批次 ≤900 字符）', () => {
   const cases = [
     facts({}),
     facts({ capacity: { atRisk: true, ratio: 0.9, threshold: 0.55 } }),

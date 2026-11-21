@@ -482,7 +482,7 @@ test('relay_phase over budget: 面板四分支（continue / compress / handoff /
   assert.equal(panelStateOf('session-panel-continue').defaultOperation, 'continue', '模式持久不消费（下一个到线仍按「继续」）');
   assert.equal(cont.injected.length, 1);
   assert.match(cont.injected[0].source.summary, /phase 边界/);
-  assert.match(cont.injected[0].content[0].text, /本阶段完成时仍超线/);
+  assert.match(cont.injected[0].content[0].text, /完成时仍超线/);
   // 同 phase 重复声明不是「开新 phase」：不提醒、不动预设（退役自决字段写入被白名单丢弃）
   updatePanelState('session-panel-continue', { autoChoose: true, autoDecision: { operation: 'compress', at: 1 } });
   const same = await cont.call();
@@ -695,7 +695,7 @@ test('relay_organize injects manual recall pointers for shadowed instructions an
   assert.match(notice, /code-review/, 'skill-invocation skill name is listed');
   assert.match(notice, /tdd/, 'skill tool result skill name is listed');
   assert.match(notice, /browser-skill/, 'PTC-dispatched skill result name is listed');
-  assert.ok(notice.length <= 4000, 'injected text stays bounded');
+  assert.ok(notice.length <= 2000, 'injected brief stays <= 2000 chars, got ' + notice.length);
   const briefText = readFileSync(result.briefPath, 'utf8');
   assert.match(briefText, /压缩后手动召回/, 'brief file keeps the recall section too');
 });
@@ -716,7 +716,7 @@ test('long brief truncation keeps the chain recall section (P2-1)', async () => 
   const result = await tools.get('relay_organize').execute({ phase: 'build', brief: 'x'.repeat(6000), force: true }, { agent });
   assert.equal(result.ok, true);
   const notice = injected[0].content[0].text;
-  assert.ok(notice.length <= 4000, 'injected notice stays <= 4000 chars, got ' + notice.length);
+  assert.ok(notice.length <= 2000, 'injected brief stays <= 2000 chars, got ' + notice.length);
   assert.match(notice, /brief truncated/);
   assert.match(notice, /压缩与链式召回/, 'recall section survives truncation');
   assert.match(notice, /链式索引：\.scratch\/context-relay\/chain\.ndjson/, '召回段保留链式索引入口');
@@ -770,7 +770,7 @@ test('reminders: 升线提醒（同档不重复），回退后再升线仍提醒
   assert.equal(message.source.form, 'notice');
   assert.ok(message.source.summary.length <= 120, 'summary chars ' + message.source.summary.length);
   assert.match(message.source.summary, /\[context-relay\] band=warn/);
-  assert.match(message.content[0].text, /到线提醒（插件 notice，非用户发言）/);
+  assert.match(message.content[0].text, /到线提醒：上下文 36\.0%/);
   assert.match(message.content[0].text, /接力」chip/, 'notice explains the composer panel');
   assert.match(message.content[0].text, /现在就该动手/, 'warn 是可执行建议，不是只告知');
   assert.match(message.content[0].text, /三选一/);
@@ -779,8 +779,8 @@ test('reminders: 升线提醒（同档不重复），回退后再升线仍提醒
   assert.match(message.content[0].text, /交接新会话/, '三选一含交接');
   assert.doesNotMatch(message.content[0].text, /继续做完当前任务/, 'warn 不再教「继续做完」');
   assert.doesNotMatch(message.content[0].text, /thresholds=/, '阈值不重复塞进 notice（协议/status 里有）');
-  // 长度回归：Lead 到线提醒 ≤900（P0-D 三选一 + 推荐 + 工具路径）
-  assert.ok(message.content[0].text.length <= 900, 'Lead notice chars ' + message.content[0].text.length);
+  // 长度回归：Lead 到线提醒 ≤600 B（机器体 + 三选一 + 推荐 + 面板行；投递层硬上限）
+  assert.ok(Buffer.byteLength(message.content[0].text, 'utf8') <= 600, 'Lead notice bytes ' + Buffer.byteLength(message.content[0].text, 'utf8'));
   assert.equal(liveStateOf(session.id).band, 'warn');
   assert.equal(liveStateOf(session.id).phase, 'discover');
   await step(); // 同档重复：不提醒
@@ -845,7 +845,7 @@ test('面板变更提醒（v0.5.1）：人类改模式/授权后下一次 pre-st
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 360_000 };
   await step();
   assert.equal(injected.length, 2, '升线 + 面板变更同一步只发到线提醒');
-  assert.match(injected[1].content[0].text, /到线提醒（插件 notice，非用户发言）/);
+  assert.match(injected[1].content[0].text, /到线提醒：上下文 36\.0%/);
   assert.match(injected[1].content[0].text, /交接免审批=开/, '到线提醒本身带全量面板状态');
   await step();
   assert.equal(injected.length, 2, '被到线提醒覆盖的面板变更不得在下一步补发');
@@ -938,9 +938,9 @@ test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重�
   assert.equal(message.source.form, 'notice');
   assert.match(message.source.summary, /平面\/seam 降级/);
   const text = message.content[0].text;
-  assert.match(text, /平面\/seam 降级（插件 notice，非用户发言）/);
+  assert.match(text, /^\[插件状态\]\n平面未装好（role=/);
   assert.match(text, /seam tools/, '列 seam 名：tools');
-  assert.match(text, /seam systemPrompt/, '列 seam 名：systemPrompt');
+  assert.doesNotMatch(text, /seam systemPrompt/, '≤600 B：首条 seam 后截断，完整清单走 relay_status.plane');
   assert.match(text, /agent\.ctx unavailable/, '列降级原因');
   assert.match(text, /relay_status\.plane/, '指向自检通道');
   await step();
@@ -949,7 +949,7 @@ test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重�
   log.push({ type: 'compaction/end', seq: 1, data: { compactionId: 'c1', turn: 1 } });
   await step();
   assert.equal(injected.length, 2, '压缩后重新提示（guard 已复位）');
-  assert.match(injected[1].content[0].text, /平面\/seam 降级/);
+  assert.match(injected[1].content[0].text, /平面未装好（role=lead）/);
   clearPlaneMemory();
 });
 
@@ -968,7 +968,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   await step();
   assert.equal(injected.length, 1, '3 consecutive pre-steps in one band -> exactly one inject');
   // Lead 文案保留：到线提醒 + 面板状态 + phase 优先指引（细节指向常驻协议）
-  assert.match(injected[0].content[0].text, /到线提醒（插件 notice，非用户发言）/);
+  assert.match(injected[0].content[0].text, /到线提醒：上下文 36\.0%/);
   assert.match(injected[0].content[0].text, /接力」chip/);
   assert.match(injected[0].content[0].text, /现在就该动手/);
 
@@ -989,14 +989,14 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   await preStepListener(applyAgent(subServices.services).events)({ agent: { session: sub, inject(message) { subInjected.push(message); } } }, async () => undefined);
   assert.equal(subInjected.length, 1);
   const text = subInjected[0].content[0].text;
-  assert.match(text, /^结论：队友会话·到线请示/);
+  assert.match(text, /^\[插件状态\]\n队友会话·到线请示/);
   assert.match(subInjected[0].source.summary, /band=organize/);
   assert.match(text, /队友会话·到线请示/);
   assert.match(text, /向上一级（Lead \/ 父 agent）请示/, 'no Team service -> tell it to send_message upward');
-  assert.match(text, /回执 Lead/);
+  assert.match(text, /边界先写 checkpoint/);
   assert.match(text, /不自行压缩\/交接/);
   assert.doesNotMatch(text, /relay_organize|relay_handoff/);
-  assert.match(text, /不向人类提问/);
+  assert.match(text, /不询问用户/);
   assert.ok(!text.includes('向人类要一次 Go/No-go'), 'subagent must not be told to ask the human');
   assert.match(subInjected[0].source.summary, /队友会话到线请示/);
   assert.ok(subInjected[0].source.summary.length <= 120);
@@ -1960,7 +1960,7 @@ test('relay_organize injects the phase brief only after a successful compaction'
   assert.ok(message.source.summary.length <= 120, 'summary fits the 120-char contract');
   assert.doesNotMatch(message.source.summary, /band=/, 'summary must not pollute the reminder band seed scan');
   const text = message.content[0].text;
-  assert.ok(text.length <= 4000, 'injected text is bounded to 4000 chars');
+  assert.ok(text.length <= 2000, 'injected brief is bounded to 2000 chars, got ' + text.length);
   assert.match(text, /\[context-relay\] 阶段交接摘要 · 构建（压缩后注入，非用户发言）/);
   assert.match(text, /# 阶段交接摘要 · 构建/);
   assert.match(text, /结论：本阶段「构建」已收口/, '注入 header 先给结论');
@@ -4325,7 +4325,7 @@ test('P3：超长 brief 注入时标注截断与完整文件路径（不静默�
   const result = await tools.get('relay_organize').execute({ phase: 'build', brief }, { agent: { session, options: {}, inject(message) { injected.push(message); } } });
   assert.equal(result.briefInjected, true);
   const text = injected[0].content[0].text;
-  assert.ok(text.length <= 4200, '注入 notice 有界，实际 ' + text.length);
+  assert.ok(text.length <= 2000, '注入 brief 有界（≤2000 字符），实际 ' + text.length);
   assert.match(text, /\[brief truncated: 完整内容见 /);
   assert.ok(text.includes(result.briefPath), '截断标注包含完整 brief 文件路径');
 });
@@ -4872,7 +4872,7 @@ test('v0.3.3 到线提醒：Lead notice（warn/organize）带 relay_recommend �
   // v0.3.4 P2-4：推荐段用面板档位长 label（与 client 推荐行一致）。
   assert.match(injected[0].content[0].text, /模型推荐=接力新会话/);
   assert.match(injected[0].content[0].text, /干净上下文更适合下一阶段/);
-  // v0.3.4 P2-3：展示/提醒理由截 60（存储仍 120）。
+  // v0.14 P2：机器体预算收紧，提醒理由截 20（存储仍 120）。
   const longReason = '理'.repeat(80);
   updatePanelState(lead.id, { recommendedReason: longReason }, { source: 'agent' });
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 };
@@ -4880,8 +4880,8 @@ test('v0.3.3 到线提醒：Lead notice（warn/organize）带 relay_recommend �
   assert.equal(injected.length, 2);
   assert.doesNotMatch(injected[1].content[0].text, /relay_recommend/);
   assert.match(injected[1].content[0].text, /模型推荐=接力新会话\(/);
-  assert.ok(injected[1].content[0].text.includes(longReason.slice(0, 60)), '提醒展示理由前 60 字');
-  assert.equal(injected[1].content[0].text.includes(longReason.slice(0, 61)), false, '提醒不展示第 61 字');
+  assert.ok(injected[1].content[0].text.includes(longReason.slice(0, 20)), '提醒展示理由前 20 字');
+  assert.equal(injected[1].content[0].text.includes(longReason.slice(0, 21)), false, '提醒不展示第 21 字');
   // 空理由：不渲染空括号（v0.3.4 P2-3）
   updatePanelState(lead.id, { recommendedReason: '' }, { source: 'agent' });
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 520_000 };
