@@ -319,6 +319,22 @@ test('formatDocLint / docLintEvidence stay within budgets', () => {
   assert.match(evidence, /^doc_lint: WARN/);
 });
 
+test('formatDocLint：2KB 截断时未展开 check 保留 mark:name；单条详情超限标注详情截断', () => {
+  const checks = Array.from({ length: 6 }, (_, index) => ({
+    name: 'check-' + index,
+    level: index === 0 ? 'hard' : 'soft',
+    ok: index !== 0,
+    detail: '详情'.repeat(200),
+  }));
+  const text = formatDocLint({ level: 'FAIL', checks }, 400);
+  assert.ok(Buffer.byteLength(text, 'utf8') <= 400, 'bytes ' + Buffer.byteLength(text));
+  assert.match(text, /截断/);
+  assert.match(text, /未展开 6 项/);
+  for (const check of checks) assert.ok(text.includes(check.name), '截断后仍保留 check 名：' + check.name);
+  const long = formatDocLint({ level: 'WARN', checks: [{ name: 'docs', level: 'soft', ok: false, detail: 'x'.repeat(500) }] }, 2048);
+  assert.match(long, /详情截断/, '单条 detail 超 MAX_DETAIL_CHARS 时显式标注');
+});
+
 test('formatDocLint counts UTF-8 bytes for CJK details and truncates safely', () => {
   const checks = [
     { name: 'banned', level: 'hard', ok: false, detail: '已废弃：' + '汉'.repeat(120) },

@@ -4,7 +4,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
-  buildDocIndex, checkSessionDocs, docIndexDigest, DOC_LIMITS, parseFrontmatter, parseRelations, readDoc, relatedDocs, renderDocIndex, searchDocs,
+  buildDocIndex, checkSessionDocs, docIndexDigest, DOC_LIMITS, parseFrontmatter, parseRelations, parseRelationsDetailed, readDoc, relatedDocs, renderDocIndex,
+  scanLimitWarnings, searchDocs,
 } from '../lib/docs.js';
 
 const NL = String.fromCharCode(10);
@@ -46,7 +47,9 @@ test('buildDocIndex/renderDocIndex：选择后在役/带决策单列、其余按
     assert.ok(l1.includes('progress.md'));
     assert.deepEqual(l2, ['docs/decisions.md']);
     const rendered = renderDocIndex(index);
-    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes);
+    assert.equal(DOC_LIMITS.indexBytes, 0, '索引字节预算缺省 0 = 不限（去折叠）');
+    assert.equal(rendered.level, 'A');
+    assert.equal(rendered.truncated, false);
     assert.match(rendered.text, /### 在役（先读）/);
     assert.match(rendered.text, /### 带决策/);
     assert.match(rendered.text, /### 折叠（按目录，展开即取全）/);
@@ -68,10 +71,10 @@ test('renderDocIndex：其余按目录成组（不丢条目、每条省略带命
     }
     const index = buildDocIndex(fx.cwd);
     const rendered = renderDocIndex(index);
-    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    // fix2：折叠组有命令可回取，不算 truncated；只有字节超护栏/扫描触顶才算。
+    assert.equal(rendered.level, 'A', '缺省不再按字节/列宽降级');
+    // fix2：折叠组有命令可回取，不算 truncated；只有显式字节护栏超限/扫描触顶才算。
     assert.equal(rendered.truncated, false, '有折叠组但有展开命令 → 不算 truncated');
-    assert.equal(renderDocIndex(index, { maxBytes: 1 }).truncated, true, '字节超护栏才 truncated');
+    assert.equal(renderDocIndex(index, { maxBytes: 1 }).truncated, true, '显式字节护栏超限才 truncated');
     assert.ok(rendered.omitted > 0);
     assert.match(rendered.text, /relay_doc list prefix=docs/);
     assert.match(rendered.text, /docs\/ — 40 份（代表：/);
@@ -104,13 +107,19 @@ test('fixture 1,280 份：0 条不可达、0 条无命令省略、raw/reports �
     w(join(r, 'architecture', 'a-0.md'), '---', 'title: 架构 0', 'role: 架构 0', 'layer: L2', 'when: 需要时', 'constraints: 先读 docs/a.md; 版本 v1', 'relations: supersedes: architecture/a-1.md', '---', '# 架构 0');
     const index = buildDocIndex(cwd);
     assert.equal(index.all.length, 1280);
+    // 去折叠（本次修复）：旧 2048B 护栏把这里压成 C（shown=5）；现在 A 层全单列，无 pin 也显示。
+    const noPin = renderDocIndex(index);
+    assert.equal(noPin.level, 'A', '缺省 A 层（300 份 decisions 全单列）：' + noPin.level);
+    assert.ok(noPin.bytes > 2048, 'bytes ' + noPin.bytes);
+    assert.equal(noPin.truncated, false);
+    assert.ok(noPin.shown > 0, '无 pin 时仍有单列（shown=' + noPin.shown + '）');
     const rendered = renderDocIndex(index, { pins: ['architecture/a-0.md'] });
-    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    assert.match(rendered.text, /读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系/, 'legend 在预算压力下仍保留');
-    assert.match(rendered.text, /`architecture\/a-0\.md`[^\n]*· !2 →1 · /, '折叠档位仍渲染 constraints/relations 标记');
-    assert.match(rendered.text, /索引 [\d.]+KB\/2\.00KB · L1 \d+ \/ L2 \d+ \/ raw \d+/, 'health 行给层计数');
+    assert.match(rendered.text, /读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系/, 'legend 在去折叠后仍保留');
+    assert.match(rendered.text, /`architecture\/a-0\.md`[^\n]*· !2 →1 · /, '单列仍渲染 constraints/relations 标记');
+    assert.match(rendered.text, /索引 [\d.]+KB\/不限 · L1 \d+ \/ L2 \d+ \/ raw \d+/, 'health 行给层计数 + 不限预算');
     const prefixes = [...rendered.text.matchAll(/relay_doc list prefix=([^\s`]+)/g)].map((match) => match[1]);
-    assert.ok(prefixes.includes('architecture') && prefixes.includes('decisions') && prefixes.includes('research'), '三组都可展开：' + prefixes.join(','));
+    // decisions/ 300 份现在都是 A 层单列（去折叠），不再成组；architecture/research/reports 仍有组行可展开。
+    assert.ok(prefixes.includes('architecture') && prefixes.includes('research') && prefixes.includes('reports'), '组行可展开：' + prefixes.join(','));
     const reachable = (rel) => rendered.text.includes('`' + rel + '`')
       || prefixes.some((prefix) => rel === prefix || rel.startsWith(prefix + '/'))
       || rendered.text.includes('relay_doc list include=all');
@@ -141,15 +150,17 @@ test('AOCI 语义层：constraints/contracts 计数渲染 !n / An，none 不标�
     const lineOf = (text, rel) => text.split(NL).find((line) => line.includes(BT + rel + BT)) ?? '';
     assert.match(lineOf(rendered.text, 'architecture/with.md'), /· !3 A1 · /);
     assert.match(rendered.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系$/m);
-    assert.match(rendered.text, /^索引 \d+\.\d{2}KB\/2\.00KB · L1 1 \/ L2 2 \/ raw 1$/m);
-    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
+    assert.match(rendered.text, /^索引 \d+\.\d{2}KB\/不限 · L1 1 \/ L2 2 \/ raw 1$/m);
+    assert.equal(rendered.truncated, false);
     const pinned = renderDocIndex(index, { pins: ['architecture/none.md'] });
     assert.doesNotMatch(lineOf(pinned.text, 'architecture/none.md'), /![0-9]|A[0-9]/, 'none 不渲染标记');
-    // 预算压力：每条决策都带 3 条 constraints，标记不挤爆 2KB（降级 A→B）。
+    // 去折叠：120 份带 constraints 的决策默认全单列（不再因 2KB 字节降级 A→B/C），标记仍渲染。
     for (let i = 0; i < 120; i += 1) w(join(r, 'decisions', 'd-' + i + '.md'), ...fm(['constraints: a; b; c']));
     const big = renderDocIndex(buildDocIndex(cwd));
-    assert.ok(big.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + big.bytes);
-    assert.ok(big.level === 'B' || big.level === 'C', '降级到 ' + big.level);
+    assert.equal(big.level, 'A', '去折叠后保持 A 层：' + big.level);
+    assert.ok(big.bytes > 2048, 'bytes ' + big.bytes);
+    assert.ok(big.shown >= 120);
+    assert.equal(big.truncated, false);
     assert.match(big.text, /^读法：L1 先读 \/ L2 按需；! 约束 · A 契约 · → 关系$/m);
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
@@ -258,17 +269,21 @@ test('checkSessionDocs：缺 frontmatter / 坏指针 / 超 L1 advisory 都给 wa
     w(join(fx.r, 'handoff-2.md'), '# 交接', '读 ' + BT + 'docs/nowhere.md' + BT);
     w(join(fx.r, 'progress.md'), '# 进度', 'x'.repeat(17 * 1024));
     const check = checkSessionDocs({ workspaceRoot: fx.cwd });
-    assert.equal(check.level, 'soft');
+    // 活跃文档（L1 handoff/progress）坏指针 → hard（docLint 汇总 FAIL）；其余 warning 仍保留。
+    assert.equal(check.level, 'hard');
     assert.equal(check.ok, false);
+    assert.ok(check.activePointers > 0);
+    assert.ok(check.pointers.some((item) => item.severity === 'fail' && item.source.startsWith('handoff-2.md')));
     assert.ok(check.warnings.some((line) => line.includes('frontmatter')));
     assert.ok(check.warnings.some((line) => line.includes('坏指针')));
+    assert.ok(check.warnings.some((line) => line.includes('活跃')));
     assert.ok(check.warnings.some((line) => line.includes('advisory')));
     const empty = checkSessionDocs({ workspaceRoot: mkdtempSync(join(tmpdir(), 'relay-docs-empty-')) });
     assert.equal(empty.ok, true);
   } finally { fx.cleanup(); }
 });
 
-test('checkSessionDocs：architecture/decisions 新文档缺 constraints 只 WARN；none/research/无 frontmatter 豁免', async () => {
+test('checkSessionDocs：constraints 覆盖全部 L2（缺就 WARN）；none 与 raw 豁免', async () => {
   const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-schema-'));
   try {
     const r = join(cwd, '.scratch', 'context-relay');
@@ -279,9 +294,12 @@ test('checkSessionDocs：architecture/decisions 新文档缺 constraints 只 WAR
     w(join(r, 'research', 'r.md'), ...fm('调研'));
     w(join(r, 'reports', 'task.md'), '# 回执');
     const check = checkSessionDocs({ workspaceRoot: cwd });
-    assert.ok(check.warnings.some((line) => line.includes('architecture/missing.md') && line.includes('constraints: none')));
-    for (const rel of ['architecture/none.md', 'architecture/legacy.md', 'research/r.md', 'reports/task.md']) {
-      assert.ok(!check.warnings.some((line) => line.includes('architecture/decisions 新文档缺 constraints') && line.includes(rel)), rel);
+    // 原规则只查 architecture/decisions；现在 constraints 覆盖全部 L2（含 research 与无 frontmatter 的旧文档）。
+    for (const rel of ['architecture/missing.md', 'architecture/legacy.md', 'research/r.md']) {
+      assert.ok(check.warnings.some((line) => line.includes('L2 缺 constraints') && line.includes(rel)), rel);
+    }
+    for (const rel of ['architecture/none.md', 'reports/task.md']) {
+      assert.ok(!check.warnings.some((line) => line.includes('L2 缺 constraints') && line.includes(rel)), rel);
     }
     const { docLint } = await import('../lib/lint.js');
     const lint = docLint({ workspaceRoot: cwd, sessionDocs: true });
@@ -443,10 +461,163 @@ test('v0.8.1 lint：覆盖全部 L1/L2、深层与大文件，坏路径/版本/s
     for (const reason of ['路径或符号链接越出', '版本不匹配', 'seq 范围倒置', '来源 session_id 或 seq', '索引版本', '来源 sessionId', 'seq 遮蔽区间', '索引 JSON']) assert.ok(check.pointers.some((p) => p.reason.includes(reason)), reason);
     assert.ok(check.pointers.every((p) => p.source && p.path && p.reason && p.suggestion));
     assert.match(check.seqVerification, /unknown/);
-    assert.equal(check.level, 'soft');
+    // L1 handoff 的坏指针是活跃文档 → hard（此前全 soft，374 条从不 FAIL）。
+    assert.equal(check.level, 'hard');
+    assert.ok(check.pointers.filter((item) => item.severity === 'fail').length > 0);
   } finally { fx.cleanup(); }
 });
 
+
+test('去折叠实测：A 层约 3KB（>原 2048B 护栏）仍单列、无 pin 也显示、health 标不限', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-unfold-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const role = '关键文档的作用说明，故意写长以逼近真实 workspace 的 A 层 3034B 索引（无 pin 也必须显示）';
+    const when = '新会话接手或压缩后先读这一份，拿到完整上下文后再继续当前 phase';
+    const fm = (title, extra = []) => ['---', 'title: ' + title, 'role: ' + role, 'layer: L1', 'when: ' + when, ...extra, '---', '# ' + title];
+    const base = Date.now() - 60_000;
+    ['handoff-a.md', 'handoff-b.md', 'handoff-c.md', 'phase-build-1.md', 'phase-ship-1.md', 'progress.md', 'lessons.md'].forEach((name, index) => {
+      const file = join(r, name);
+      w(file, ...fm(name));
+      utimesSync(file, new Date(base + index * 1000), new Date(base + index * 1000));
+    });
+    for (let i = 0; i < 10; i += 1) w(join(r, 'docs', 'note-' + i + '.md'), '---', 'role: 普通文档 ' + i, 'layer: L2', 'when: 需要时', 'constraints: none', '---', '# 说明');
+    const index = buildDocIndex(cwd);
+    const rendered = renderDocIndex(index);
+    // 实测：旧 2048B 护栏下这份 A 层会降级 C/B（无 pin 时 shown=0）；去折叠后 A 层保持原样。
+    assert.ok(rendered.bytes > 2048, 'A 层字节应超过旧护栏：' + rendered.bytes);
+    assert.equal(rendered.level, 'A');
+    assert.equal(rendered.truncated, false);
+    assert.equal(rendered.shown, 7, '7 条在役单列都在，无 pin 也显示');
+    for (const name of ['handoff-a.md', 'phase-build-1.md', 'progress.md', 'lessons.md']) assert.ok(rendered.text.includes(name), name);
+    assert.match(rendered.text, /^索引 \d+\.\d{2}KB\/不限 · L1 7 \/ L2 10 \/ raw 0$/m);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('relations 超上限不静默：relationsOverflow 计数 + lint WARN', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-relations-overflow-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const many = Array.from({ length: 10 }, (_, i) => 'docs/x' + i + '.md').join(', ');
+    w(join(r, 'architecture', 'many.md'), '---', 'role: 架构', 'layer: L2', 'when: 改前', 'constraints: none', 'relations: ' + many, '---', '# 文档');
+    assert.equal(parseRelations(many).length, 8, '解析仍截到上限 8');
+    assert.equal(parseRelationsDetailed(many).overflow, 2, '多出的 2 条被计数');
+    const index = buildDocIndex(cwd, { include: 'all' });
+    const entry = index.all.find((item) => item.relPath === 'architecture/many.md');
+    assert.equal(entry.relationsOverflow, 2);
+    assert.equal(index.counts.relationOverflow, 1);
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.ok(check.warnings.some((line) => line.includes('relations 超上限') && line.includes('architecture/many.md') && line.includes('2 条未解析')));
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('扫描深度/文件数超限：默认索引看不到的部分 WARN + deepDirs，exhaustive 仍全量', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-deep-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    w(join(r, 'docs', 'a', 'b', 'c', 'd', 'deep.md'), '# 深层', '读 ' + BT + 'docs/missing-deep.md' + BT);
+    const shallow = buildDocIndex(cwd, { include: 'all' });
+    assert.ok(!shallow.all.some((entry) => entry.relPath.endsWith('deep.md')), '默认扫描不进入第 5 层');
+    assert.equal(shallow.truncated, true);
+    assert.deepEqual(shallow.deepDirs, ['docs/a/b/c/d']);
+    assert.equal(shallow.counts.deep, 1);
+    const full = buildDocIndex(cwd, { exhaustive: true, include: 'all' });
+    assert.ok(full.all.some((entry) => entry.relPath === 'docs/a/b/c/d/deep.md'), 'exhaustive 仍全量检查');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.ok(check.warnings.some((line) => line.includes('默认扫描深度 4') && line.includes('docs/a/b/c/d')));
+    assert.deepEqual(check.deepDirs, ['docs/a/b/c/d']);
+    // 4000 文件上限不在测试里造 4000 份：纯函数直接验计数与命令。
+    assert.match(scanLimitWarnings({ total: 4001 }).join('；'), /超默认扫描上限 4000/);
+    assert.deepEqual(scanLimitWarnings({ total: 4000 }), [], '恰好 4000 份仍能全扫，不算截断');
+    assert.deepEqual(scanLimitWarnings({ total: 3 }), []);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('坏指针分级：活跃文档 FAIL、L2/raw 只 WARN；docLint 汇总 FAIL/ WARN', async () => {
+  const { docLint } = await import('../lib/lint.js');
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-severity-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (role, extra = []) => ['---', 'role: ' + role, 'layer: L2', 'when: 需要时', 'constraints: none', ...extra, '---'];
+    w(join(r, 'handoff-a.md'), '# 交接', '读 ' + BT + 'docs/missing-active.md' + BT);
+    w(join(r, 'architecture', 'a.md'), ...fm('架构'), '看 ' + BT + 'docs/missing-arch.md' + BT);
+    w(join(r, 'research', 'r.md'), ...fm('调研'), '看 ' + BT + 'docs/missing-research.md' + BT);
+    w(join(r, 'reports', 'task.md'), '# 回执', '看 ' + BT + 'docs/missing-report.md' + BT);
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(check.level, 'hard', '有活跃坏指针 → hard');
+    const severity = new Map(check.pointers.map((item) => [item.path, item.severity]));
+    assert.equal(severity.get('docs/missing-active.md'), 'fail', 'L1 handoff');
+    assert.equal(severity.get('docs/missing-arch.md'), 'fail', 'architecture 当前');
+    assert.equal(severity.get('docs/missing-research.md'), 'warn', '普通 L2');
+    assert.equal(severity.get('docs/missing-report.md'), 'warn', 'raw/reports');
+    assert.equal(check.activePointers, 2);
+    assert.equal(check.advisoryPointers, 2);
+    assert.equal(check.pointersOmitted, 0);
+    assert.deepEqual(check.advisoryReasons, { 目标不存在: 2 });
+    assert.match(check.warnings.join('；'), /坏指针 4 条（活跃 2 → FAIL \/ 其余 2 → WARN；advisory 原因 目标不存在 x2）/);
+    assert.match(check.warnings.join('；'), /结构化 pointers 保留活跃全部 \+ 前 20 条 advisory/);
+    const failed = docLint({ workspaceRoot: cwd, sessionDocs: true });
+    assert.equal(failed.level, 'FAIL', '活跃坏指针让 doc_lint 汇总 FAIL');
+    assert.equal(failed.checks.find((item) => item.name === 'docs').level, 'hard');
+
+    // 只有 L2/raw 坏指针时：docs 只 WARN，不 FAIL。
+    const soft = mkdtempSync(join(tmpdir(), 'relay-docs-severity-soft-'));
+    try {
+      const sr = join(soft, '.scratch', 'context-relay');
+      w(join(sr, 'research', 'r.md'), ...fm('调研'), '看 ' + BT + 'docs/missing-research.md' + BT);
+      w(join(sr, 'reports', 'task.md'), '# 回执', '看 ' + BT + 'docs/missing-report.md' + BT);
+      const softCheck = checkSessionDocs({ workspaceRoot: soft });
+      assert.equal(softCheck.level, 'soft');
+      assert.equal(softCheck.activePointers, 0);
+      assert.equal(docLint({ workspaceRoot: soft, sessionDocs: true }).level, 'WARN');
+    } finally { rmSync(soft, { recursive: true, force: true }); }
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('contracts/updated 陈旧：缺 updated、格式无效、超 90 天都 WARN；新鲜文档不报', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-stale-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const fm = (extra = []) => ['---', 'role: 架构', 'layer: L2', 'when: 需要时', 'constraints: none', ...extra, '---', '# 文档'];
+    w(join(r, 'architecture', 'stale.md'), ...fm(['updated: 2020-01-01']));
+    w(join(r, 'architecture', 'invalid.md'), ...fm(['updated: 2026/01/01']));
+    w(join(r, 'architecture', 'contracts.md'), ...fm(['contracts: index 返回 digest']));
+    w(join(r, 'architecture', 'fresh.md'), ...fm(['updated: ' + new Date().toISOString().slice(0, 10)]));
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.ok(check.warnings.some((line) => line.includes('updated 陈旧') && line.includes('architecture/stale.md')), '超 90 天');
+    assert.ok(check.warnings.some((line) => line.includes('updated 格式无效') && line.includes('architecture/invalid.md')), '格式无效');
+    assert.ok(check.warnings.some((line) => line.includes('contracts 文档缺 updated') && line.includes('architecture/contracts.md')), 'contracts 无 updated');
+    assert.ok(!check.warnings.some((line) => line.includes('architecture/fresh.md')), '新鲜文档不进 updated warning');
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('advisory pointers 有界：前 20 条进结构化清单，其余按原因计数（不静默、也不无界膨胀）', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-pointer-cap-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    for (let i = 0; i < 30; i += 1) w(join(r, 'reports', 'task-' + i + '.md'), '# 回执 ' + i, '看 ' + BT + 'docs/missing-' + i + '.md' + BT);
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    assert.equal(check.level, 'soft', 'raw/reports 只 WARN，不 FAIL');
+    assert.equal(check.advisoryPointers, 30);
+    assert.equal(check.pointers.length, 20, '只保留前 20 条 advisory 明细');
+    assert.equal(check.pointersOmitted, 10);
+    assert.deepEqual(check.advisoryReasons, { 目标不存在: 30 });
+    assert.match(check.warnings.join('；'), /其余 10 条只计数/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
+test('progress.key_docs 超 PIN_LIMIT 不静默：lint WARN 报保留/丢弃数', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-pin-overflow-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    const keys = Array.from({ length: 35 }, (_, i) => 'docs/p' + i + '.md');
+    w(join(r, 'progress.md'), '# 进度', '', '<!-- relay-progress:json', JSON.stringify({ key_docs: keys }), '-->');
+    const check = checkSessionDocs({ workspaceRoot: cwd });
+    const line = check.warnings.find((item) => item.includes('progress.key_docs'));
+    assert.ok(line, '超 PIN_LIMIT 要给 WARN：' + check.warnings.join('；'));
+    assert.match(line, /32\/35 保留，3 条未展示/);
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
 
 test('v0.8.1 index：缺省元数据显式 unknown，大文件仍识别 frontmatter', () => {
   const fx = fixture();

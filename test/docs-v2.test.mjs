@@ -121,7 +121,7 @@ test('嵌套目录：组行 prefix 直达（任何路径 ≤2 次调用可达）
   } finally { fx.cleanup(); }
 });
 
-test('预算护栏：大量带决策文档撑爆 2KB 时降级 B/C，仍 0 不可达/0 无命令省略', () => {
+test('去折叠：300 份带决策文档 A 层全单列（不再按字节降级）；显式 maxBytes 仍可兜底', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-v2-budget-'));
   try {
     const r = join(cwd, '.scratch', 'context-relay');
@@ -129,9 +129,10 @@ test('预算护栏：大量带决策文档撑爆 2KB 时降级 B/C，仍 0 不�
     for (let i = 0; i < 10; i += 1) w(join(r, 'architecture', 'a-' + i + '.md'), ...fm('架构 ' + i));
     const index = buildDocIndex(cwd);
     const rendered = renderDocIndex(index);
-    assert.ok(rendered.bytes <= DOC_LIMITS.indexBytes, 'bytes ' + rendered.bytes);
-    assert.ok(rendered.level === 'B' || rendered.level === 'C', '降级到 ' + rendered.level);
-    assert.ok(rendered.omitted > 0);
+    assert.equal(rendered.level, 'A', '缺省 A 层（去折叠）：' + rendered.level);
+    assert.ok(rendered.bytes > 2048, 'bytes ' + rendered.bytes);
+    assert.equal(rendered.truncated, false);
+    assert.ok(rendered.shown >= 300, 'shown=' + rendered.shown);
     const prefixes = rendered.text.split('relay_doc list prefix=').slice(1).map((part) => part.split(/[\s`]/)[0]);
     const unreachable = index.all.filter((entry) => !(rendered.text.includes('`' + entry.relPath + '`')
       || prefixes.some((prefix) => entry.relPath === prefix || entry.relPath.startsWith(prefix + '/'))
@@ -140,6 +141,10 @@ test('预算护栏：大量带决策文档撑爆 2KB 时降级 B/C，仍 0 不�
     for (const line of rendered.text.split(NL)) {
       if (/份（代表|已折叠|另有/.test(line)) assert.match(line, /relay_doc/, '无命令省略：' + line);
     }
+    // 显式预算仍生效（调用方主动要护栏时）：A→B 折叠，仍有命令可回取。
+    const capped = renderDocIndex(index, { maxBytes: 2048 });
+    assert.notEqual(capped.level, 'A', '显式 maxBytes 仍折叠：' + capped.level);
+    assert.equal(capped.truncated, false, '折叠组有命令，不算 truncated');
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
@@ -333,7 +338,7 @@ test('显示宽度：CJK/emoji 双宽；W 触发 A→B，layout=flat 关闭 W/G�
     assert.equal(displayWidth('👁a'), 3, 'emoji 记 2 列');
     assert.equal(displayWidth('👁' + String.fromCharCode(0xfe0f)), 2, 'VS16 变体选择符不额外计列');
     const index = buildDocIndex(fx.cwd);
-    assert.equal(renderDocIndex(index).level, 'A', '默认 1024 列下小索引仍 A');
+    assert.equal(renderDocIndex(index).level, 'A', '默认不限列（去折叠）：小索引仍 A');
     const wide = renderDocIndex(index, { width: 100 });
     assert.equal(wide.level, 'B', 'W 按显示宽度触发');
     const flat = renderDocIndex(index, { width: 1, layout: false });
