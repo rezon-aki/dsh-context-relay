@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { apply, LEAD_ONLY_TOOLS as LEGACY_LEAD_ONLY, SUBAGENT_ONLY_HIDDEN_TOOLS as LEGACY_SUBAGENT_HIDDEN } from '../lib/agent.js';
 import {
   LEAD_ONLY_TOOLS,
-  PROTOCOL_SECTION_NAME,
+  PHASE_SECTION_NAME,
   ROLES,
   SUBAGENT_ASK_USER_DENY,
   SUBAGENT_DOC_LINT_DENY,
@@ -20,9 +20,7 @@ import {
 import {
   ARCHITECT_WORKER_PROTOCOL_TEXT,
   ROUTER_DENY_TOOLS,
-  ROUTER_PROTOCOL_TEXT,
   TEAMMATE_PROTOCOL_TEXT,
-  TEAM_LEAD_PROTOCOL_TEXT,
 } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 
@@ -56,13 +54,10 @@ test('ROLES 覆盖四角色：deny/sections/tools/skills/seed 形状齐全，工
 });
 
 test('协议文本单一真源：roles 段直接引用 protocol.js / worker.js（不复制文本）', () => {
-  const byName = (role, name) => ROLES[role].sections.find((section) => section.name === name);
-  assert.equal(byName('lead', 'context-relay:router').text, ROUTER_PROTOCOL_TEXT);
-  assert.equal(byName('lead', 'context-relay:router').order, 10152);
-  assert.equal(byName('lead', 'context-relay:team-lead').text, TEAM_LEAD_PROTOCOL_TEXT);
-  assert.equal(byName('lead', 'context-relay:team-lead').order, 10153);
+  // v0.14 P1：Lead 静态段拆 preset 层 redline+phase；角色影子段仍用 context-relay:phase 同名覆盖。
+  assert.deepEqual(ROLES.lead.sections, [], 'Lead 无角色影子段');
   for (const [role, text] of [['teammate', TEAMMATE_PROTOCOL_TEXT], ['architect', ARCHITECT_WORKER_PROTOCOL_TEXT], ['worker', WORKER_PROTOCOL_TEXT]]) {
-    const section = ROLES[role].sections.find((entry) => entry.name === PROTOCOL_SECTION_NAME);
+    const section = ROLES[role].sections.find((entry) => entry.name === PHASE_SECTION_NAME);
     assert.ok(section !== undefined, role + ' 用同名协议段覆盖 preset');
     assert.equal(section.text, text, role + ' 协议文本必须与导入源一致');
     assert.equal(section.order, 10150, role + ' order 沿用 preset 段顺序');

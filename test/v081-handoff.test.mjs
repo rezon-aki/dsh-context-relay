@@ -33,10 +33,26 @@ test('v0.14 P2: 首条注入 = [交接摘要] 机器头 + source.kind=user + ≤
  const message=h.inbox.nextTurn[0];assert.ok(message,'acceptance inbox holds the first message');
  assert.equal(message.source.kind,'user','首条仍是用户发言（非插件 notice）');
  const text=message.content[0].text;
- assert.ok(text.startsWith('[交接摘要]\n'),'机器头先给交接摘要');
+ assert.ok(text.startsWith('[交接摘要·系统生成，非用户发言]\n'),'机器头先给交接摘要且标明系统生成');
+ assert.match(text, /对用户只用三问；禁 band=\/verdict\/relay_\*。/, '近端尾行：对用户只用三问');
  assert.ok(Buffer.byteLength(text,'utf8')<=8000,'首条 ≤8KB，实际 '+Buffer.byteLength(text,'utf8'));
  assert.ok(text.includes('## 完整交接单（全部细节）'),'完整交接单段落保留');
  assert.match(text,/完整交接单：\.scratch\/context-relay\/handoff-\d+\.md/,'指向完整交接单文件');
+});
+test('v0.14 P2: handoff 文档索引不按 1,500B 裁剪（8KB 预算只裁摘要）',async()=>{
+ const h=harness();
+ const docsRoot=join(h.cwd,'.scratch','context-relay','decisions');
+ fs.mkdirSync(docsRoot,{recursive:true});
+ for(let i=0;i<24;i+=1){writeFileSync(join(docsRoot,'d-'+i+'.md'),'---\nrole: 决策 '+i+' 号 — 用于撑大交接索引的较长角色描述与理由说明\nlayer: L2\nwhen: 需要知道为什么这样做时阅读的较长说明\n---\n# 决策 '+i+'\n');}
+ const r=await h.run();assert.equal(r.ok,true,JSON.stringify(r));
+ const text=h.inbox.nextTurn[0].content[0].text;
+ const start=text.indexOf('## 文档索引');
+ const end=text.indexOf('## 完整交接单');
+ assert.ok(start>=0&&end>start,'首条含文档索引段');
+ const injectedIndex=text.slice(start,end).trimEnd();
+ assert.ok(Buffer.byteLength(injectedIndex,'utf8')>1500,'索引段 >1500B（未被旧 1500B 裁剪），实际 '+Buffer.byteLength(injectedIndex,'utf8'));
+ assert.ok(injectedIndex.includes('d-23.md'),'最后一份决策文档也在索引内（未截断）');
+ assert.ok(Buffer.byteLength(text,'utf8')<=8000,'首条仍 ≤8KB');
 });
 test('v081: stop-old failure persists full recovery and does not silently succeed',async()=>{const detail='failure '.repeat(500);const h=harness({killError:new Error(detail)});const r=await h.run();assert.equal(r.ok,false);assert.equal(r.code,'handoff-cleanup-failed');assert.ok(r.recovery.length);const text=readFileSync(r.handoffPath,'utf8');assert.ok(text.includes(detail));assert.match(text,/job launch command in checkpoint/);assert.match(text,/recovery/);});
 test('v081: async dispose failure is returned, not swallowed',async()=>{const h=harness({accept:false,dispatchError:new Error('dispatch'),disposeError:new Error('dispose failed')});const r=await h.run();assert.equal(r.ok,false);assert.match(JSON.stringify(r.recovery),/dispose failed/);assert.ok(!h.calls.includes('kill'));});

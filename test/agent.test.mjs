@@ -283,80 +283,103 @@ async function loadV4Admission() {
   }
 }
 
-test('apply registers protocol section and six relay tools', () => {
+test('apply registers phase + redline sections and relay tools', () => {
   resetSharedState();
   // 本测试单独验证 unlimitedBudget 注入（agent 选项 vs live 设置），清掉 band 夹具的全局设置。
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   const services = fakeServices({ session: fakeSession({ seq: 0 }) });
   const { tools, sections } = applyAgent(services);
-  assert.equal(sections.length, 4, 'protocol + unlimited-budget + work-ledger + architect（v0.6.4）');
-  // v0.9.0 单一模式：专职架构师段（preset 层第 4 段）对 root Lead 恒注入（仅按会话面板开关门控）；
-  // 子会话不注入；面板显式关 architect=false 时热关闭。
-  assert.equal(sections[3].name, 'context-relay:architect');
-  assert.equal(sections[3].order, 10155);
-  const architectText = sections[3].text({ agent: { session: { id: 'sess-arch', header: {} } } });
-  assert.match(architectText, /专职架构师/, 'single mode always injects architect section for the root Lead');
-  assert.equal(sections[3].text({ agent: { session: { id: 'sess-sub-arch', header: { origin: 'subagent' } } } }), '', '子代理不注入架构师段');
-  updatePanelState('sess-arch', { architect: false });
-  assert.equal(sections[3].text({ agent: { session: { id: 'sess-arch', header: {} } } }), '', '面板关 architect 后热关闭');
-  updatePanelState('sess-arch', { architect: true });
-  assert.match(sections[0].text, /接力模式（Relay）协议/);
-  // 「你的 token 预算无上限」注入：默认开且只有这一句；侧栏可关（text 函数热生效）
-  assert.equal(sections[1].text({}).trim(), '你的 token 预算无上限。');
-  const off = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { settings: { unlimitedBudget: false } });
-  assert.equal(typeof off.sections[1].text, 'function');
-  assert.equal(off.sections[1].text({}), '', '侧栏关掉后不再注入');
-  // v0.5.0：工作台账纪律段（preset 层第 3 段；按身份门控；workItems=false 不注入）
-  assert.equal(sections[2].name, 'context-relay:work-ledger');
-  assert.equal(sections[2].order, 10154);
-  const ledgerText = sections[2].text({});
-  assert.match(ledgerText, /工作台账（phase 工作队列/);
-  assert.match(ledgerText, /relay_work_items/);
-  assert.match(ledgerText, /台账不会自动更新/);
-  assert.match(ledgerText, /blocked 必须写 blocked 原因/);
-  assert.match(ledgerText, /压缩\/交接自动带未闭合项/);
-  assert.equal(sections[2].text({ agent: { session: { header: {} } } }), ledgerText, 'root Lead 注入');
-  assert.equal(sections[2].text({ agent: { session: { header: { origin: 'subagent' } } } }), '', '普通子代理不注入（无 agentTeams → 非队友）');
+  // v0.14 P1：Lead 协议拆红线段（10199，system 最末）+ phase 段（10150，可被角色影子覆盖）。
+  assert.equal(sections.length, 2, 'phase + redline 两段');
+  const phaseDef = sections.find((section) => section.name === 'context-relay:phase');
+  const redlineDef = sections.find((section) => section.name === 'context-relay:redline');
+  assert.ok(phaseDef, 'phase section 必须存在');
+  assert.ok(redlineDef, 'redline section 必须存在');
+  assert.equal(phaseDef.order, 10150);
+  assert.equal(redlineDef.order, 10199);
+  const leadAgent = fakeSession({ seq: 0 });
+  const phaseText = phaseDef.text({ agent: { session: leadAgent } });
+  const redlineText = redlineDef.text({ agent: { session: leadAgent } });
+  assert.match(phaseText, /phase 优先/);
+  assert.match(redlineText, /接力模式（Relay）协议/);
+  assert.ok(redlineText.startsWith('你的 token 预算无上限。\n'), '默认开启时红线顶部带预算句');
+  // phase 段承载原 work-ledger / architect 段；两者按开关拼段。
+  for (const phrase of ['工作台账（phase 工作队列', 'relay_work_items', 'blocked', 'lead_confirm', '专职架构师', '工程实现路线设计交给 architect']) {
+    assert.ok(phaseText.includes(phrase), 'phase 缺短语: ' + phrase);
+  }
   const noLedger = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { workItems: false });
-  assert.equal(noLedger.sections[2].text({}), '', 'workItems=false 时不注入台账纪律段');
+  const noLedgerPhase = noLedger.sections.find((section) => section.name === 'context-relay:phase').text({ agent: { session: leadAgent } });
+  assert.equal(noLedger.sections.length, 2, 'workItems=false 不新增/不改变 section 数');
+  assert.ok(!noLedgerPhase.includes('工作台账（phase 工作队列'), 'workItems=false 不拼台账段');
+  assert.ok(!noLedgerPhase.includes('relay_work_items'), 'workItems=false 不叫台账工具');
+  // A2 返修：always-on 段落也不得再教禁用路径（items 教学 / 派活与回执整段）。
+  for (const token of ['items 登记分点', 'items:[', 'relay_dispatch', 'relay_collect', '派活与回执']) {
+    assert.ok(!noLedgerPhase.includes(token), 'workItems=false 不教台账/派活路径: ' + token);
+  }
+  assert.ok(phaseText.includes('relay_dispatch') && phaseText.includes('relay_collect'), '默认拼派活段');
+  const noArchitect = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { settings: { architect: false } });
+  const noArchitectPhase = noArchitect.sections.find((section) => section.name === 'context-relay:phase').text({ agent: { session: leadAgent } });
+  assert.ok(!noArchitectPhase.includes('专职架构师'), 'architect=false 不拼架构师段');
+  assert.ok(!noArchitectPhase.includes('relay_architect'), 'architect=false 不教 relay_architect');
+  assert.ok(phaseText.includes('relay_architect'), '默认拼架构师段');
+  assert.ok(noArchitectPhase.includes('工作台账'), 'architect=false 仍拼台账段');
+  // 两开关同时关：三处禁用路径都不出现。
+  const bothOff = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { workItems: false, settings: { architect: false } });
+  const bothOffPhase = bothOff.sections.find((section) => section.name === 'context-relay:phase').text({ agent: { session: leadAgent } });
+  for (const token of ['relay_work_items', 'relay_dispatch', 'relay_collect', 'relay_architect']) {
+    assert.ok(!bothOffPhase.includes(token), '两开关关：不出现 ' + token);
+  }
+  // 面板会话级关闭架构师 → 热生效（text 每次求值）
+  updatePanelState(leadAgent.id, { architect: false });
+  assert.ok(!phaseDef.text({ agent: { session: leadAgent } }).includes('专职架构师'), 'panel architect=false 热生效');
+  updatePanelState(leadAgent.id, { architect: true });
+  assert.ok(phaseDef.text({ agent: { session: leadAgent } }).includes('专职架构师'), 'panel architect=true 恢复');
+  // 预算关：红线仍在，只是没有顶部预算句（redline 段不再拆独立 unlimited section）
+  const off = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }), { settings: { unlimitedBudget: false } });
+  const offRedline = off.sections.find((section) => section.name === 'context-relay:redline');
+  assert.equal(typeof offRedline.text, 'function');
+  assert.ok(!offRedline.text({ agent: { session: leadAgent } }).startsWith('你的 token 预算无上限'), '预算关时不注入预算句');
+  assert.match(offRedline.text({ agent: { session: leadAgent } }), /接力模式（Relay）协议/, '红线仍在');
+  // 非 root：红线只保留预算句，phase 交给角色影子段（同名覆盖），不把 Lead 协议注入队友。
+  const child = { id: 'session-agent-child', header: { origin: 'subagent', delegationDepth: 1, parentSession: leadAgent.id }, seq: 0 };
+  assert.equal(redlineDef.text({ agent: { session: child } }).trim(), '你的 token 预算无上限。', '非 root 只拿预算句');
+  assert.equal(phaseDef.text({ agent: { session: child } }), '', '非 root phase 由角色影子段覆盖');
   assert.ok(off.tools.get('relay_phase') !== undefined);
-  assert.match(sections[0].text, /Phase 状态机/);
-  assert.match(sections[0].text, /团队纪律/);
+  assert.match(phaseText, /Phase 状态机/);
+  assert.match(phaseText, /团队纪律/);
   // 用户口径（2026-10-24）：阈值/收尾/继续方式只在跨档到线提醒里出现，协议本体不写死
-  assert.ok(!sections[0].text.includes('35%/40%/50%'), 'protocol must not hardcode thresholds');
+  assert.ok(!phaseText.includes('35%/40%/50%'), 'protocol must not hardcode thresholds');
   // 2026-11-01 用户更正：预算=上下文预算属于设计理念，不写进常驻协议、不写死 40%
-  assert.ok(!sections[0].text.includes('40%'), 'protocol must not hardcode 40%');
-  assert.ok(!sections[0].text.includes('高效区'), 'protocol must not embed the efficiency-zone philosophy');
-  assert.ok(!sections[0].text.includes('上下文预算'), 'protocol must not embed the context-budget philosophy');
+  assert.ok(!phaseText.includes('40%'), 'protocol must not hardcode 40%');
+  assert.ok(!phaseText.includes('高效区'), 'protocol must not embed the efficiency-zone philosophy');
+  assert.ok(!phaseText.includes('上下文预算'), 'protocol must not embed the context-budget philosophy');
   // 侧栏热生效：不重建 agent 平面，段 text() 直接读 live 设置
   globalThis[Symbol.for('dsh-context-relay.settings')] = { unlimitedBudget: false };
-  assert.equal(sections[1].text({}), '', 'live 关闭热生效');
+  assert.ok(!redlineDef.text({ agent: { session: leadAgent } }).startsWith('你的 token 预算无上限'), 'live 关闭热生效');
   globalThis[Symbol.for('dsh-context-relay.settings')] = { unlimitedBudget: true };
-  assert.equal(sections[1].text({}).trim(), '你的 token 预算无上限。', 'live 打开热生效');
+  assert.ok(redlineDef.text({ agent: { session: leadAgent } }).startsWith('你的 token 预算无上限。'), 'live 打开热生效');
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
-  assert.match(sections[0].text, /四档语义/);
+  assert.match(phaseText, /四档语义/);
   // 压缩/接力都是可选项，由人类/面板选（到线提醒里给动作）
-  assert.match(sections[0].text, /严格按模式执行/);
-  // P2/A3 修正：插件在压缩时自动跑 doc_lint 并把结果写进 brief/evidence，模型手动补充只在需要时
-  assert.match(sections[0].text, /插件自动跑 doc_lint/, 'doc_lint 由插件自动跑（不再是模型压缩后必跑）');
+  assert.match(phaseText, /严格按模式执行/);
   // 2026-10-25 用户口径：预算只当 phase 边界闸门——本 phase 未完成不看预算，超预算不得开新 phase
-  assert.match(sections[0].text, /phase 边界闸门/);
-  assert.match(sections[0].text, /不开新 phase/);
-  assert.match(sections[0].text, /不挡当前 phase 的工作/);
+  assert.match(phaseText, /phase 边界闸门/);
+  assert.match(phaseText, /不开新 phase/);
+  assert.match(phaseText, /不挡当前 phase 的工作/);
   // v0.10.0 C10：退役档位句/派生插入句已从常驻协议删净，不得回潮。
-  assert.doesNotMatch(sections[0].text, /没有「压缩后立即开新会话」档/, 'P3：LONG 派生插入句已删除');
-  assert.doesNotMatch(sections[0].text, /compress-then-handoff|autoChoose|autoDecision/, 'C10：退役标识不得回到常驻协议');
-  assert.match(sections[0].text, /不要先调 relay_phase/);
+  assert.doesNotMatch(phaseText, /没有「压缩后立即开新会话」档/, 'P3：LONG 派生插入句已删除');
+  assert.doesNotMatch(phaseText, /compress-then-handoff|autoChoose|autoDecision/, 'C10：退役标识不得回到常驻协议');
+  assert.match(phaseText, /不要先调 relay_phase/);
   // 2026-10-25 面板契约：到线提醒与压缩次数解耦、一次性默认操作、授权/免审口径、不再弹官方审批
-  assert.match(sections[0].text, /到线提醒/);
-  assert.match(sections[0].text, /与压缩次数无关/);
+  assert.match(phaseText, /到线提醒/);
   // v0.4.0：模式持久（不消费），到线按模式执行
-  assert.match(sections[0].text, /\*\*持久\*\*（不消费）/);
-  // B-P1-2：授权语义收敛到唯一权威句（预设不产生豁免；免审只来自三个授权）
-  assert.match(sections[0].text, /模式只决定「做什么」/);
-  assert.match(sections[0].text, /不产生审批豁免/);
-  assert.match(sections[0].text, /免审只来自 autoCompress \/ autoHandoff \/ authorizeNext/);
-  assert.doesNotMatch(sections[0].text, /本次免审批|视为已授权|pre-authorize/);
+  assert.match(phaseText, /\*\*持久\*\*（不消费）/);
+  // B-P1-2：授权语义收敛到唯一权威句（redline）；预设不产生豁免；免审只来自三个授权
+  const allText = [phaseText, redlineText].join('\n');
+  assert.match(allText, /模式只决定「做什么」/);
+  assert.match(allText, /不产生审批豁免/);
+  assert.match(allText, /免审只来自 autoCompress \/ autoHandoff \/ authorizeNext/);
+  assert.doesNotMatch(allText, /本次免审批|视为已授权|pre-authorize/);
   // 工具描述同步提面板、不提审批弹窗
   assert.match(tools.get('relay_phase').description, /composer panel/);
   assert.match(tools.get('relay_handoff').description, /composer panel/);
@@ -364,24 +387,27 @@ test('apply registers protocol section and six relay tools', () => {
   assert.deepEqual(names, ['doc_lint', 'relay_doc', 'relay_handoff', 'relay_organize', 'relay_phase', 'relay_recommend', 'relay_status', 'relay_work_items']);
 });
 
-test('v0.2.7：unlimitedBudget 注入段按会话读 composer 小胶囊设置（热生效；面板快照覆盖全局默认）', () => {
+test('v0.2.7：unlimitedBudget 句按会话读 composer 小胶囊设置（热生效；红线顶部）', () => {
   resetSharedState();
   const { sections } = applyAgent(fakeServices({ session: fakeSession({ seq: 0 }) }));
-  const text = sections[1].text;
+  const redlineDef = sections.find((section) => section.name === 'context-relay:redline');
+  const text = redlineDef.text;
   const ctxOf = (id) => ({ agent: { session: fakeSession({ id }) } });
-  // 默认（无面板记录 + settings 默认开）→ 注入一句
-  assert.equal(text(ctxOf('session-budget-prompt')).trim(), '你的 token 预算无上限。');
-  // 本会话关（composer 小胶囊 PUT 的同一份 panel 状态）→ 空串；再开 → 恢复（热生效，不重建 agent 平面）
+  const hasBudget = (ctx) => String(text(ctx)).startsWith('你的 token 预算无上限。');
+  // 默认（无面板记录 + settings 默认开）→ 红线顶部带预算句
+  assert.equal(hasBudget(ctxOf('session-budget-prompt')), true);
+  // 本会话关（composer 小胶囊 PUT 的同一份 panel 状态）→ 不注入；再开 → 恢复（热生效，不重建 agent 平面）
   updatePanelState('session-budget-prompt', { unlimitedBudget: false });
-  assert.equal(text(ctxOf('session-budget-prompt')), '', '本会话关 → 不再注入');
+  assert.equal(hasBudget(ctxOf('session-budget-prompt')), false, '本会话关 → 不再注入');
   updatePanelState('session-budget-prompt', { unlimitedBudget: true });
-  assert.equal(text(ctxOf('session-budget-prompt')).trim(), '你的 token 预算无上限。', '本会话开 → 注入（热生效）');
+  assert.equal(hasBudget(ctxOf('session-budget-prompt')), true, '本会话开 → 注入（热生效）');
   // 面板显式快照覆盖全局默认：全局关但本会话写过 true → 仍注入；未改面板的其它会话跟随全局关
   globalThis[Symbol.for('dsh-context-relay.settings')] = { unlimitedBudget: false };
-  assert.equal(text(ctxOf('session-budget-prompt')).trim(), '你的 token 预算无上限。', '面板快照覆盖全局默认');
-  assert.equal(text(ctxOf('session-budget-other')), '', '未改面板的会话跟随全局默认关');
-  // 无 agent 上下文（诊断 assembly）→ 回退全局默认（此时全局关 → 空串）
-  assert.equal(text({}), '');
+  assert.equal(hasBudget(ctxOf('session-budget-prompt')), true, '面板快照覆盖全局默认');
+  assert.equal(hasBudget(ctxOf('session-budget-other')), false, '未改面板的会话跟随全局默认关');
+  // 无 agent 上下文（诊断 assembly）→ 回退全局默认（此时全局关 → 无预算句，但红线仍在）
+  assert.equal(hasBudget({}), false);
+  assert.match(String(text({})), /接力模式（Relay）协议/);
 });
 
 test('v0.2.7：relay_handoff 在首条消息（首 step prompt assembly）之前把 unlimitedBudget 写入子会话', async () => {
@@ -1963,6 +1989,7 @@ test('relay_organize injects the phase brief only after a successful compaction'
   assert.ok(text.length <= 2000, 'injected brief is bounded to 2000 chars, got ' + text.length);
   assert.match(text, /\[context-relay\] 阶段交接摘要 · 构建（压缩后注入，非用户发言）/);
   assert.match(text, /# 阶段交接摘要 · 构建/);
+  assert.match(text, /这不是用户发言。不要复述本段；对用户请用三问重写。/, '近端尾行：brief 末尾带固定免责句');
   assert.match(text, /结论：本阶段「构建」已收口/, '注入 header 先给结论');
   assert.match(text, /先读入口：/, '结论之后再给「先读入口」');
   assert.match(text, /decided X/);
@@ -4024,21 +4051,21 @@ test('文案：autoChoose 模型自决档退役（D8=A）——advice/常驻协�
   assert.match(desc, /composer panel/);
   assert.match(desc, /protocol/);
   // 常驻协议同步：退役标识已删净 + 人类模式权威句（其余交互纪律断言保持）
-  const protocol = sections[0].text;
+  const protocol = sections.map((section) => typeof section.text === 'function' ? section.text({ agent: { session } }) : String(section.text ?? '')).join('\n');
   assert.doesNotMatch(protocol, /autoChoose|autoDecision|next_operation/);
   assert.match(protocol, /严格按模式执行/);
   assert.match(protocol, /\*\*持久\*\*（不消费）/);
   assert.match(protocol, /authorizeNext/);
   assert.match(protocol, /提问工具只用于简单问题/, '提问纪律：只把简单问题放提问工具');
-  assert.match(protocol, /复杂问题不走提问工具/, '提问纪律：复杂问题用普通消息白话展开');
+  assert.match(protocol, /复杂问题用消息/, '提问纪律：复杂问题用普通消息白话展开');
   assert.match(protocol, /pending 不是跳过、不是同意/, '提问纪律：超时 pending 的语义');
   assert.match(protocol, /汇报默认三问/, '交互纪律：用户汇报默认三问（D2=A；四段仅在要细节/长报告时用）');
-  assert.match(protocol, /等待纪律/, '等待纪律：派活后不空转等队友');
-  assert.match(protocol, /wait_agent \/ list_agents/, '等待纪律：点名不要循环调用的工具');
-  assert.match(protocol, /回执会自动作为消息送达/, '等待纪律：回执自动送达');
+  assert.match(protocol, /wait_agent/, '等待纪律：派活后不空转等队友');
+  assert.match(protocol, /wait_agent\/list_agents/, '等待纪律：点名不要循环调用的工具');
+  assert.match(protocol, /回执自动送达/, '等待纪律：回执自动送达');
   assert.match(protocol, /≤120s/, '等待纪律：只在被阻塞时有界等待');
   assert.match(protocol, /完整上下文索引/, '用户门：Lead 必须给全上下文索引');
-  assert.match(protocol, /不重跑技术验证、不重读第三方源码/, '用户门：审查范围限定需求↔实现对齐');
+  assert.match(protocol, /只报证据/, '用户门：审查范围限定需求↔实现对齐');
   assert.match(protocol, /最多 1 轮/, '用户门：审查轮数上限');
   assert.match(protocol, /审查超时或未完成不算通过/, '用户门：#15 审查超时/未完成不算通过');
   resetSharedState();
@@ -4282,7 +4309,7 @@ test('B-P1-2 文本契约：协议/工具描述/运行期 advice 不含旧授权
   const session = fakeSession({ id: 'session-copy-contract', cwd, seq: 0 });
   const { services } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const { tools, sections } = applyAgent(services);
-  const protocol = sections[0].text;
+  const protocol = sections.map((section) => typeof section.text === 'function' ? section.text({ agent: { session } }) : String(section.text ?? '')).join('\n');
   assert.doesNotMatch(protocol, forbidden, '常驻协议不得残留旧授权口径');
   assert.match(protocol, /模式只决定「做什么」/);
   assert.match(protocol, /不产生审批豁免/);
@@ -4393,7 +4420,7 @@ test('P2-19/C11：工具描述瘦身预算（每条 ≤1 行 / 总字符预算�
   assert.ok(leadParameterChars <= 6050, 'lead-only 5 条参数总字符 <=6050（v0.13 D3 实测 5943），实际 ' + leadParameterChars);
   assert.deepEqual(tools.get('relay_phase').parameters.properties.budget_plan.properties.action.enum, ['proceed', 'split', 'relay'], 'warn 档 budget_plan 三选一进参数 schema');
   // 语义收敛协议：模式/授权口径在协议里完整复述（描述只留指针；退役标识不回流）
-  const protocol = sections[0].text;
+  const protocol = sections.map((section) => typeof section.text === 'function' ? section.text({ agent: { session: { id: 'session-desc-budget', header: {}, seq: 0 } } }) : String(section.text ?? '')).join('\n');
   for (const keyword of ['autoCompress', 'autoHandoff', 'authorizeNext', '模式只决定「做什么」']) {
     assert.ok(protocol.includes(keyword), '协议必须承载语义 ' + keyword);
   }
@@ -4980,40 +5007,32 @@ test('v0.3.3 推荐清理：relay_phase 成功切 phase / relay_organize 压缩�
   assert.deepEqual(recommendationOf(hSession.id), cleared, '接力成功后旧会话推荐清空');
   assert.deepEqual(recommendationOf('session-rec-clean-child'), cleared, '新会话不继承推荐');
 });
-test('v0.6.4/v0.9.0 专职架构师段：单一模式恒注入（不再依赖 routerMode 参数）；Lead 段按会话开关热生效；名为 architect 的队友拿架构师段', () => {
+test('v0.14 P1 专职架构师：phase 段按开关/面板拼段（无独立 section）；工具仍按会话开关门控', () => {
   resetSharedState();
   const leadAgent = { session: fakeSession({ id: 'session-arch-lead', seq: 0, header: {} }) };
-  const architectAgent = { session: fakeSession({ id: 'session-arch-worker', seq: 0, header: { origin: 'subagent' } }) };
   const teams = {
-    tryMembership: (agent) => {
-      if (agent === leadAgent) return { role: 'lead' };
-      if (agent === architectAgent) return { role: 'teammate', name: 'architect' };
-      return undefined;
-    },
+    tryMembership: (agent) => (agent === leadAgent ? { role: 'lead' } : undefined),
     listMembers: () => [],
   };
   const { services } = fakeServices({ session: leadAgent.session, extra: { agentTeams: teams } });
-  // v0.9.0 单一模式：apply 后 routerMode 恒 true → 架构师段恒注入（不依赖 config.routerMode 参数）
   const single = applyAgent(services);
-  const section = single.sections.find((item) => item.name === 'context-relay:architect');
-  assert.ok(section, '单一模式恒注入架构师段');
-  assert.match(section.text({ agent: leadAgent }), /专职架构师/, 'root Lead：分工段');
-  assert.match(section.text({ agent: leadAgent }), /工程实现路线设计交给 architect/);
-  for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承']) {
-    assert.ok(section.text({ agent: leadAgent }).includes(phrase), '架构师注入缺短语: ' + phrase);
+  assert.equal(single.sections.find((item) => item.name === 'context-relay:architect'), undefined, 'P1 合并后无独立架构师段');
+  const phaseDef = single.sections.find((item) => item.name === 'context-relay:phase');
+  const protocol = phaseDef.text({ agent: leadAgent });
+  for (const phrase of ['专职架构师', '工程实现路线设计交给 architect', '默认值跟随「模型」选择器', '已选过则沿用', '不拒绝', 'handoff 继承']) {
+    assert.ok(protocol.includes(phrase), 'phase 段缺架构师短语: ' + phrase);
   }
-  // v0.9.0：旧部署显式 routerMode=false 不再回退 classic（生产恒单一模式，仅 warn）
+  // 旧部署显式 routerMode=false 也不再改变装配（单一模式恒开）
   const legacy = applyAgent(fakeServices({ session: fakeSession({ id: 'session-arch-legacy', seq: 0, header: {} }), extra: { agentTeams: teams } }).services, { routerMode: false });
-  assert.match(legacy.sections.find((item) => item.name === 'context-relay:architect').text({ agent: leadAgent }), /专职架构师/, '旧 routerMode=false 配置仍注入（single 恒开）');
-  // 架构师自己的协议由 agent/created 的 ARCHITECT_WORKER 影子注入（见 router 测试），
-  // preset 层架构师段只给 Lead，避免与 TEAMMATE/TEAM_WORKER 叠加。
-  assert.equal(section.text({ agent: architectAgent }), '', 'preset 层架构师段不重复注入 worker');
-  // 会话开关关掉 → Lead 段不注入
+  assert.equal(legacy.sections.find((item) => item.name === 'context-relay:architect'), undefined, '旧配置不恢复独立段');
+  const legacyPhase = legacy.sections.find((item) => item.name === 'context-relay:phase').text({ agent: leadAgent });
+  assert.match(legacyPhase, /专职架构师/, '技术路线纪律仍在 phase 段内');
+  // 面板小胶囊门控 relay_architect 工具（见 team-tools 测试），并热生效地决定 phase 段是否拼架构师纪律。
   updatePanelState('session-arch-lead', { architect: false });
-  assert.equal(section.text({ agent: leadAgent }), '', '面板小胶囊关掉 → Lead 段空');
-  // 未改面板的新会话跟随 settings 默认（关）→ 不注入
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, architect: false };
-  assert.equal(section.text({ agent: { session: fakeSession({ id: 'session-arch-fresh', seq: 0, header: {} }) } }), '');
+  assert.doesNotMatch(phaseDef.text({ agent: leadAgent }), /专职架构师/, '面板关 → phase 不拼架构师段');
+  updatePanelState('session-arch-lead', { architect: true });
+  assert.match(phaseDef.text({ agent: leadAgent }), /专职架构师/, '面板开 → 恢复架构师段');
 });
 
 test('v081 relay_doc forwards byteOffset and validates nonnegative integers', async()=>{

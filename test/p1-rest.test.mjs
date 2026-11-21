@@ -218,7 +218,7 @@ test('③ protocol：只读审查/探针可用官方 subagent，执行活仍必�
   assert.match(PROTOCOL_TEXT, /只读.*官方 subagent/);
   assert.match(PROTOCOL_TEXT, /report\+commit/);
   assert.doesNotMatch(PROTOCOL_TEXT, /不要手工 subagent\/send_message 派执行活/, '旧的绝对禁令已改为带例外的口径');
-  assert.match(ROUTER_PROTOCOL_TEXT, /只读审查\/探针例外/);
+  assert.match(ROUTER_PROTOCOL_TEXT, /只读审查\/探针可用/);
   assert.match(ROUTER_PROTOCOL_TEXT, /回填 report\+commit/);
   assert.match(ROUTER_PROTOCOL_TEXT, /执行活不要手工 subagent/);
 });

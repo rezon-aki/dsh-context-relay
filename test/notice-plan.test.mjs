@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, planeIssueOf, unavailableNoticeText } from '../lib/agent/notice/plan.js';
-import { NOTICE_MAX_BYTES } from '../lib/output.js';
+import { NOTICE_DISCLAIMER, NOTICE_MAX_BYTES } from '../lib/output.js';
 
 /** C4 notice 规划纯函数：事实 → 本步 0/1 条 notice + track/claims（不碰状态、不注入）。 */
 
@@ -132,7 +132,7 @@ test('planNotices：面板变更——首见只记基线；变化注入一次；
   assert.equal(suppressed.claims.panelSig, panelSignatureOf(panel), '到线提醒已带全量面板事实 → 记签名，不补发');
 });
 
-test('planNotices：台账批次（焦点 → 上下文 → 闭环 → 队友 → 派活）一条注入，claim 行级键 + 消费派活提示', () => {
+test('planNotices：台账批次（焦点 → 上下文 → 闭环 → 派活；600B 内先丢队友）一条注入，claim 行级键 + 消费派活提示', () => {
   const plan = planNotices(facts({
     lastBand: 'organize',
     ledger: { exists: true, currentPhase: { phase: 'build' }, items: [{ id: 'p1', title: '修闸门', status: 'doing', next: '写测试', phase: 'build' }], counts: { total: 1, pending: 1 } },
@@ -148,17 +148,24 @@ test('planNotices：台账批次（焦点 → 上下文 → 闭环 → 队友 �
   const closureIdx = text.indexOf('[闭环]');
   const teamIdx = text.indexOf('[队友]');
   const dispatchIdx = text.indexOf('[派活·队友上下文]');
-  assert.ok(focusIdx === 0 && bandIdx > focusIdx && closureIdx > bandIdx && teamIdx > closureIdx && dispatchIdx > teamIdx, text);
+  // 600B 投递预算：先丢 [队友]、再丢 [上下文]（guard 不推进、下一步单独补）；焦点/闭环/派活保留顺序。
+  assert.equal(teamIdx, -1, '超 600B 先丢 [队友]，下一步单独补');
+  assert.equal(bandIdx, -1, '仍不够再丢 [上下文]');
+  assert.ok(focusIdx === 0 && closureIdx > focusIdx && dispatchIdx > closureIdx, text);
   assert.match(text, /\[闭环\] 上一步改动未落账：write\(x\.js\)/);
   assert.match(text, /\[派活·队友上下文\] mate-2 档位=organize/);
   assert.doesNotMatch(text, /band=/);
   assert.ok(plan.claims.guard !== undefined);
   assert.equal(plan.claims.guard.focus, plan.claims.guard.focus);
   assert.equal(plan.claims.dropDispatch, true);
+  assert.equal(plan.claims.guard.teamSeen?.constructor, Object, 'teamSeen 保留（下一步补 [队友]）');
   assert.ok(text.length <= NOTICE_MAX);
+  // C2 返修：投递层按 600B clip，正文必须先裁再追加免责尾，保证尾行完整。
+  assert.ok(Buffer.byteLength(text, 'utf8') <= NOTICE_MAX_BYTES, 'ledger notice bytes ' + Buffer.byteLength(text, 'utf8'));
+  assert.ok(text.endsWith(NOTICE_DISCLAIMER), '免责尾完整（先裁正文再加尾行）');
 });
 
-test('planNotices：批次超 900 先丢 [队友] 再丢 [上下文]，焦点/闭环保留且不截断', () => {
+test('planNotices：批次超限先丢 [队友] 再丢 [上下文]，焦点前缀保留、超长闭环行尾裁但免责尾完整', () => {
   const plan = planNotices(facts({
     lastBand: 'organize',
     ledger: {
@@ -174,9 +181,11 @@ test('planNotices：批次超 900 先丢 [队友] 再丢 [上下文]，焦点/�
   const text = plan.notice.text;
   assert.ok(text.length <= NOTICE_MAX, 'chars ' + text.length);
   assert.match(text, /\[台账·build/);
-  assert.match(text, /\[闭环\] 上一步改动未落账：write\(x+\.js\)/);
+  assert.match(text, /\[闭环\] 上一步改动未落账：write\(x+/, '闭环行前缀保留');
   assert.doesNotMatch(text, /\[队友\]/);
   assert.doesNotMatch(text, /\[上下文\]/);
+  assert.ok(text.endsWith(NOTICE_DISCLAIMER), '超长行尾裁后免责尾仍完整');
+  assert.ok(Buffer.byteLength(text, 'utf8') <= NOTICE_MAX_BYTES, 'bytes ' + Buffer.byteLength(text, 'utf8'));
   assert.deepEqual(plan.claims.guard.teamSeen, {}, '[队友] 被丢弃时不推进 teamSeen（下一步补）');
 });
 

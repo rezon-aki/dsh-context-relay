@@ -14,11 +14,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, LEAD_ONLY_TOOLS, SUBAGENT_ONLY_HIDDEN_TOOLS } from '../lib/agent.js';
 import { SUBAGENT_ASK_USER_DENY, SUBAGENT_DOC_LINT_DENY, SUBAGENT_STATUS_DENY } from '../lib/plane/roles.js';
-import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PROTOCOL_TEXT, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_NAME, ARCHITECT_WORKER_PROTOCOL_TEXT, PHASE_PROTOCOL_TEXT, PROTOCOL_TEXT, REDLINE_PROTOCOL_TEXT, ROUTER_DENY_TOOLS, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT, WORK_LEDGER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { WORKER_PROTOCOL_TEXT } from '../lib/agent/worker.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { clearSharedMemory, markPendingArchitect } from '../lib/agent/shared.js';
 import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
+
+/** section 文本求值：preset 段是 text(context) 函数；测试用 root Lead 上下文求值。 */
+const LEAD_CTX = { agent: { session: { id: 'session-router-lead', header: {}, seq: 0 } } };
+const sectionText = (definition, context = LEAD_CTX) => String(typeof definition?.text === 'function' ? definition.text(context) : definition?.text ?? '');
 
 /** 最小 fake ctx：记录 systemPrompt section、工具注册、事件监听与 warn。 */
 function fakeCtx(services = {}) {
@@ -99,39 +103,33 @@ const WORKER_DENY = [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAG
 
 test('超长任务协议资产：角色纪律 / 派活与收口工具 / 回执契约齐全', () => {
   const text = ROUTER_PROTOCOL_TEXT;
-  assert.match(text, /接力模式（Lead 只调度）/);
-  assert.match(text, /Lead，只调度、不执行/);
-  // 与默认协议推荐段冲突时本模式优先（否则「小任务可自干」会误导 Lead）
-  assert.match(text, /本模式为唯一模式，Lead 只调度是常驻职责/);
-  assert.match(text, /Lead 只调度/);
-  assert.match(text, /写文件、改代码、跑命令\/测试、查日志一律派 worker/);
+  assert.match(text, /调度纪律（Lead 只调度）/);
+  assert.match(text, /root Lead，只调度、不执行/);
+  assert.match(text, /任何执行工作一律派 worker/);
   assert.match(text, /不设「小任务自己干」例外/);
-  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '目标 ≤20%', 'warn 档只提醒', 'strict 可配，命中即拒', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
+  for (const phrase of ['不设自做额度', '用户交互、决策、派活、验收抽样', '验收抽样（≤3 次/phase', '写实现文档、读长日志也派 worker', '目标 ≤20%', 'warn 只提醒', 'strict 命中即拒', '面板默认档', '新会话默认=压缩继续', '不继承旧模式/授权']) {
     assert.ok(text.includes(phrase), 'ROUTER 缺短语: ' + phrase);
   }
   // 回执契约：文件 ≤4KB + 单条消息 ≤200 字 + 头 3 行机读 + verdict
   assert.match(text, /≤4KB/);
-  assert.match(text, />4KB 只提示分层/);
-  assert.equal(text.includes('缺节/>4KB'), false);
   assert.match(text, /≤200 字/);
   assert.match(text, /verdict: done\|needs-human\|blocked/);
   assert.match(text, /context-relay\/reports\/<taskId>\.md/);
   // 派活与收口工具化（v0.9.0 批次3；替代旧 PTC 手写模板）
-  assert.match(text, /派活与收口（工具化：relay_dispatch \/ relay_collect）/);
-  for (const phrase of ['relay_dispatch({itemId, brief, docs, writeScope, acceptance})', 'relay_collect({itemId, waitMs?})', '≤120s', 'digest', 'reportPath', 'evidence=reportPath', '只回 digest']) {
+  assert.match(text, /派活与回执（工具化：relay_dispatch \/ relay_collect）/);
+  for (const phrase of ['relay_dispatch', 'relay_collect', '≤120s', 'digest', 'reportPath', 'evidence=reportPath', '只回 digest']) {
     assert.ok(text.includes(phrase), 'ROUTER 派活/收口缺短语: ' + phrase);
   }
   // 旧 PTC 手写模板不得回潮
   for (const oldPhrase of ['PTC dispatch 模板', 'PTC collect 模板', 'subagent({ name: who', 'send_message({ agent: who']) {
     assert.equal(text.includes(oldPhrase), false, 'ROUTER 不应再有旧 PTC 模板片段: ' + oldPhrase);
   }
-  // 边界如实：PTC 软约束 + 消息不可过滤
+  // 边界如实：PTC 软约束
   assert.match(text, /node:fs/);
   assert.match(text, /软约束/);
   // 度量引用（与 relay_status.delegation 字段联动）
   assert.match(text, /relay_status\.delegation/);
-  assert.match(text, /relay_status\.compaction\.debt/);
-  // lead-exec / build/verify owner 口径唯一真源在 base §派活与回执；ROUTER/LEDGER 只留指针（P3 去重）
+  // lead-exec / build/verify owner 口径唯一真源在 base §派活与回执
   assert.ok(PROTOCOL_TEXT.includes('lead-exec'));
   assert.ok(PROTOCOL_TEXT.includes('build/verify 分点 owner 必须是 worker'));
   assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('见 §派活与回执'));
@@ -148,19 +146,11 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
 });
 
 test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
-  // 常驻协议每个请求都在上下文里：体量回归（v0.9.0 批次4 P3 文本去重后重新定格）与「不得为省字牺牲硬约束」双保险。
-  // 预算字面量按本批验收给定（上限，非取消）：TEXT ≤6,560 / ROUTER ≤2,000 / TEAMMATE ≤1,300；
-  // C9 两段式用户门改写（+设计门/并行对齐/最小必要验收/重型授权）后实测 6,534/6,430/1,944：净增 7 字符，
-  // 靠删协议内重复句（预算档例外/模式持久/免审重复/全文检索路径等冗余）腾预算，硬约束条款一字不删（HEAD 6,744/6,664/2,639）。
-  // P3 只删重复句/派生信息（纪律唯一真源上收到 PROTOCOL base），仍是硬上限、不是取消。
-  // A1 actor 化：Lead 面 checkpoint/freshen 必须写「发消息让队友自己执行」→ ROUTER 实测 2,028，上限随实测到 2,060（硬约束不删）。
-  // v0.13 D2/D5：用户汇报默认三问 + 来源约束 + 架构师机制/协议诊断 → PROTOCOL 实测 7,236、ROUTER 1,976？按实测上调（硬约束不删）。
-  // v0.13 fix5（解释口径）：ROUTER +50 → 2,246（上限 2,250）；TEAMMATE +18 → 1,311（上限 1,320）。
-  // 0.14.0-dev W1/W2：协议补风险档免门矩阵/裁决卡/工具只给内部事实 → PROTOCOL 8,074、ROUTER 2,395（预算按实测+~1% 上调）。
+  // 常驻协议每个请求都在上下文里：体量回归（v0.14 P1 合并后重新定格）与「不得为省字牺牲硬约束」双保险。
+  // 0.14.0-dev P1：Lead 的 6 个静态段合并为 1 段（PROTOCOL_TEXT，字节预算见下一条）；字符上限保持原量级。
   assert.ok(PROTOCOL_TEXT.length <= 8200, 'PROTOCOL_TEXT 超预算: ' + PROTOCOL_TEXT.length);
   assert.ok(ROUTER_PROTOCOL_TEXT.length <= 2450, 'ROUTER_PROTOCOL_TEXT 超预算: ' + ROUTER_PROTOCOL_TEXT.length);
-  // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，此前只有短语断言无长度预算；
-  // 实测 1,261 → 上限 1,300，防无界漂移（装配实测快照另见 test/budget-snapshot.test.mjs）。
+  // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，防无界漂移。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
     '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
@@ -178,19 +168,19 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER �
     '现在就该动手',
     '交接单 = 摘要 + 完整文件',
     '不因超长拒绝交接',
-    '所有字节/条数上限只是 advisory',
+    '字节/条数上限只是 advisory',
     'handoff 不是验收',
     '每轮召回 ≤3 条',
     '先写好文档再交接',
-    '≤3 条相关历史经验（≤1KB）',
-    '派活与收口工具化',
+    '≤3 条相关历史经验',
+    '派活与回执（工具化',
     'relay_dispatch',
     'relay_collect',
     'digest≤600字',
     'lead-exec',
     '目标 ≤20%',
-    'warn 档只提醒',
-    // 合同条款（P3 零删：只删重复说明，纪律本体仍在 base；内容重复断言见下条真源唯一性测试）
+    'warn 只提醒',
+    // 合同条款（P1 只删重复说明，纪律本体仍在合并协议里）
     '验收用户门（实现者自查有盲区）',
     '必须让新上下文的模型做一次独立审查，再向用户汇报',
     '边界问题即发现即报',
@@ -213,21 +203,22 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER �
   for (const phrase of protocolRequired) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
+  // 汇报规范（§提问与汇报）在红线段（10199，system 最末）；ROUTER 只留调度/派活。
+  const redlineRequired = [
+    '提问与汇报（白话优先）', '你看到什么：', '要你做什么：', '有什么影响：', '默认三问', '只提醒不拒绝', '只给 warning', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true',
+  ];
+  for (const phrase of redlineRequired) {
+    assert.ok(REDLINE_PROTOCOL_TEXT.includes(phrase), 'REDLINE 硬约束短语缺失: ' + phrase);
+  }
   const routerRequired = [
-    '用户汇报规范', '你看到什么：', '要你做什么：', '有什么影响：', '默认三问', '只给 warning', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true', '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
+    '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
     "不设自做额度",
     "用户交互、决策、派活、验收抽样",
     "验收抽样（≤3 次/phase",
     "写实现文档、读长日志也派 worker",
     "目标 ≤20%",
-    "warn 档只提醒",
-    "strict 可配，命中即拒",
-    // 固定小队语义：细节真源在 PROTOCOL base/TEAM_LEAD，ROUTER 只留短语 + 指针
-    '固定小队',
-    '成员额度',
-    'relay_team_status',
-    '见 §队友保鲜',
-    '见 §Phase 状态机',
+    "warn 只提醒",
+    "strict 命中即拒",
     '面板默认档',
     '新会话默认=压缩继续',
     '不继承旧模式/授权',
@@ -246,83 +237,78 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER �
     'node:fs',
     '软约束',
     'relay_status.delegation',
-    'relay_status.compaction.debt',
   ];
   for (const phrase of routerRequired) {
     assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 硬约束短语缺失: ' + phrase);
   }
-  // 已上收到 PROTOCOL base 的小队口径：ROUTER 不再重复（P3 唯一真源）
-  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status manage']) {
+  // 已上收到合并协议的小队口径：ROUTER 不再重复（队段在 TEAM_LEAD 片段）
+  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺小队口径: ' + phrase);
     assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复小队口径: ' + phrase);
   }
   // 阈值不得写死在常驻协议（按百分比/30·35·45 数字判断）
   assert.ok(!/(^|[^0-9])(30|35|45)\s*%/.test(PROTOCOL_TEXT), '协议不得写死阈值百分比');
-  // v0.2.15 审查 P1/P2 回归：旧误导措辞不得回到常驻协议（lessons 实际注入 3 条；autoChoose 不是「自动授权」）
+  // v0.2.15 审查 P1/P2 回归：旧误导措辞不得回到常驻协议
   assert.ok(!PROTOCOL_TEXT.includes('8 条相关历史经验'), '协议不得再写旧 lessons 注入数量');
   assert.ok(!PROTOCOL_TEXT.includes('三个自动授权'), '协议不得再用「三个自动授权」误称');
   for (const text of [PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT]) assert.doesNotMatch(text, /固定 2[-–]4 人|小任务可以自干/);
   // v0.2.17 A1：默认协议注入整个 preset（队友/子智能体也收到），不得再自称「你是 Lead」
   assert.ok(!PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'), '协议不得再对 worker 误称「你是 Lead」');
 });
-
-test('v0.9.0 批次4 P3：真源唯一性 / 指针可达 / 合同条款清单（防删防回潮）', () => {
-  // P3 目标：每句纪律只有一处真源（root 常驻 5 段合起来按出现次数断言），ROUTER/TEAM_LEAD/LEDGER 只留指针/摘要。
-  const resident = [PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAM_LEAD_PROTOCOL_TEXT, WORK_LEDGER_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT].join('\n');
+test('v0.14 P1 真源唯一性 / 指针可达 / 合同条款清单（防删防回潮）', () => {
+  // 合并后唯一真源 = PROTOCOL_TEXT；片段常量只做构建，不再重复注入。
+  const resident = [PROTOCOL_TEXT, UNLIMITED_BUDGET_TEXT].join('\n');
   const countIn = (haystack, phrase) => haystack.split(phrase).length - 1;
-  // 1) 真源句 occurrence==1（base 承载；任何一段复制都会超 1）
+  // 1) 真源句 occurrence==1（任何片段复制都会超 1）
   for (const phrase of ['不产生审批豁免', '免审只来自 autoCompress', '模式只决定「做什么」', '现在就该动手', '派活 brief 五字段缺一不可', '回执契约（写进 worker brief）', '授权口径（唯一真源）', 'lead-exec:<原因>']) {
     assert.equal(countIn(resident, phrase), 1, '真源句应恰好出现 1 次: ' + phrase + '（实际 ' + countIn(resident, phrase) + '）');
   }
-  // 2) P3 上收的小队口径：只在 PROTOCOL base 出现；ROUTER/TEAM_LEAD 只留指针
-  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status manage']) {
+  // 2) 小队口径只在合并文本出现一次；ROUTER 不重复
+  for (const phrase of ['固定小队上限 8', '优先复用', 'relay_team_status']) {
     assert.equal(countIn(resident, phrase), 1, '上收口径应只出现 1 次: ' + phrase);
     assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复: ' + phrase);
-    assert.equal(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), false, 'TEAM_LEAD 不应重复: ' + phrase);
   }
   // 3) 指针可解析：ROUTER/LEDGER 的「见 §…」对应真源段真实存在
-  for (const phrase of ['见 §队友保鲜', '见 §Phase 状态机']) {
-    assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 缺指针: ' + phrase);
-  }
+  assert.ok(ROUTER_PROTOCOL_TEXT.includes('见 §授权口径'), 'ROUTER 缺 §授权口径 指针');
+  assert.ok(PROTOCOL_TEXT.includes('## 授权口径（唯一真源）'), '指针目标缺失: ## 授权口径（唯一真源）');
   assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes('见 §派活与回执'), 'LEDGER 缺 §派活与回执 指针');
   assert.ok(PROTOCOL_TEXT.includes('## Phase 状态机'), '指针目标缺失: ## Phase 状态机');
   assert.ok(PROTOCOL_TEXT.includes('## 派活与回执'), '指针目标缺失: ## 派活与回执');
-  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('## 队友保鲜'), '指针目标缺失: ## 队友保鲜');
-  // 4) 合同条款清单：P3 只删重复句，条款本体必须仍在 PROTOCOL base
-  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'relay_phase 首次进 build', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
+  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('队友保鲜'), '指针目标缺失: 队友保鲜');
+  // 4) 合同条款清单：只删重复句，条款本体必须仍在合并文本
+  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'T2 首次进 build', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 合同条款缺失: ' + phrase);
   }
-  // 5) 旧口径清零（批次1–3 的既有禁令在 P3 后仍不得回潮）
+  // 5) 旧口径清零（既有禁令仍不得回潮）
   for (const oldPhrase of ['只作异常信号', '不设允许比例', 'PTC dispatch 模板', '小任务可以自干']) {
     assert.equal(resident.includes(oldPhrase), false, '旧口径回潮: ' + oldPhrase);
   }
 });
 
-test('v0.9.0 批次4 P3：root 常驻合计预算（≤14300 且 ≥11000，防过度删；装配实测见 budget-snapshot.test.mjs）', () => {
-  // 本条是「文本资产自身」的常量合计预算；C11/A-09 起 root 实际注入量以 apply 装配实测快照为准
-  // （test/budget-snapshot.test.mjs 的 ROLE_SNAPSHOT.lead），两者互为交叉校验。
-  const resident = PROTOCOL_TEXT.length + ROUTER_PROTOCOL_TEXT.length + TEAM_LEAD_PROTOCOL_TEXT.length + WORK_LEDGER_PROTOCOL_TEXT.length + ARCHITECT_LEAD_PROTOCOL_TEXT.length + UNLIMITED_BUDGET_TEXT.length;
-  // 批次4 实测 11,324；C9 两段式用户门后 11,331；C10 删退役档协议句后 ≈11,251；
-  // v0.10.x 台账完成确认门新增一句后实测 11,452 → 上限按实测+~1% 上调到 11,560；下限 11,000 防删过头。
-  // v0.11 P0-E 容量线独立配置（协议 55% 口径）后实测 11,594 → 上限 11,620；
-  // v0.11 P0-B 小队纪律（固定小队 8/spawn 关/reset 复用）后实测 11,704 → 上限同步到 11,720。
-  // w1 设计门回显/深度模板（PROTOCOL +534）后实测 12,250 → 上限同步到 12,400。
-  // A1 actor 化（Lead 面 checkpoint/freshen 改队友执行）后实测 12,403 → 上限 12,500。
-  // 0.14.0-dev W1/W2 后实测 14,098（PROTOCOL 8,074 / ROUTER 2,395 / TEAM_LEAD 933）→ 上限 14,300。
-  assert.ok(resident <= 14300, 'root 常驻合计超预算: ' + resident);
-  assert.ok(resident >= 11000, 'root 常驻合计低于下限（P3 删过头）: ' + resident);
+test('v0.14 P1：redline(10199)+phase(10150) 两段结构（字节只记录，不设门）', () => {
+  // v0.14 P1 验收：Lead 常驻协议拆 redline（system 最末）+ phase（角色影子覆盖），
+  // 装配只剩这两段；unlimitedBudget 句并入 redline 顶部。字节按 UTF-8 只做 diagnostic（R1：不设失败门）。
+  const redline = Buffer.byteLength(REDLINE_PROTOCOL_TEXT, 'utf8');
+  const phase = Buffer.byteLength(PHASE_PROTOCOL_TEXT, 'utf8');
+  const budget = Buffer.byteLength(UNLIMITED_BUDGET_TEXT, 'utf8');
+  const register = REDLINE_PROTOCOL_TEXT.slice(REDLINE_PROTOCOL_TEXT.lastIndexOf('## 用户语域'));
+  console.log('[diagnostic] protocol bytes: redline=' + redline + ' phase=' + phase
+    + ' unlimited=' + budget + ' total=' + (redline + 2 + phase + budget)
+    + ' register=' + Buffer.byteLength(register, 'utf8'));
+  // 结构断言（非字节）：两段都有落点，redline 以用户语域收尾。
+  assert.ok(PHASE_PROTOCOL_TEXT.startsWith('## phase 优先'), 'phase 以 phase 优先开头');
+  assert.ok(register.startsWith('## 用户语域'), 'redline 以用户语域段收尾');
+  assert.ok(redline > 0 && phase > 0);
 });
 
-test('v0.9.0 批次4 P1：WORK_LEDGER 承载注入去重行为说明（P3 新文本）', () => {
-  // v0.10.x 台账完成确认门新增一句 → 实测 1,840，预算按实测+~1% 上调到 1,860；A1 actor 化后 1,853。
-  assert.ok(WORK_LEDGER_PROTOCOL_TEXT.length <= 1860, 'WORK_LEDGER 超预算: ' + WORK_LEDGER_PROTOCOL_TEXT.length);
-  for (const phrase of ['焦点文本变化', 'rev 变化不算', '同一 step 最多一条 notice', '重启后首次汇总一次', '首次派活或档位/状态变化', '后续派活直接放行', '派活判断点（只在首次/状态变化时打断）']) {
-    assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺 P1 行为句: ' + phrase);
+test('v0.14 P1：WORK_LEDGER 片段承载台账核心纪律', () => {
+  // 合并后片段仍单独导出；长度只记录（R1），台账纪律靠短语断言防止静默删掉。
+  console.log('[diagnostic] WORK_LEDGER chars=' + WORK_LEDGER_PROTOCOL_TEXT.length);
+  for (const phrase of ['台账是 **Lead 的项目管理队列**', 'relay_work_items', 'done+evidence', 'lead_confirm={no_drift,no_missing,no_regression}', '默认上限 30', 'archive.ndjson', '见 §派活与回执']) {
+    assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺规则: ' + phrase);
   }
-  // 其余台账规则逐字保留（P3 只把重复说明改指针）
-  for (const phrase of ['台账是 **Lead 的项目管理队列**', '官方任务板为准', 'officialTaskId', '默认上限 30', 'archive.path/count', 'build→verify 默认 warn 校验', 'strict 可配，命中即拒', 'phase 边界响应自动带队友 triage']) {
-    assert.ok(WORK_LEDGER_PROTOCOL_TEXT.includes(phrase), 'WORK_LEDGER 缺既有规则: ' + phrase);
-  }
+  // 触发式注入说明（焦点行/同 step 一条 notice）属插件行为，已移到 SKILL 用法说明；
+  // 片段只保留「读什么、何时写、如何收口」的硬规则。
 });
 
 test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/到线/边界/写范围', () => {
@@ -345,25 +331,23 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
   assert.ok(!WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });
 
-test('v0.3.2/v0.9.0 批次4 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
-  // 批次4 P3：TEAM_LEAD 796→614（删与 ROUTER/base 重复的「默认 4 人小队」与「不轮询」段），预算 = 实测+50 向上取整。
-  // 0.14.0-dev W1/W2：架构师例外（只 checkpoint，Lead 用 relay_architect fresh）后实测 933 → 上限 950。
+test('v0.14 P1 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 950, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
-  for (const phrase of ['队友是长期资产', 'relay_team_status', 'relay_checkpoint', 'relay_renew', '没有 checkpoint 不换代', 'escalation', 'ledger/roster']) {
+  for (const phrase of ['固定小队上限 8', 'spawn 默认关', 'relay_team_status', 'relay_checkpoint', 'relay_freshen({reset:true', 'relay_architect', 'relay_organize/relay_handoff', 'lead-only', '不问人类']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
-  // v0.3.2：reset 是真清空（同成员/不占额度），renew 只换身份；v0.8.1 新 Lead 按交接单/progress/checkpoint 手动重建
-  for (const phrase of ['relay_freshen({reset:true', '真清空', '不占额度', '只用于换身份/角色', 'member-limit', 'relay_handoff']) {
-    assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/手动重建 纪律: ' + phrase);
+  // v0.3.2：reset 是真清空（同成员/不占额度）；架构师例外由 Lead 用 relay_architect fresh 新开代
+  for (const phrase of ['真清空', '不占额度', 'Lead 不代调', '架构师例外', "mode:'fresh'"]) {
+    assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 段缺 reset/架构师 纪律: ' + phrase);
   }
   for (const phrase of ['relay_checkpoint', 'relay_freshen', '同代≤2', '不向人类提问', 'session_event_read', '快照权威', '真清空', '只写自己 lineage', '≤100 字', 'dispatchId', '必读 1–3 份']) {
     assert.ok(TEAMMATE_PROTOCOL_TEXT.includes(phrase), '紧凑队友段缺短语: ' + phrase);
   }
-  // v0.3.2 真机会话反馈：固定小队/复用优先 + 成员额度稀缺（spawn 与 renew 都占额）
-  for (const phrase of ['固定小队', '成员额度', 'relay_team_status']) {
-    assert.ok(ROUTER_PROTOCOL_TEXT.includes(phrase), 'ROUTER 复用/额度纪律缺失: ' + phrase);
+  // 小队/额度口径在合并协议里（TEAM_LEAD 片段），ROUTER 不再重复
+  for (const phrase of ['固定小队上限 8', 'relay_team_status']) {
+    assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺小队口径: ' + phrase);
+    assert.equal(ROUTER_PROTOCOL_TEXT.includes(phrase), false, 'ROUTER 不应重复: ' + phrase);
   }
-  assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('member-limit'), 'Lead 段缺 member-limit 处理指引');
 });
 
 test('Router deny 清单：只含执行/写类工具（read/glob/grep 保持可用）', () => {
@@ -378,7 +362,7 @@ test('Router deny 清单：只含执行/写类工具（read/glob/grep 保持可�
   assert.equal(LEAD_ONLY_TOOLS.filter((name) => SUBAGENT_ONLY_HIDDEN_TOOLS.includes(name)).length, 0);
 });
 
-test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁执行类工具并注入 Router/团队段', async () => {
+test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁执行类工具，无角色影子段', async () => {
   assert.ok(!PROTOCOL_TEXT.includes('Router 模式'), 'PROTOCOL_TEXT base 不应含 Router 段');
   assert.ok(!PROTOCOL_TEXT.includes('超长任务模式（Relay · 超长任务）'), 'PROTOCOL_TEXT base 不应含旧模式段');
   // v0.2.13 搬入：派活与回执纪律 + 单模式双名
@@ -386,22 +370,24 @@ test('v0.9.0 单一模式：默认配置即注入单模式协议；root 恒裁�
   assert.match(PROTOCOL_TEXT, /≤4KB/);
   assert.match(PROTOCOL_TEXT, /≤200 字/);
   assert.match(PROTOCOL_TEXT, /接力模式（Relay）· 超长任务/);
-  // base 不写 Router 专属硬规则「不设自己干例外」——它只在 ROUTER 段承载
-  assert.ok(!PROTOCOL_TEXT.includes('不设「小任务自己干」例外'));
-  // 唯一模式装配：协议恒为 PROTOCOL_TEXT base，root 恒裁 + 注入 Router/团队段。
+  // v0.14 P1：ROUTER 片段已合入 PROTOCOL_TEXT，Lead 专属硬规则只在 ROUTER 片段出现一次。
+  assert.equal(PROTOCOL_TEXT.split('不设「小任务自己干」例外').length - 1, 1);
+  // 唯一模式装配：协议恒为 PROTOCOL_TEXT base，root 恒裁；root 无角色影子段。
   const f = fakeCtx();
   apply(f.ctx, {});
   const names = f.sections.map((section) => section.name);
   assert.ok(!names.includes('context-relay:router'), 'generation 作用域不静态注入 router section（per-agent 安装）');
-  assert.ok(names.includes('context-relay:protocol'), '常驻 relay 协议照旧注入');
-  assert.equal(f.sections.find((section) => section.name === 'context-relay:protocol').text, PROTOCOL_TEXT, '唯一模式注入单模式 base');
+  assert.ok(names.includes('context-relay:phase'), '常驻 relay 协议 phase 段照旧注入');
+  assert.ok(names.includes('context-relay:redline'), '红线段注入（system 最末）');
+  assert.equal(sectionText(f.sections.find((section) => section.name === 'context-relay:phase')), PHASE_PROTOCOL_TEXT, 'phase 段 = phaseProtocolText 默认形态');
+  assert.equal(sectionText(f.sections.find((section) => section.name === 'context-relay:redline')), UNLIMITED_BUDGET_TEXT + '\n' + REDLINE_PROTOCOL_TEXT, '红线段顶部带预算句');
   const listener = agentListener(f);
   assert.ok(listener !== undefined, 'per-agent 安装监听器始终注册');
   const calls = [];
   const sections = [];
   await listener.listener({ agent: makeAgent({}, calls, sections) });
   assert.deepEqual(calls, [...ROUTER_DENY_TOOLS], '单一模式 root 恒裁执行类工具');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root 注入 Router + 队友保鲜段');
+  assert.deepEqual(sections, [], 'v0.14 P1：root 无角色影子段（协议全在 preset 层）');
 });
 
 test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，退役档/两段式句已删', () => {
@@ -426,10 +412,10 @@ test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，
   // 装配：唯一模式恒注入 PROTOCOL_TEXT；退役 host 配置（routerMode/legacyPresetCompat）被忽略。
   const plain = fakeCtx();
   apply(plain.ctx, {});
-  assert.equal(plain.sections.find((section) => section.name === 'context-relay:protocol').text, PROTOCOL_TEXT);
+  assert.equal(sectionText(plain.sections.find((section) => section.name === 'context-relay:phase')), PHASE_PROTOCOL_TEXT);
   const retiredConfig = fakeCtx();
   apply(retiredConfig.ctx, { routerMode: true });
-  assert.equal(retiredConfig.sections.find((section) => section.name === 'context-relay:protocol').text, PROTOCOL_TEXT);
+  assert.equal(sectionText(retiredConfig.sections.find((section) => section.name === 'context-relay:phase')), PHASE_PROTOCOL_TEXT);
   assert.equal(retiredConfig.warns.some((line) => /routerMode|legacy/.test(line)), false, '退役配置不再有专用 warn');
 });
 
@@ -452,7 +438,7 @@ test('v0.9.0 单一模式：agent/created 恒安装——非 root 裁 lead-only�
     const sections = [];
     await listener.listener({ agent: makeAgent({ origin: 'subagent', delegationDepth: 2 }, calls, sections) });
     assert.deepEqual(calls, WORKER_DENY, '普通子代理裁 lead-only + relay_phase + status/doc + ask_user');
-    assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
+    assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase']);
   }
   // root → 恒裁 Router deny 清单 + 注入 Router/团队段（relay_phase 保留）
   const calls = [];
@@ -460,13 +446,13 @@ test('v0.9.0 单一模式：agent/created 恒安装——非 root 裁 lead-only�
   await listener.listener({ agent: makeAgent({}, calls, sections) });
   assert.deepEqual(calls, [...ROUTER_DENY_TOOLS]);
   assert.ok(!calls.includes('relay_phase'), 'root 保留 relay_phase');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead']);
+  assert.deepEqual(sections, [], 'v0.14 P1：root 无角色影子段');
   // parentSession 是 fork 血缘，不是 subagent：普通 fork 根会话按 root 处理（恒裁 + 装 Router）。
   const forkCalls = [];
   const forkSections = [];
   await listener.listener({ agent: makeAgent({ parentSession: 'session-parent' }, forkCalls, forkSections) });
   assert.deepEqual(forkCalls, [...ROUTER_DENY_TOOLS], '普通 fork 根会话不被当子代理');
-  assert.deepEqual(forkSections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], '普通 fork 根会话按 root 装配');
+  assert.deepEqual(forkSections, [], '普通 fork 根会话按 root 装配（无角色影子段）');
 });
 
 test('v0.2.17 B：非 root 工具裁剪 fail-open——单名未注册跳过、全部失败 warn、inject 失败不抛', async () => {
@@ -485,7 +471,7 @@ test('v0.2.17 B：非 root 工具裁剪 fail-open——单名未注册跳过、�
   assert.ok(f.warns.some((line) => line.includes('worker restrict skipped')), 'restrict 失败应 warn 记录');
 });
 
-test('v0.2.17 C：非 root 非队友 → 同名影子覆盖 context-relay:protocol（order 沿用 10150）', async () => {
+test('v0.2.17 C：非 root 非队友 → 同名影子覆盖 context-relay:phase（order 沿用 10150）', async () => {
   const f = fakeCtx(); // 无 agentTeams 服务：不可能有队友 → 覆盖所有非 root
   apply(f.ctx, {});
   const calls = [];
@@ -493,7 +479,7 @@ test('v0.2.17 C：非 root 非队友 → 同名影子覆盖 context-relay:protoc
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
   assert.deepEqual(calls, WORKER_DENY);
   assert.equal(sections.length, 1);
-  assert.equal(sections[0].name, 'context-relay:protocol', '必须与 preset 层同名才能影子覆盖');
+  assert.equal(sections[0].name, 'context-relay:phase', '必须与 preset 层同名才能影子覆盖');
   assert.equal(sections[0].order, 10150, 'order 沿用 preset 段顺序');
   assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
 });
@@ -506,7 +492,7 @@ test('v0.2.17 C：直接队友装紧凑队友协议（同名影子覆盖），�
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-lead', delegationDepth: 1 }, calls, sections) });
   assert.deepEqual(calls, TEAMMATE_DENY, '队友禁用 lead-only + doc + ask_user（到线/交接交回 Lead）');
   assert.ok(!calls.includes('relay_phase'), 'D：队友保留 relay_phase（内含队友分相拒绝/请示逻辑）');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '队友协议用同名 section 影子覆盖');
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase'], '队友协议用同名 section 影子覆盖');
   assert.equal(sections[0].text, TEAMMATE_PROTOCOL_TEXT, '队友拿紧凑队友协议（不再用 10KB 全量协议）');
 });
 
@@ -515,7 +501,7 @@ test('v0.2.17 C：root 不注入 worker 影子（只装 Router/团队段）；�
   apply(f.ctx, {});
   const sections = [];
   await agentListener(f).listener({ agent: makeAgent({}, [], sections) });
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root 只装 Router/团队段，不装 worker 影子');
+  assert.deepEqual(sections, [], 'root 不装 worker 影子（协议段由 preset 层提供）');
   // 非 root 深代 ctx 缺失（非常规 composition）→ 不抛，warn
   await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent', delegationDepth: 2 } } } }));
   assert.ok(f.warns.some((line) => line.includes('worker restrict skipped: agent.ctx unavailable')));
@@ -533,9 +519,7 @@ test('root agent 经 agent/created 在自身 scope 注入 Router 段 + 逐名 re
   const sections = [];
   await listener.listener({ agent: makeAgent({}, calls, sections) });
   assert.deepEqual(calls, ['bash', 'pwsh', 'write', 'edit'], 'root agent 应逐名 deny 执行类工具');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root agent 应注入超长任务协议段 + 队友保鲜段');
-  assert.equal(sections[0].text, ROUTER_PROTOCOL_TEXT);
-  assert.equal(sections[1].text, TEAM_LEAD_PROTOCOL_TEXT, '队友保鲜段文本与资产一致');
+  assert.deepEqual(sections, [], 'v0.14 P1：root 无独立 Router/团队段（协议全在 preset 层）');
 });
 
 test('depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2 子代理裁 relay_phase + worker 影子；都不裁 Router 工具', async () => {
@@ -548,7 +532,7 @@ test('depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2
   await listener.listener({ agent: teammate });
   assert.deepEqual(teammateCalls, TEAMMATE_DENY, '直接队友裁 lead-only + doc + ask_user（保留 relay_phase）');
   assert.ok(!teammateCalls.includes('bash'), '不裁 Router 执行类工具');
-  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '直接队友只装紧凑协议（不再叠 team-worker 段）');
+  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:phase'], '直接队友只装紧凑协议（不再叠 team-worker 段）');
   assert.equal(teammateSections[0].text, TEAMMATE_PROTOCOL_TEXT);
   assert.deepEqual(teammate.registered, ['relay_checkpoint', 'relay_freshen'], '直接队友拿 checkpoint/freshen');
   // depth≥2：普通子代理
@@ -558,7 +542,7 @@ test('depth=1 直接队友装紧凑队友协议 + checkpoint/freshen；depth≥2
   await listener.listener({ agent: deep });
   assert.deepEqual(calls, WORKER_DENY, '普通子代理裁 lead-only + relay_phase + status/doc + ask_user');
   assert.ok(!calls.includes('bash'), '不裁 Router 执行类工具');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '普通子代理只注入 worker 影子');
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase'], '普通子代理只注入 worker 影子');
   assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT);
 });
 
@@ -573,7 +557,7 @@ test('fail-open：单个工具名未注册时其余仍裁、监听器不抛（�
   const throwing = makeAgent({}, [], [], { injectThrows: true });
   await assert.doesNotReject(async () => listener.listener({ agent: throwing }), 'inject 失败不得让 agent/created 抛错');
   assert.ok(f.warns.some((line) => line.includes('router restrict skipped')), 'restrict 失败应 warn 记录');
-  assert.ok(f.warns.some((line) => line.includes('router protocol skipped')), 'protocol 注入失败应 warn 记录');
+  // v0.14 P1：root 无角色影子段，protocol seam 不再有每-agent 注入，故无 protocol skipped warn。
   // 全部名字都失败 ≠ 平台缺单个工具：必须 warn，不能静默 fail-open
   await listener.listener({ agent: makeAgent({}, [], [], { restrictThrows: new Set(['bash', 'pwsh', 'write', 'edit']) }) });
   assert.ok(f.warns.some((line) => line.includes('no tools restricted')), '全部 restrict 失败应 warn');
@@ -594,7 +578,7 @@ test('v0.10.0 退役 config.routerMode 被忽略（无 warn、不改变装配）
     const sections = [];
     await listener.listener({ agent: makeAgent({}, calls, sections) });
     assert.deepEqual(calls, [...ROUTER_DENY_TOOLS], '单一模式 root 恒裁（退役配置不影响）');
-    assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root 恒注入 Router/团队段');
+    assert.deepEqual(sections, [], 'root 恒无角色影子段');
   }
 });
 
@@ -622,7 +606,7 @@ test('v0.9.0 单一模式：live settings 里残留的退役键不影响装配�
   const sections = [];
   await listener.listener({ agent: makeAgent({}, calls, sections) });
   assert.deepEqual(calls, [...ROUTER_DENY_TOOLS], '清理 live settings 后行为一致（单一模式恒裁）');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], '清理后 root 仍注入 Router/团队段');
+  assert.deepEqual(sections, [], '清理后 root 仍无角色影子段');
 });
 
 test('v0.9.0 单一模式：所有新 root 都 seed compress（不覆盖显式值；非 root 不种；fail-open）', async () => {
@@ -674,7 +658,7 @@ test('v0.2.17 D：普通子代理额外隐藏 relay_phase——各 membership �
     const sections = [];
     await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections) });
     assert.deepEqual(calls, WORKER_DENY, '普通子代理应裁 lead-only + phase + status/doc + ask_user（' + item.label + '）');
-    assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议照装（' + item.label + '）');
+    assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase'], '影子协议照装（' + item.label + '）');
     assert.equal(sections[0].text, WORKER_PROTOCOL_TEXT, '影子文本不变（' + item.label + '）');
   }
 });
@@ -695,7 +679,7 @@ test('v0.2.17 D：队友只裁 organize/handoff（relay_phase 保留、装紧凑
   const rootSections = [];
   await agentListener(g).listener({ agent: makeAgent({}, rootCalls, rootSections) });
   assert.deepEqual(rootCalls, [...ROUTER_DENY_TOOLS], 'root 恒裁 Router deny 清单');
-  assert.deepEqual(rootSections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], 'root 装 Router/团队段');
+  assert.deepEqual(rootSections, [], 'root 无角色影子段');
 });
 
 
@@ -712,7 +696,7 @@ test('v0.7.1 创建瞬间架构师识别：pending 标记认领（不依赖 suba
   await listener.listener({ agent: architect });
   assert.deepEqual(calls, ARCHITECT_DENY, '架构师裁 lead-only + relay_phase + ask_user');
   assert.deepEqual(architect.registered, ['relay_checkpoint'], '架构师只拿 checkpoint，不拿 freshen');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol']);
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase']);
   assert.equal(sections[0].text, ARCHITECT_WORKER_PROTOCOL_TEXT, 'pending 命中 → 架构师独立协议');
   // pending 消费后：同父的下一个 depth=1 子会话是普通队友。
   const teammateCalls = [];
@@ -761,7 +745,7 @@ test('v0.2.17 D：fail-open——relay_phase 未注册时只 warn，B 与影子�
   await agentListener(f).listener({ agent: makeAgent({ origin: 'subagent', parentSession: 'session-parent', delegationDepth: 2 }, calls, sections, { restrictThrows: new Set(['relay_phase']) }) });
   assert.deepEqual(calls, [...LEAD_ONLY_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], 'relay_phase 未注册 → 跳过，其余仍裁');
   assert.ok(f.warns.some((line) => line.includes('subagent restrict: no tools restricted')), 'D 全部失败应 warn（不静默）');
-  assert.deepEqual(sections.map((section) => section.name), ['context-relay:protocol'], '影子协议不受 D 失败影响');
+  assert.deepEqual(sections.map((section) => section.name), ['context-relay:phase'], '影子协议不受 D 失败影响');
   // agent.ctx 缺失：两段 restrict 均只 warn、不抛（不阻断会话创建）
   await assert.doesNotReject(async () => agentListener(f).listener({ agent: { session: { header: { origin: 'subagent', delegationDepth: 2 } } } }));
   assert.ok(f.warns.some((line) => line.includes('subagent restrict skipped: agent.ctx unavailable')), 'ctx 缺失时 D 也 fail-open + warn');
@@ -771,7 +755,7 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   assert.equal(ARCHITECT_NAME, 'architect');
   assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.length <= 900, 'ARCHITECT_LEAD 超预算: ' + ARCHITECT_LEAD_PROTOCOL_TEXT.length);
   assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.length <= 850, 'ARCHITECT_WORKER 超预算: ' + ARCHITECT_WORKER_PROTOCOL_TEXT.length);
-  for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝、不阻塞', 'handoff 继承', '专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '不是它交付后自行清空']) {
+  for (const phrase of ['默认值跟随「模型」选择器', '已选过则沿用', '不拒绝', 'handoff 继承', '专职架构师', '与用户对齐需求', '工程实现路线设计交给', 'relay_architect', '固定 lineage', '工程实现文档', '待决策', '与用户敲定', '低上下文', '新任务到达', '它自己不清空']) {
     assert.ok(ARCHITECT_LEAD_PROTOCOL_TEXT.includes(phrase), 'ARCHITECT_LEAD 缺短语: ' + phrase);
   }
   // 0.14.0-dev W1 新契约：架构师只写 checkpoint，清空由 Lead 用 relay_architect({mode:'fresh'}) 新开代；
@@ -783,14 +767,50 @@ test('v0.6.4 专职架构师协议资产：固定队友名 + Lead/架构师两�
   assert.ok(!ARCHITECT_WORKER_PROTOCOL_TEXT.includes('你是 relay 模式的 Lead'));
 });
 
-test('w1 设计深度模板：T0/T1/T2 分层 + 七段 ≤3 页 + 提案 ≤5 进 protocol/SKILL，doc_lint 只 advisory', () => {
-  for (const phrase of ['设计门与设计深度', 'T0 文档/琐碎', 'T1 局部代码', '七段 ≤3 页', '提案 ≤5 条', 'ask_ref', 'not_doing']) {
-    assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺设计深度模板: ' + phrase);
+test('w1 设计深度模板：T0/T1/T2 分层 + 七段 ≤3 页 + 提案 ≤5 进 SKILL，doc_lint 只 advisory', () => {
+  // v0.14 P1：设计深度模板属于 L2 用法，移到 SKILL；常驻协议只保留 design_gate 形状。
+  for (const phrase of ['ask_ref', 'not_doing', 'design_gate{path,user_approved:true,ask_ref,not_doing}']) {
+    assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 缺 design_gate 形状: ' + phrase);
   }
   assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.includes('七段 ≤3 页'), 'ARCHITECT_WORKER 缺设计深度');
   assert.ok(ARCHITECT_WORKER_PROTOCOL_TEXT.includes('提案 ≤5'), 'ARCHITECT_WORKER 缺提案上限');
   const skill = readFileSync(new URL('../skills/context-relay/SKILL.md', import.meta.url), 'utf8');
-  for (const phrase of ['设计深度模板', 'T0 文档/琐碎', 'T2 高风险', 'ask_ref', 'not_doing', '七段 ≤3 页', '提案 ≤5']) {
+  for (const phrase of ['设计深度模板', 'T0 文档/琐碎', 'T1 局部代码', 'T2 高风险', 'ask_ref', 'not_doing', '七段 ≤3 页', '提案 ≤5']) {
     assert.ok(skill.includes(phrase), 'SKILL 缺设计深度模板: ' + phrase);
   }
+});
+
+test('v0.14 P1 返修回归：redline/phase 边界、六项 must-fix 与 SKILL 章节落点', () => {
+  // 两段 order：phase 10150（角色影子覆盖）+ redline 10199（system 最末）。
+  const f = fakeCtx();
+  apply(f.ctx, {});
+  const phase = f.sections.find((section) => section.name === 'context-relay:phase');
+  const redline = f.sections.find((section) => section.name === 'context-relay:redline');
+  assert.equal(phase.order, 10150);
+  assert.equal(redline.order, 10199, 'redline 必须在 system 最末（10199）');
+  const ph = sectionText(phase);
+  const red = sectionText(redline);
+  // must-fix 1：T2 设计门 + T0/T1 reopen 免用户确认（与 tools.js 的 risk.tier 判定对齐）。
+  assert.match(ph, /T2 首次进 build 须带 design_gate/);
+  assert.match(ph, /T0[^\n]*reopen 用户确认/);
+  assert.match(ph, /T1[^\n]*reopen 用户确认/);
+  // must-fix 3：安全禁令回写协议（SKILL 不注入模型，不能只写在 SKILL）。
+  for (const phrase of ['不自行裁决 P0', '不代人类回答偏好', "handoffApproval='off'", '不自行打开面板自动授权']) {
+    assert.ok(red.includes(phrase), 'REDLINE 缺安全禁令: ' + phrase);
+  }
+  // must-fix 4：交接纪律（旧会话不残留工作 / skipped 语义 / progress 持有会话）。
+  for (const phrase of ['status.next_actions/blocked', '旧会话不再开新活', 'skipped=未检查/不适用', 'progress.md 头「持有会话」', '先写好文档再交接']) {
+    assert.ok(ph.includes(phrase), 'PHASE 缺交接纪律: ' + phrase);
+  }
+  // must-fix 5：丢失硬规则回归。
+  for (const phrase of ['每个 phase 先 relay_status', '不进分点/预算闸门', 'authorizeNext（一次性，成功后消费）', '起点', 'doc_lint', 'blocked 必须写 blocked 原因', 'owner 写队友名', 'depends 只引已有 id']) {
+    assert.ok((ph + red).includes(phrase), '协议缺硬规则: ' + phrase);
+  }
+  // must-fix 6：SKILL 体积只记录（R1），机制落点靠章节/短语断言。
+  const skill = readFileSync(new URL('../skills/context-relay/SKILL.md', import.meta.url), 'utf8');
+  console.log('[diagnostic] SKILL bytes=' + Buffer.byteLength(skill, 'utf8'));
+  for (const phrase of ['## doc_lint', '## 文档索引（docs v2）', '## 事件注入', 'retire/adopt/maintain']) {
+    assert.ok(skill.includes(phrase), 'SKILL 缺章节/机制: ' + phrase);
+  }
+  assert.doesNotMatch(skill, /不重复硬门/, 'SKILL 不得再声称不重复硬门（它确实摘要了硬门）');
 });

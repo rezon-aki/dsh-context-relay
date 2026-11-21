@@ -8,7 +8,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { userReportWarnings } from '../lib/policy.js';
-import { ARCHITECT_LEAD_PROTOCOL_TEXT, PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { ARCHITECT_LEAD_PROTOCOL_TEXT, PROTOCOL_TEXT, REDLINE_PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 
 test('D2 三问：合规零 warning；旧四段只给 legacy warning（不拒）', () => {
@@ -26,11 +26,11 @@ test('D2 三问：合规零 warning；旧四段只给 legacy warning（不拒）
 
 test('D5 协议：汇报默认三问 + Lead 自写（不从工具用户段起稿）+ 机制/协议诊断归 architect', () => {
   assert.match(PROTOCOL_TEXT, /汇报默认三问/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /## 用户汇报规范（Lead 是唯一对用户说话的人；默认三问）/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /工具返回只是内部事实/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /Lead 自己写三问/);
-  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /\[给用户\]/);
-  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /## 提问与汇报（白话优先）/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /工具返回只是内部事实/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /汇报默认三问/);
+  assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /\[给用户\]/);
+  assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
   assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /机制\/协议\/汇报方式的诊断与设计也先交 architect/);
   assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /Lead 不自行拍这类方案/);
 });

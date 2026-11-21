@@ -161,7 +161,8 @@ test('A2 actor lint：Lead 文本不得直接调 checkpoint/freshen，跨角色�
   assert.match(lead.text, /Lead 面 13 个工具不含/, 'Lead 文本必须标注 checkpoint/freshen 的归属');
   const cross = lead.text.split('\n').filter((line) => /relay_checkpoint|relay_freshen/.test(line));
   assert.ok(cross.length >= 4, 'Lead 文本应保留 4 处换人/保鲜说明（实际 ' + cross.length + '）');
-  for (const line of cross) assert.match(line, /发消息/, 'Lead 提 checkpoint/freshen 时必须写「发消息让队友」：' + line.trim().slice(0, 120));
+  // v0.14 P1：架构师行用「它自己」明确归属（Lead 不代调）；其余队友行仍要求「发消息让队友」。
+  for (const line of cross) assert.match(line, /发消息|让队友|队友自己|它自己|你自己|由你自己/, 'Lead 提 checkpoint/freshen 时必须写明由谁执行：' + line.trim().slice(0, 120));
 });
 
 

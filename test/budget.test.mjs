@@ -546,8 +546,9 @@ test('relay_phase 队友会话 warn 档 action=relay：lead-only，请示 Lead �
 
 test('protocol 文案：phase 优先 + budget_plan + 拆票 + 先写好文档再交接；旧 nag 不再是指令', () => {
   resetSharedState();
-  const { sections } = applyAgent(fakeServices({ session: fakeSession({ id: 'session-budget-protocol', cwd: tmpCwd(), seq: 0 }) }).services);
-  const text = sections[0].text;
+  const session = fakeSession({ id: 'session-budget-protocol', cwd: tmpCwd(), seq: 0 });
+  const { sections } = applyAgent(fakeServices({ session }).services);
+  const text = sections.map((section) => typeof section.text === 'function' ? section.text({ agent: { session } }) : String(section.text ?? '')).join('\n');
   assert.match(text, /phase 优先/);
   assert.match(text, /预算/);
   assert.match(text, /budget_plan/);
@@ -560,7 +561,7 @@ test('protocol 文案：phase 优先 + budget_plan + 拆票 + 先写好文档再
   assert.doesNotMatch(text, /不用等 phase 完成/);
   assert.doesNotMatch(text, /现在调 tools\.relay_organize/);
   // 到线提醒段：P0-D 四档语义（起点/warn 现在动手/兜底/最后防线）。
-  assert.match(text, /起点提醒/);
+  assert.match(text, /到线提醒/);
   assert.match(text, /现在就该动手/);
   assert.match(text, /兜底告警/);
 });

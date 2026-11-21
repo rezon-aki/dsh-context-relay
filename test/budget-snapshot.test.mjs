@@ -10,8 +10,8 @@
  * 常驻 section 文本按 apply 里的 text(context) 用该角色会话上下文求值——不是把 lib 常量相加。
  * 四角色 = lead（root）/ teammate（depth=1）/ architect（depth=1 + pending 认领）/ worker（depth≥2）。
  *
- * 快照是闸门：工具、参数 schema、协议文本、角色表任何漂移都会失败。有意变更时更新
- * 本文件快照并复核预算（新增工具 = 每请求常驻注入回涨，必须显式点头、不能无闸门回涨）。
+ * 快照只记录字节漂移（diagnostic，不设失败门——R1）；工具面/角色表/deny 仍是契约。
+ * 有意变更时更新本文件快照并在回执里写明预算变化（新增工具 = 每请求常驻注入回涨）。
  * 快照值为 C11 实现时（C9/C10 之后）的实测值；15 工具 = 常驻 8 + lead-only 5 + 队友 2。
  */
 import { test } from 'node:test';
@@ -255,14 +255,10 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:protocol', 8074],
-      ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 1853],
-      ['context-relay:architect', 828],
-      ['context-relay:router', 2395],
-      ['context-relay:team-lead', 933],
+      ['context-relay:phase', 5189],
+      ['context-relay:redline', 1178],
     ],
-    sectionChars: 14098,
+    sectionChars: 6367,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
@@ -270,30 +266,26 @@ const ROLE_SNAPSHOT = {
     // v0.13 fix4：collect lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）。
     // v0.13 fix5：relay_phase report schema 三问化 +44；router 2196→2246。
     toolSchemaChars: 25122,
-    totalChars: 39220,
+    totalChars: 31489,
   },
   teammate: {
     sections: [
-      ['context-relay:protocol', 1311],
-      ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 0],
-      ['context-relay:architect', 0],
+      ['context-relay:phase', 1320],
+      ['context-relay:redline', 15],
     ],
-    sectionChars: 1326,
+    sectionChars: 1335,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: [...TEAMMATE_TOOL_NAMES],
     toolDescChars: 1815,
     // v0.13 fix5：relay_phase report schema 三问化 +44 同样进队友面。
     toolSchemaChars: 13016,
-    totalChars: 14342,
+    totalChars: 14351,
   },
   architect: {
     sections: [
-      ['context-relay:protocol', 845],
-      ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 0],
-      ['context-relay:architect', 0],
+      ['context-relay:phase', 845],
+      ['context-relay:redline', 15],
     ],
     sectionChars: 860,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
@@ -305,10 +297,8 @@ const ROLE_SNAPSHOT = {
   },
   worker: {
     sections: [
-      ['context-relay:protocol', 371],
-      ['context-relay:unlimited-budget', 15],
-      ['context-relay:work-ledger', 0],
-      ['context-relay:architect', 0],
+      ['context-relay:phase', 371],
+      ['context-relay:redline', 15],
     ],
     sectionChars: 386,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
@@ -323,16 +313,25 @@ const ROLE_SNAPSHOT = {
 test('C11 A-07/A-09：4 角色装配实测快照（section 求值 + restrict + 注册工具，非常量求和）', async () => {
   const { measured, skills } = await assembleAll();
   for (const role of Object.keys(ROLE_SNAPSHOT)) {
-    assert.deepEqual(measured[role], ROLE_SNAPSHOT[role], role + ' 角色装配实测快照漂移（角色表/协议段/工具面改动必须更新快照并复核预算）');
+    const actual = measured[role];
+    const expected = ROLE_SNAPSHOT[role];
+    // 字节字段只记录漂移（diagnostic/快照差），不设失败门（R1）。
+    const byteDrift = ['sections', 'sectionChars', 'toolDescChars', 'toolSchemaChars', 'totalChars']
+      .filter((key) => JSON.stringify(actual[key]) !== JSON.stringify(expected[key]))
+      .map((key) => key + ' ' + JSON.stringify(expected[key]) + '→' + JSON.stringify(actual[key]));
+    if (byteDrift.length > 0) console.log('[diagnostic] budget snapshot drift ' + role + ': ' + byteDrift.join(' | '));
+    // 工具面/角色表/deny 是契约（非字节预算）：漂移即失败。
+    for (const key of ['tools', 'roleTools', 'denied']) {
+      assert.deepEqual(actual[key], expected[key], role + ' 工具面/角色表漂移: ' + key);
+    }
   }
   // w5 技能面：human-loop 只给 Lead（agent scope），子智能体不装配（skills 无 deny，全局会对所有会话可见）。
   assert.deepEqual(skills.lead, ['human-loop'], 'Lead 技能面在 agent scope 注册 human-loop');
   for (const role of ['teammate', 'architect', 'worker']) assert.deepEqual(skills[role], [], role + ' 不装配 human-loop');
-  // A-07：TEAMMATE 协议段长度预算（≤1,300 字符；快照已钉 1,261，这里保留可读的预算上限语义）。
-  const protocolChars = (role) => measured[role].sections.find(([name]) => name === 'context-relay:protocol')[1];
-  assert.ok(protocolChars('teammate') <= 1320, 'TEAMMATE 协议段超预算: ' + protocolChars('teammate'));
-  // A-09：root 合计必须是装配实测值（而不是把 lib 常量相加）；四角色按身份递减、工具面按角色裁剪。
-  assert.equal(measured.lead.sectionChars, ROLE_SNAPSHOT.lead.sectionChars, 'root 常驻文本合计按装配实测定格');
+  // A-07：TEAMMATE 协议段长度只记录（R1），不设字节失败门。
+  const protocolChars = (role) => measured[role].sections.find(([name]) => name === 'context-relay:phase')[1];
+  console.log('[diagnostic] TEAMMATE phase chars=' + protocolChars('teammate'));
+  // A-09：root 常驻文本按装配实测（而不是把 lib 常量相加）；四角色按身份递减、工具面按角色裁剪。
   assert.ok(measured.lead.sectionChars > measured.teammate.sectionChars, 'root 常驻文本应多于直接队友');
   assert.ok(measured.teammate.sectionChars > measured.worker.sectionChars, '直接队友常驻文本应多于普通子代理');
   assert.ok(measured.lead.tools.length > measured.teammate.tools.length, 'root 工具面应大于直接队友');

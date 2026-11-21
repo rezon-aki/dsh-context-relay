@@ -153,7 +153,7 @@ test('ensureAgentPlane 按角色表装配：teammate/architect/worker 的 deny/s
   assert.deepEqual(worker.state.restricted, [...LEAD_ONLY_TOOLS, ...SUBAGENT_ONLY_HIDDEN_TOOLS, ...SUBAGENT_STATUS_DENY, ...SUBAGENT_DOC_LINT_DENY, ...SUBAGENT_ASK_USER_DENY], 'worker 裁 lead-only + phase + status + doc_lint + ask_user（保留 relay_doc）');
   assert.deepEqual(worker.state.registered, [], 'worker 不注册角色工具');
   assert.deepEqual(worker.state.skills, [], 'worker 不装配 human-loop');
-  assert.deepEqual(worker.state.sections.map((section) => section.name), ['context-relay:protocol']);
+  assert.deepEqual(worker.state.sections.map((section) => section.name), ['context-relay:phase']);
 });
 
 test('w5 ask_user_question：non-lead 用 agent-scope restrict 裁掉；restrict 失败只 warn 不抛', () => {
@@ -367,7 +367,9 @@ test('fail-open 降级：ctx 缺失 / restrict 全部失败 / 服务缺失 → d
   assert.equal(status.installed, false);
   assert.equal(status.role, 'lead');
   assert.ok(status.degradations.some((entry) => entry.seam === 'tools' && entry.level === 'unavailable'));
-  assert.ok(status.degradations.some((entry) => entry.seam === 'systemPrompt' && entry.level === 'unavailable'));
+  // v0.14 P1：Lead 无角色影子段 → systemPrompt seam 没有待装内容，不再记 systemPrompt 降级（skills 仍在）。
+  assert.ok(status.degradations.some((entry) => entry.seam === 'tools'), '无 ctx 时 tools 降级可见');
+  assert.ok(!status.degradations.some((entry) => entry.seam === 'systemPrompt'), 'Lead 无影子段 → 无 systemPrompt 降级');
   // 2) restrict 全部失败：installed 仍为 true（effect 注入成功），但降级可见。
   const target = scopedAgent({ sessionId: 'session-degraded', header: {}, restrictThrows: new Set(ROUTER_DENY_TOOLS) });
   const rootResult = ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf });
@@ -392,7 +394,7 @@ test('半装成（一个 seam 服务缺失）也进入状态机：installed=fals
   });
   const result = ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf });
   assert.equal(result.installed, false, 'tools seam 缺失 → 未完全装好');
-  assert.deepEqual(target.state.sections.map((section) => section.name), ['context-relay:router', 'context-relay:team-lead'], '可用的 seam 照装（root 两段）');
+  assert.deepEqual(target.state.sections.map((section) => section.name), [], 'v0.14 P1：root 无角色影子段（协议全在 preset 层）');
   assert.ok(planeOf(target.agent).degradations.some((entry) => entry.seam === 'tools' && entry.level === 'unavailable'));
   assert.deepEqual(target.state.disposed, [], '此时未卸载');
   const all = disposeAllPlanes({ reason: 'preset-left' });
@@ -409,13 +411,13 @@ test('半装成后重试：先撤旧 agent-scope 注册再重装（不叠加 res
     getService: (name) => (name === 'tools' ? (toolsAvailable ? {} : undefined) : {}),
   });
   assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).installed, false);
-  assert.equal(target.state.sections.length, 2);
+  assert.equal(target.state.sections.length, 0);
   toolsAvailable = true;
   assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).installed, true);
   assert.deepEqual(target.state.restricted, [...ROUTER_DENY_TOOLS], '重试只裁一次');
   assert.ok(!target.state.disposed.includes('tools'), '第一次安装 tools 被跳过、无旧 tools fiber 需撤');
   assert.ok(target.state.disposed.includes('systemPrompt'), '重装前撤掉旧 fiber（真实系统同名 section 覆盖 → 净效果仍 2 段）');
-  assert.equal(target.state.sections.length, 4, 'fake 记录只增不减：旧 2 段 + 重装 2 段（对应真实系统 2 段）');
+  assert.equal(target.state.sections.length, 0, 'v0.14 P1：root 无角色影子段（真实系统协议段来自 preset 层）');
   const before = [...target.state.restricted];
   assert.equal(ensureAgentPlane(target.agent, { toolsOf: () => [], skillOf: testSkillOf }).idempotent, true, '装好后幂等短路');
   assert.deepEqual(target.state.restricted, before);

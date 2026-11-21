@@ -403,7 +403,8 @@ test('批次上限 900：超限先丢 [队友] 再丢 [上下文]，focus/闭环
   assert.equal(injected.length, 1);
   const text = injected[0].content[0].text;
   assert.ok(text.includes(phaseFocusLine(readWorkItems(cwd, { pathOverride: WORK_ITEMS_REL }))), 'focus 保留且正文不截断');
-  assert.match(text, /\[闭环\] 上一步改动未落账：write\(x+\.js\)/);
+  assert.match(text, /\[闭环\] 上一步改动未落账：write\(x+/, '闭环行前缀保留（极端超长行按 600B 尾裁）');
+  assert.ok(text.endsWith('这不是用户发言。不要复述本段；对用户请用三问重写。'), '免责尾完整');
   assert.doesNotMatch(text, /\[队友\]/, '超限先丢 [队友]');
   assert.doesNotMatch(text, /\[上下文\]/, '仍超限再丢 [上下文]');
   await step(); // 被丢弃的两类下一步补（不推进 guard → 不丢事件）
@@ -460,27 +461,27 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   const snapshot = readTeamContext(cwd, 'session-dispatch-lead');
   assert.deepEqual(snapshot.pending.map((row) => row.name), ['mate-1']);
   await step();
-  assert.equal(injected.length, 1, '状态没变：不重复注入');
+  assert.equal(injected.length, 2, '状态没变：本 step 补上被 600B 预算丢弃的 [队友]/[上下文] 行（不是重复）');
+  assert.match(injected[1].content[0].text, /\[队友\] 队友待处理 1：mate-1/);
 
   // 同一队友已在待处理：再派活不重复催（快照即去重）
   await send('mate-1');
   await step();
-  assert.equal(injected.length, 1);
+  assert.equal(injected.length, 2);
 
   // 签名去重（P1）：快照待处理清掉后再派同一 target/band → 同签名静默
   assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
   await send('mate-1');
   await step();
-  assert.equal(injected.length, 1, '同 (target, band) 签名不重复注入');
+  assert.equal(injected.length, 2, '同 (target, band) 签名不重复注入');
 
   // band 变化（organize → relay）→ 签名变化再注入一次
   tokens['session-dm-1'] = 520000;
   assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
   await send('mate-1');
   await step();
-  assert.equal(injected.length, 2, 'band 变化 → 再提示一次');
-  assert.match(injected[1].content[0].text, /mate-1\(relay\)/);
-  assert.match(injected[1].content[0].text, /\[派活·队友上下文\] mate-1 档位=relay/);
+  assert.equal(injected.length, 3, 'band 变化 → 再提示一次');
+  assert.match(injected[2].content[0].text, /\[派活·队友上下文\] mate-1 档位=relay/);
 
   // 同 step 单条 notice 优先级：到线 notice 与派活提示同 step → 只发 notice，派活提示下一步补（不丢）
   assert.equal((await clearTeamContextRow(cwd, 'session-dispatch-lead', 'mate-1')).cleared, true);
@@ -488,12 +489,12 @@ test('派活时评估队友上下文：到线队友下一步提示一次 + 快�
   await send('mate-1');
   state.pressure = { contextWindow: 1_000_000, projectedTokens: 420_000 }; // Lead 自己升线到 organize
   await step();
-  assert.equal(injected.length, 3, '同 step 最多一条 notice（到线优先）');
-  assert.match(injected[2].source.summary, /band=organize/);
-  assert.doesNotMatch(injected[2].content[0].text, /\[派活·队友上下文\]/);
+  assert.equal(injected.length, 4, '同 step 最多一条 notice（到线优先）');
+  assert.match(injected[3].source.summary, /band=organize/);
+  assert.doesNotMatch(injected[3].content[0].text, /\[派活·队友上下文\]/);
   await step();
-  assert.equal(injected.length, 4, '下一步补派活提示（不丢）');
-  assert.match(injected[3].content[0].text, /\[派活·队友上下文\] mate-1 档位=organize/);
+  assert.equal(injected.length, 5, '下一步补派活提示（不丢）');
+  assert.match(injected[4].content[0].text, /\[派活·队友上下文\] mate-1 档位=organize/);
 });
 
 test('派活判断点按 (target,band,status) 首次/变化才打断：同状态后续放行；band/status 变化再拦；退休代恒 deny', async () => {

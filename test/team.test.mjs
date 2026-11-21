@@ -10,7 +10,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../lib/agent.js';
 import { clearTeamStatusMemory, createTeamTools } from '../lib/agent/team-tools.js';
-import { TEAM_LEAD_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { clearPendingResets, hasPendingReset } from '../lib/agent/reset.js';
 import { clearSentinelMemory, dispatchNeedOf, LAST_BAND } from '../lib/agent/sentinel.js';
 import { DISPATCH_HEALTHS, clearDelegationMemory, createDelegationTools, delegationMemoryState, dispatchHealthOf } from '../lib/agent/delegation-tools.js';
@@ -1887,7 +1886,8 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   const rootSections = [];
   await listener.listener({ agent: makeAgent({ calls: rootCalls, sections: rootSections }) });
   assert.deepEqual(rootCalls, ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'], 'root 拿到 Lead 保鲜/架构师/派活/收口工具（v0.9.0 批次3 顺序）');
-  assert.ok(rootSections.some((section) => section.name === 'context-relay:team-lead' && section.text === TEAM_LEAD_PROTOCOL_TEXT));
+  // v0.14 P1：team-lead 段已并入 preset 层 context-relay:phase；root 不再有角色影子段。
+  assert.deepEqual(rootSections, [], 'root 无角色影子段');
   // teammate
   const teammateCalls = [];
   const teammateSections = [];
@@ -1896,7 +1896,7 @@ test('装配：单一模式恒注册团队工具/段（不再依赖 routerMode �
   apply(g.ctx, {});
   await g.listeners.find((entry) => entry.name === 'agent/created').listener({ agent: teammate });
   assert.deepEqual(teammateCalls, ['relay_checkpoint', 'relay_freshen'], '队友拿到 checkpoint + freshen 工具');
-  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:protocol'], '队友只注入紧凑协议（不再叠第二条 team-worker 段）');
+  assert.deepEqual(teammateSections.map((section) => section.name), ['context-relay:phase'], '队友只注入紧凑协议（不再叠第二条 team-worker 段）');
   assert.ok(!teammateCalls.includes('relay_team_status'), '队友不拿 Lead 工具');
   assert.ok(!teammateCalls.includes('relay_dispatch') && !teammateCalls.includes('relay_collect'), '队友不拿派活/收口工具');
   // 架构师：只拿 relay_checkpoint（不拿 dispatch/collect）

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
+import { PROTOCOL_TEXT, REDLINE_PROTOCOL_TEXT, ROUTER_PROTOCOL_TEXT, TEAMMATE_PROTOCOL_TEXT, ARCHITECT_LEAD_PROTOCOL_TEXT, ARCHITECT_WORKER_PROTOCOL_TEXT } from '../lib/agent/protocol.js';
 import { INTERNAL_DETAILS_MARK, INTERNAL_ERROR_MARK, MODEL_STATE_MARK } from '../lib/output.js';
 
 const read = (path) => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
@@ -14,20 +14,20 @@ test('Sources: no tool user-segment drafting; Lead writes the three questions', 
   for (const [name, text] of [['PROTOCOL', PROTOCOL_TEXT], ['ROUTER', ROUTER_PROTOCOL_TEXT], ['TEAMMATE', TEAMMATE_PROTOCOL_TEXT], ['ARCHITECT_LEAD', ARCHITECT_LEAD_PROTOCOL_TEXT], ['ARCHITECT_WORKER', ARCHITECT_WORKER_PROTOCOL_TEXT]]) {
     assert.doesNotMatch(text, /\[给用户\]/, name + ' must not mention a user segment');
   }
-  assert.match(ROUTER_PROTOCOL_TEXT, /工具返回只是内部事实/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /Lead 自己写三问/);
-  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
-  assert.doesNotMatch(ROUTER_PROTOCOL_TEXT, /没有 .*段就不发进度消息/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /不得把工具段\/字段原样贴给用户/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /工具返回只是内部事实/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /汇报默认三问/);
+  assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
+  assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /没有 .*段就不发进度消息/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /不得原样贴给用户/);
 });
 
 test('Decision card: seven fields, docs only evidence, no path-only decision', () => {
-  assert.match(ROUTER_PROTOCOL_TEXT, /裁决卡（硬规则）/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /裁决卡（硬规则）/);
   for (const field of ['问题', '选项 A/B', '各自影响面', '收益/风险', '推荐', '默认', '不选会怎样']) {
-    assert.ok(ROUTER_PROTOCOL_TEXT.includes(field), 'decision card missing: ' + field);
+    assert.ok(REDLINE_PROTOCOL_TEXT.includes(field), 'decision card missing: ' + field);
   }
-  assert.match(ROUTER_PROTOCOL_TEXT, /文档只作证据/);
-  assert.match(ROUTER_PROTOCOL_TEXT, /禁止只说/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /文档只作证据/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /禁止只说/);
   assert.match(ARCHITECT_LEAD_PROTOCOL_TEXT, /裁决卡直接问用户/);
   assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /七字段/);
 });
