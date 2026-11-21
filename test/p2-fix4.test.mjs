@@ -85,7 +85,7 @@ async function seedDoing(cwd, sessionId, ids) {
 function writeReport(cwd, id, { revision, evidenceBlock }) {
   const dir = join(cwd, '.scratch/context-relay/reports');
   mkdirSync(dir, { recursive: true });
-  const body = ['task: ' + id, 'revision: ' + revision, 'verdict: done', '', '## 结论', '完成。', ''];
+  const body = ['task: ' + id, 'revision: ' + revision, 'verdict: done', 'assessment: needPriorContext=true canFinish=true action=direct', '', '## 结论', '完成。', ''];
   if (evidenceBlock !== undefined) body.push('## 验证', evidenceBlock, '');
   writeFileSync(join(dir, id + '.md'), body.join('\n'));
 }

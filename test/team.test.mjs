@@ -816,6 +816,53 @@ test('relay_freshen：Lead 拒绝/低 band 拒绝；官方压缩 + brief 注入 
   }
 });
 
+test('relay_freshen prestart：自评 reset 可用且同 dispatch 一次；中途 reset/freshen 拒；needs-split 拒', async () => {
+  const dir = tempWorkspace();
+  clearPendingResets();
+  try {
+    const lead = makeAgent({ sessionId: LEAD, cwd: dir });
+    const mate = makeAgent({ sessionId: 'session-w1', cwd: dir, header: { origin: 'subagent', parentSession: LEAD } });
+    const ctx = fakeCtx({ agentTeams: makeTeamService({ memberships: new Map([[mate, membership('teammate', 'impl-g1', lead)]]) }) });
+    const freshen = createTeamTools(makeRuntime(ctx.ctx)).teammateTools.find((tool) => tool.name === 'relay_freshen');
+    await writeWorkItems(dir, { items: [{ id: 'p1', title: '实现', status: 'doing', owner: 'impl-g1', next: '写测试', phase: 'build' }], updatedBy: LEAD, scopeId: LEAD });
+    const dispatchDir = join(dir, '.scratch', 'context-relay', 'dispatch', LEAD);
+    mkdirSync(dispatchDir, { recursive: true });
+    writeFileSync(join(dispatchDir, 'p1.json'), JSON.stringify({ itemId: 'p1', scopeId: LEAD, dispatchId: 'd-p1-x', worker: 'impl-g1', workerSessionId: 'session-w1' }));
+    // 中途（doing）：非 prestart reset / freshen 都拒（B）
+    const midReset = await freshen.execute({ reset: true, brief: 'x' }, { agent: mate });
+    assert.equal(midReset.code, 'task-not-done');
+    assert.equal(midReset.itemId, 'p1');
+    const midFreshen = await freshen.execute({ brief: 'x', force: true }, { agent: mate });
+    assert.equal(midFreshen.code, 'task-not-done');
+    // prestart 必填 dispatch_id + 合法自评；伪造 dispatch_id（无落盘记录）拒
+    const missing = await freshen.execute({ reset: true, prestart: true, brief: 'x' }, { agent: mate });
+    assert.equal(missing.code, 'invalid-assessment');
+    const forged = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-forged', self_assessment: { needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' }, brief: 'x' }, { agent: mate });
+    assert.equal(forged.code, 'not-prestart', '伪造 dispatch_id 无落盘记录');
+    const bad = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-p1-x', self_assessment: { needPriorContext: true, canFinish: false, action: 'bogus' }, brief: 'x' }, { agent: mate });
+    assert.equal(bad.code, 'invalid-assessment');
+    const split = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-p1-x', self_assessment: { needPriorContext: true, canFinish: false, action: 'needs-split' }, brief: 'x' }, { agent: mate });
+    assert.equal(split.code, 'needs-split');
+    // 合法 prestart：排队真清空 + reset brief 带「自评已完成」标记
+    const ok = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-p1-x', self_assessment: { needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' }, brief: '新任务开工' }, { agent: mate });
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    assert.equal(ok.prestart, true);
+    assert.equal(ok.dispatchId, 'd-p1-x');
+    assert.equal(hasPendingReset('session-w1'), true);
+    const brief = readFileSync(ok.briefPath, 'utf8');
+    assert.match(brief, /本 dispatch 自评已完成：needPriorContext=true; canFinish=false; action=checkpoint-freshen/);
+    assert.match(brief, /不要再次 relay_freshen/);
+    assert.match(brief, /新任务开工/);
+    // 同 dispatch 只能一次
+    const again = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-p1-x', self_assessment: { needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' }, brief: 'x' }, { agent: mate });
+    assert.equal(again.code, 'already-reset');
+    // 同一 doing 分点换 dispatch_id（真实记录）也不能二次 reset（持久化 item 级标记）
+    writeFileSync(join(dispatchDir, 'p1-2.json'), JSON.stringify({ itemId: 'p1', scopeId: LEAD, dispatchId: 'd-p1-y', worker: 'impl-g1', workerSessionId: 'session-w1' }));
+    const secondDispatch = await freshen.execute({ reset: true, prestart: true, dispatch_id: 'd-p1-y', self_assessment: { needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' }, brief: 'x' }, { agent: mate });
+    assert.equal(secondDispatch.code, 'already-reset', '同一 doing 分点只允许一次 prestart reset');
+  } finally { clearPendingResets(); cleanup(dir); }
+});
+
 test('relay_freshen reset：legacy-only checkpoint 的 brief 指向真实 legacy 路径（不造假分区路径）', async () => {
   const dir = tempWorkspace();
   clearPendingResets();
@@ -1263,7 +1310,7 @@ test('relay_dispatch：member-limit → 结构化失败 + 台账回滚', async (
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
-test('relay_dispatch：脏上下文队友默认拒绝（先管理再派指引 + 快照）；accept_dirty:true 放行', async () => {
+test('relay_dispatch：显式 worker 不再按 band 拒（B）；organize 队友可直接派', async () => {
   const dir = tempWorkspace();
   clearDelegationMemory();
   try {
@@ -1274,19 +1321,12 @@ test('relay_dispatch：脏上下文队友默认拒绝（先管理再派指引 + 
     });
     await seedLedger(dir, [{ id: 'a1', title: '实现登录修复', status: 'open' }]);
     const { dispatch } = delegationToolsOf(ctx);
-    const refused = await dispatch.execute({ ...DISPATCH_ARGS, worker: 'worker-1' }, { agent: lead });
-    assert.equal(refused.ok, false);
-    assert.equal(refused.code, 'worker-needs-management');
-    assert.match(refused.recovery, /relay_freshen\(\{reset:true/);
-    assert.equal(refused.worker.band, 'organize');
-    assert.equal(teams.calls.send.length, 0, '拒绝不发消息');
-    assert.equal(ledgerItem(dir, 'a1').status, 'open', '拒绝零台账副作用');
-    const snapshot = readTeamContext(dir, LEAD);
-    assert.ok(snapshot.pending.some((row) => row.name === 'worker-1'), '写团队上下文快照（phase 边界兜底）');
-    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, worker: 'worker-1', accept_dirty: true }, { agent: lead });
-    assert.equal(accepted.ok, true, 'accept_dirty 放行');
+    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, worker: 'worker-1' }, { agent: lead });
+    assert.equal(accepted.ok, true, 'band 不再拒显式 worker（B）');
+    assert.equal(accepted.worker.reused, true);
+    assert.equal(accepted.worker.name, 'worker-1');
     assert.equal(teams.calls.send.length, 1);
-    assert.equal(ledgerItem(dir, 'a1').owner, 'worker-1');
+    assert.equal(ledgerItem(dir, 'a1').owner, 'worker-1', '直接派只改台账 owner');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 
@@ -1316,10 +1356,11 @@ test('relay_dispatch 自动选人 health：仅 fresh/watch 可复用（stale/spe
     const { dispatch } = delegationToolsOf(ctx);
     const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
     assert.equal(result.ok, true);
-    assert.equal(result.worker.spawned, true, 'stale/spent 队友不自动复用');
-    assert.equal(result.worker.name, 'worker-2', 'worker-1 名字已占用，沿用既有 spawn 路径新建 worker-2');
-    assert.equal(teams.calls.send.length, 0);
-    assert.equal(teams.calls.spawn.length, 1);
+    assert.equal(result.worker.reused, true, 'B：organize 队友作为 self-manage 候补复用');
+    assert.equal(result.worker.name, 'worker-1');
+    assert.equal(result.selection.tier, 'self-manage');
+    assert.equal(teams.calls.send.length, 1);
+    assert.equal(teams.calls.spawn.length, 0);
   } finally { cleanup(dirA); clearDelegationMemory(); }
   // 集成 B：读不到队友档位（无 sessionQuery → band=unknown → health=unknown）→ 不自动复用。
   const dirB = tempWorkspace();
@@ -1330,13 +1371,13 @@ test('relay_dispatch 自动选人 health：仅 fresh/watch 可复用（stale/spe
     const { dispatch } = delegationToolsOf(ctx);
     const result = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
     assert.equal(result.ok, true);
-    assert.equal(result.worker.spawned, true, '读不到档位（unknown）的队友不自动复用');
-    assert.equal(result.worker.name, 'worker-2');
-    assert.equal(teams.calls.send.length, 0);
+    assert.equal(result.worker.reused, true, 'unknown 档也作为 self-manage 候补复用');
+    assert.equal(result.worker.name, 'worker-1');
+    assert.equal(teams.calls.send.length, 1);
   } finally { cleanup(dirB); clearDelegationMemory(); }
 });
 
-test('relay_dispatch 自动选人：clean(ok+ck) 优先、dirty(unavailable) 排除；显式 dirty 拒、accept_dirty 放行（v0.11 P0-A）', async () => {
+test('relay_dispatch 自动选人：clean(ok+ck) 优先，dirty 进 self-manage 候补；显式 dirty 直接派（B）', async () => {
   const dir = tempWorkspace();
   clearDelegationMemory();
   try {
@@ -1364,22 +1405,14 @@ test('relay_dispatch 自动选人：clean(ok+ck) 优先、dirty(unavailable) 排
     assert.equal(auto.selection.mode, 'reused');
     assert.equal(auto.selection.score, 0, 'fresh(ok) score=0');
     assert.deepEqual([...auto.selection.considered].sort(), ['clean-w', 'dirty-w']);
-    assert.ok(auto.selection.excluded.some((row) => row.name === 'dirty-w' && row.reason === 'health-unknown'), 'dirty 候选给出排除原因');
+    assert.equal(auto.selection.tier, 'clean', 'clean 候选优先');
     assert.equal(auto.selection.truncated, false);
     assert.equal(teams.calls.send.length, 1);
 
-    const refused = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'dirty-w' }, { agent: lead });
-    assert.equal(refused.ok, false);
-    assert.equal(refused.code, 'worker-needs-management');
-    assert.equal(refused.worker.band, 'unavailable');
-    assert.match(refused.summary, /指标不可用/);
-    assert.equal(teams.calls.send.length, 1, '显式 dirty 拒绝不发消息');
-    assert.equal(ledgerItem(dir, 'a2').status, 'open');
-
-    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'dirty-w', accept_dirty: true }, { agent: lead });
-    assert.equal(accepted.ok, true, 'accept_dirty 放行（Lead 显式判断）');
+    const accepted = await dispatch.execute({ ...DISPATCH_ARGS, itemId: 'a2', worker: 'dirty-w' }, { agent: lead });
+    assert.equal(accepted.ok, true, '显式 dirty 不再拒绝（B）');
     assert.equal(accepted.worker.name, 'dirty-w');
-    assert.equal(accepted.selection.score, null, '脏候选无可用评分');
+    assert.equal(accepted.selection.score, null, '脏候选无 clean 评分');
     assert.equal(teams.calls.send.length, 2);
     assert.equal(ledgerItem(dir, 'a2').owner, 'dirty-w');
   } finally { cleanup(dir); clearDelegationMemory(); }
@@ -1399,13 +1432,13 @@ test('relay_dispatch 无候选失败：带上 considered/excluded/truncated（B1
     });
     await seedLedger(dir, [{ id: 'a1', title: '全脏', status: 'open' }]);
     const { dispatch } = delegationToolsOf(ctx, { allowSpawn: false });
-    const failed = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
-    assert.equal(failed.ok, false);
-    assert.equal(failed.code, 'no-squad-member');
-    assert.deepEqual([...failed.considered].sort(), ['dirty-1', 'dirty-2']);
-    assert.ok(failed.excluded.some((row) => row.name === 'dirty-1' && row.reason === 'health-unknown'), '失败结果保留排除原因');
-    assert.equal(failed.truncated, false);
-    assert.equal(ledgerItem(dir, 'a1').status, 'open', '拒绝零副作用');
+    const reused = await dispatch.execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(reused.ok, true, 'B：全脏也有 self-manage 候补，不再 no-squad-member');
+    assert.equal(reused.worker.reused, true);
+    assert.equal(reused.selection.tier, 'self-manage');
+    assert.deepEqual([...reused.selection.considered].sort(), ['dirty-1', 'dirty-2']);
+    assert.equal(reused.selection.truncated, false);
+    assert.equal(ledgerItem(dir, 'a1').status, 'doing', '派活成功写 doing');
   } finally { cleanup(dir); clearDelegationMemory(); }
 });
 

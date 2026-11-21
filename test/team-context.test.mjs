@@ -534,55 +534,27 @@ test('派活判断点按 (target,band,status) 首次/变化才打断：同状态
   const leadAgent = { session: leadSession, options: {} };
   const call = (target) => pre({ name: 'send_message', arguments: { agent: target, message: '做 X' }, agent: leadAgent, signal: new AbortController().signal }, async () => ({ kind: 'allow' }));
 
-  // 到线 + 空闲：首次判断点给「先管理再派 / 直接派」（deny 文案逐字不变）
-  const denied = await call('mate-1');
-  assert.equal(denied.kind, 'deny');
-  assert.match(denied.reason, /派活前先读状态：mate-1 band=organize/);
-  assert.match(denied.reason, /先管理再派/);
-  assert.match(denied.reason, /直接派/);
-  assert.deepEqual(readTeamContext(cwd, 'session-gate-lead').pending.map((row) => row.name), ['mate-1'], '拦住即记快照：直接派也不会在边界漏掉');
-  assert.equal((await call('mate-1')).kind, 'allow', '模型判断后原样重发 = 派活');
-  assert.equal((await call('mate-1')).kind, 'allow', '同 band/status 后续派活直接放行（不再重复打断）');
-
-  // band 变化（organize → relay）→ 再给一次判断点
-  tokens['session-dm-1'] = 520000;
-  const bandChanged = await call('mate-1');
-  assert.equal(bandChanged.kind, 'deny', 'band 变化重新打断');
-  assert.match(bandChanged.reason, /mate-1 band=relay/);
+  // 到线 + 空闲：B/C 起 band 不再拦 send_message（worker 接单先自评）；仍写团队快照（边界只读展示）
+  const allowed = await call('mate-1');
+  assert.equal(allowed.kind, 'allow', 'B：到线不拦 send_message');
+  assert.deepEqual(readTeamContext(cwd, 'session-gate-lead').pending.map((row) => row.name), ['mate-1'], '派活仍记快照');
   assert.equal((await call('mate-1')).kind, 'allow');
+  tokens['session-dm-1'] = 520000;
+  assert.equal((await call('mate-1')).kind, 'allow', 'band 变化也不拦');
 
-  // 在线内（ok）空闲：首次判断点 → 同状态放行（不再每次派活都打断）
-  const okGate = await call('mate-2');
-  assert.equal(okGate.kind, 'deny');
-  assert.match(okGate.reason, /mate-2 band=ok/);
-  assert.match(okGate.reason, /在线内，可直接派/);
+  // 在线内 / 忙队友：一律放行（不再按 band/status 打断）
   assert.equal((await call('mate-2')).kind, 'allow');
-  assert.equal((await call('mate-2')).kind, 'allow', '同 band/status 不再打断');
-
-  // 忙队友：普通协调消息不拦；到线首次拦一次，同状态后续放行
   assert.equal((await call('mate-3')).kind, 'allow', 'running + ok：协调消息直接放行');
-  tokens['session-dm-3'] = 520000; // running + relay
-  const busyStale = await call('mate-3');
-  assert.equal(busyStale.kind, 'deny');
-  assert.match(busyStale.reason, /mate-3 band=relay/);
-  assert.equal((await call('mate-3')).kind, 'allow');
-  // status 变化（running → inactive）→ 再给一次判断点
+  tokens['session-dm-3'] = 520000;
+  assert.equal((await call('mate-3')).kind, 'allow', 'running + relay：不再打断');
   status['session-dm-3'] = 'inactive';
-  const statusChanged = await call('mate-3');
-  assert.equal(statusChanged.kind, 'deny', 'status 变化重新打断');
-  assert.match(statusChanged.reason, /status=inactive/);
-  assert.equal((await call('mate-3')).kind, 'allow');
+  assert.equal((await call('mate-3')).kind, 'allow', 'status 变化也不拦');
 
   // 退休代恒 deny（身份错误不允许被 ack 去重）
   const retiredFirst = await call('mate-retired');
   assert.equal(retiredFirst.kind, 'deny');
   assert.match(retiredFirst.reason, /已退休代/);
   assert.equal((await call('mate-retired')).kind, 'deny', '退休代重发仍 deny');
-
-  // clearSentinelMemory（插件卸载/热重载）清 DISPATCH_ACK：同状态重新给一次判断点
-  clearSentinelMemory();
-  assert.equal((await call('mate-2')).kind, 'deny', 'ack 随 clearSentinelMemory 清理，重新给判断点');
-  assert.equal((await call('mate-2')).kind, 'allow');
 
   // 非队友直接放行
   assert.equal((await call('nobody')).kind, 'allow');

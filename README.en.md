@@ -159,10 +159,10 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 
 ## The team: Lead, teammates and the architect
 
-- **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is off by default** and existing members are reused first; when no one is eligible, reset-reuse an existing teammate or adopt a historical member. A phase-boundary handoff archives the old session but **does not rebuild the squad**; new members need `allowSpawn=true` plus `dispatch`/`renew` (or a manual official subagent).
+- **The squad is fixed, capped at 8 by default (including the architect)**; `squadMax` can be raised. **Spawn is allowed by default** (still capped by squadMax; existing members are reused first); when no one is eligible, reset-reuse an existing teammate or adopt a historical member, then `dispatch`/`renew` for a new member (`allowSpawn:false` disables it, or use a manual official subagent). A phase-boundary handoff archives the old session but **does not rebuild the squad**.
 - **The Lead only coordinates:** it splits work, dispatches it and checks it, while the actual building goes to teammates. Every dispatch comes as a standard brief: the goal, the must-read material, which files it may change, how the work will be checked, and where the report goes.
 - **Tools and skills are trimmed by role:** the human-loop skill is registered only for the relay Lead (`context-relay`/`doc-governance` stay global); `doc_lint` and questions meant for a human (`ask_user_question`) go to the Lead only; teammates keep status/phase/doc plus checkpoint/freshen, workers keep only `relay_doc` (bounded reads of briefs/handoffs); the architect and workers drop `relay_status` and `relay_phase`. Tool names and parameters are unchanged.
-- **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
+- **Replacing a teammate means true reset-reuse first:** have it checkpoint, then `relay_freshen({reset:true,brief})` (same member, zero quota); only an identity/role change (with spawn enabled) uses `relay_renew`. Historical members are hidden and not dispatchable by default; use `relay_team_status({manage:{action:'adopt',...}})` to include them, or `manage:{action:'retire',scope:'legacy',...}` to clean up (catalog names are never deleted; use handoff to truly clear the team).
 - **It doesn't hover over teammates:** reports arrive automatically, so the Lead doesn't spin in a polling loop — which saves tokens.
 
 ### The dedicated architect
@@ -201,7 +201,7 @@ Host plugin configuration:
 | `threshold` / `settings.threshold` | 35 | Watermark basis (%): a reminder fires 5 points earlier, at the basis line it suggests dealing with the context, and 10 points above that is the hard line. Since v0.10.0 this is the only source for the threshold. |
 | `settings` | six-field defaults | Initial defaults for the panel; anything you've saved in the UI wins. |
 | `settings.capacityThreshold` | `55` | Capacity line (%, 20–95, independent of the band threshold; setting 85 is close to the old behaviour). |
-| `allowSpawn` | `false` | Whether dispatch/renew may create members; when false, replace via reset-reuse/adopt/handoff only. |
+| `allowSpawn` | `true` | Whether dispatch/renew may create members (allowed by default, still capped by squadMax); when false, replace via reset-reuse/adopt/handoff only. |
 | `squadMax` | `8` | Squad cap (including the architect; can be raised; 32 is the defensive ceiling). |
 | `contextCheck` | `'on'` | Proactive self-check at a new phase/task; `'off'` silences it. |
 | `reopenGate` | `'strict'` | ship→build/verify repair gate: `strict` / `warn` / `off` (off = old v0.10 behaviour). |
@@ -241,7 +241,7 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 
 **Q: With "unlimited budget" turned off, will teammates still get that line?** Teammates, architects and workers created afterwards inherit the "off"; ones already running pick it up at their next freshen, or when the architect continues.
 
-**Q: A teammate's context is dirty, or it's stuck — what do I do?** Have the Lead get it to checkpoint, then `relay_freshen({reset:true,brief})` to wipe and reuse it in place (the work record is kept, same member, zero quota); only an identity/role change with `allowSpawn=true` uses `relay_renew`. Historical members must be adopted first.
+**Q: A teammate's context is dirty, or it's stuck — what do I do?** Have the Lead get it to checkpoint, then `relay_freshen({reset:true,brief})` to wipe and reuse it in place (the work record is kept, same member, zero quota); only an identity/role change (with spawn enabled) uses `relay_renew`. Historical members must be adopted first.
 
 **Q: Will it delete my conversations?** No. Compaction is only compaction: old detail stops appearing in the current context, but DSH still stores the history, and both the old and the new session of a handoff are kept.
 
@@ -329,7 +329,7 @@ All three subagent roles drop `doc_lint`, `ask_user_question` and the Lead-only 
 | `relay_dispatch` | The Lead takes a point → reuses or creates a worker → sends the standard brief (goal / must-read / write scope / acceptance / report path). |
 | `relay_collect` | The Lead waits briefly for reports (≤120s), reads only the report head and summary, checks freshness, then marks the point done or blocked; unverified receipts are marked `unverified` and never shown as "all done / checked". |
 | `relay_team_status` | Team health check (current squad only by default): health / band / checkpoints / dispatch counts / reset results; `include_legacy`/`include_retired` reveal history; `manage` does retire/adopt/maintain; a repeat query with nothing changed is refused. |
-| `relay_renew` | Replace a teammate generation (off by default; only for a change of identity/role with `allowSpawn=true`). |
+| `relay_renew` | Replace a teammate generation (only for a change of identity/role, with spawn enabled). |
 | `relay_architect` | Create or continue the fixed architect (`fresh` for a new context / `continue` to keep designing). |
 | `relay_checkpoint` | Teammates and the architect write a checkpoint (conclusion / done / decisions / evidence / constraints / open questions / next steps). |
 | `relay_freshen` | Pressure relief inside a task for teammates; `{reset:true, brief}` truly wipes the context and installs a new brief. |

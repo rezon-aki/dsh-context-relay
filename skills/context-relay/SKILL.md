@@ -73,10 +73,12 @@ disable-model-invocation: true
 
 ## 队友保鲜与团队
 
-- 固定小队默认上限 8（含架构师）、spawn 默认关；优先复用；换人=让该队友先自己 `relay_checkpoint`，再自己 `relay_freshen({reset:true,brief})` 真清空复用（同成员、不占额度；Lead 不代调）。
+- 固定小队默认上限 8（含架构师）、**spawn 默认允许**（受 squadMax；`allowSpawn:false` 可关）；优先复用，不够再 dispatch/renew。
+- 换人=让该队友先自己 `relay_checkpoint`，再自己 `relay_freshen({reset:true,brief})` 真清空复用（同成员、不占额度；Lead 不代调）。
+- **worker 开工前自评**：dispatch brief 第 0 段要求两问（needPriorContext / canFinish），需要清空时自己 `relay_freshen({reset:true, prestart:true, dispatch_id, self_assessment, brief})`；同 dispatch 只允许一次 prestart。任务过大→回执 `verdict: needs-human` + `assessment action=needs-split`，由 Lead 拆票；中途（doing）不得 reset/freshen（B）。
 - `relay_team_status` 只看当前 squad；退休代只审计，旧细节 `session_event_read`；`manage` 做 retire/adopt/maintain（不擦除、不 spawn、不手改 roster）。
-- `relay_renew` 默认不可用（spawn 关）：没有 checkpoint 不换代，只用于换身份/角色；member-limit 不要重试。
-- 队友到线（organize/relay）向上一级请示压缩还是交接，由 Lead 决定；队友不能自行 `relay_organize`/`relay_handoff`、不问人类；结论/边界/未决项回执 Lead。
+- `relay_renew` 只用于换身份/角色（spawn 未关）：没有 checkpoint 不换代；member-limit 不要重试。
+- 到线（organize/relay）**不停工**：只记 incident（`relay_status.incidents` 可查），任务继续到完成，边界再管理；队友不能自行 `relay_organize`/`relay_handoff`、不询问用户；结论/边界/未决项回执 Lead。
 
 ## 专职架构师（固定队友 architect）
 

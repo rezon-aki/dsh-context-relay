@@ -297,6 +297,32 @@ function clearTeamStatusMemorySafe() {
 
 // ── 4) spawn 关 / allowSpawn / squadMax / renew 默认拒 ───────────────────
 
+test('v0.14 默认允许 spawn：无 allowSpawn 键 → dispatch 可新建（受 squadMax）；显式 false 仍拒', async () => {
+  resetShared();
+  const cwd = tempWorkspace();
+  try {
+    const lead = makeAgent({ cwd });
+    const catalog = [{ id: LEAD, name: 'lead', role: 'lead', status: 'running' }];
+    const teams = makeTeamService({
+      members: catalog,
+      memberships: new Map([[lead, membership('lead', 'lead', lead)]]),
+      spawnResult: (request) => {
+        const member = { id: 'session-' + request.name, name: request.name, role: 'teammate', status: 'inactive' };
+        catalog.push(member);
+        return { member };
+      },
+    });
+    const ctx = fakeCtx({ agentTeams: teams });
+    await seedLedger(cwd, [{ id: 'a1', title: '实现', status: 'open' }]);
+    const tools = new Map(createDelegationTools({ ctx: ctx.ctx, currentThresholds: () => thresholds, squadMax: SQUAD_MAX_DEFAULT }).map((tool) => [tool.name, tool]));
+    const spawned = await tools.get('relay_dispatch').execute({ ...DISPATCH_ARGS }, { agent: lead });
+    assert.equal(spawned.ok, true, JSON.stringify(spawned));
+    assert.equal(spawned.worker.spawned, true, '默认 allowSpawn=true');
+    assert.equal(spawned.worker.name, 'worker-1');
+    assert.equal(teams.calls.spawn.length, 1);
+  } finally { /* temp workspace is left to the OS temp dir */ }
+});
+
 test('spawn 默认关：dispatch 无候选 → no-squad-member（四路径 recovery）；allowSpawn=true+squad<cap 才 spawn；满 cap → squad-full；renew 默认 spawn-disabled', async () => {
   resetShared();
   const cwd = tempWorkspace();
@@ -336,8 +362,10 @@ test('spawn 默认关：dispatch 无候选 → no-squad-member（四路径 recov
     assert.equal(roster.lineages['worker-1'].generations[0].name, 'worker-1');
     assert.equal(roster.lineages['worker-1'].activeGen, 1, 'spawn 后即登记 roster，不会被当 legacy');
 
-    // 满 cap：squad 已 1/1 → squad-full（不 spawn）。
+    // 满 cap + 唯一成员 running（不可复用）→ spawn 被 squadMax 拒（squad-full）。
     await seedLedger(cwd, [{ id: 'a2', title: '再来', status: 'open' }]);
+    const busy = catalog.find((member) => member.name === 'worker-1');
+    busy.status = 'running';
     const full = delegationToolsOf(ctx, { allowSpawn: true, squadMax: 1 }).get('relay_dispatch');
     const fullResult = await full.execute({ ...DISPATCH_ARGS, itemId: 'a2' }, { agent: lead });
     assert.equal(fullResult.ok, false);

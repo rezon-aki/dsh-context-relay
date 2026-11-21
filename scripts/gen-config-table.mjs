@@ -77,9 +77,9 @@ export const CONFIG_ROWS = [
   },
   {
     key: "`allowSpawn`",
-    default: () => '`false`',
-    zh: "是否允许 dispatch/renew 新建成员；false 时换人只能 reset 复用/adopt/handoff。",
-    en: "Whether dispatch/renew may create members; when false, replace via reset-reuse/adopt/handoff only.",
+    default: () => '`true`',
+    zh: "是否允许 dispatch/renew 新建成员（默认允许，受 squadMax 约束）；false 时换人只能 reset 复用/adopt/handoff。",
+    en: "Whether dispatch/renew may create members (allowed by default, still capped by squadMax); when false, replace via reset-reuse/adopt/handoff only.",
   },
   {
     key: "`squadMax`",

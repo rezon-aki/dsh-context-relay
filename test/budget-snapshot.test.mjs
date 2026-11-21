@@ -189,17 +189,17 @@ const TOOL_SCHEMA_SNAPSHOT = {
   doc_lint: [110, 147],
   relay_work_items: [392, 2844],
   relay_handoff: [384, 1534],
-  relay_team_status: [496, 1518],
+  relay_team_status: [539, 1518],
   relay_renew: [357, 291],
   relay_architect: [718, 759],
-  relay_dispatch: [248, 1314],
+  relay_dispatch: [248, 1144],
   relay_collect: [659, 1839],
   relay_checkpoint: [338, 1207],
-  relay_freshen: [416, 952],
+  relay_freshen: [416, 1708],
 };
 
 /** 15 工具 schema 合计（0.14.0-dev W2：删除 dispatch/work_items 用户段字段、risk 的 user_visible → params 22,409；desc 5,626；schema 28,035）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5626, params: 22409, schema: 28035 };
+const TOOL_SCHEMA_TOTALS = { desc: 5669, params: 22995, schema: 28664 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();

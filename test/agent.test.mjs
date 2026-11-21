@@ -14,6 +14,7 @@ import { thresholdsFromPercent } from '../lib/policy.js';
 import { MODEL_STATE_MARK } from '../lib/output.js';
 import { clearPanelMemory, configurePanelStore, liveStateOf, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
+import { readIncidents } from '../lib/agent/incidents.js';
 import { clearPlaneMemory, ensureAgentPlane } from '../lib/plane/ensure.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { emptyRoster, ensureLineage, writeRoster } from '../lib/agent/team.js';
@@ -361,7 +362,7 @@ test('apply registers phase + redline sections and relay tools', () => {
   delete globalThis[Symbol.for('dsh-context-relay.settings')];
   assert.match(phaseText, /四档语义/);
   // 压缩/接力都是可选项，由人类/面板选（到线提醒里给动作）
-  assert.match(phaseText, /严格按模式执行/);
+  assert.match(phaseText, /按模式处理即可（提示非强制/);
   // 2026-10-25 用户口径：预算只当 phase 边界闸门——本 phase 未完成不看预算，超预算不得开新 phase
   assert.match(phaseText, /phase 边界闸门/);
   assert.match(phaseText, /不开新 phase/);
@@ -517,37 +518,43 @@ test('relay_phase over budget: 面板四分支（continue / compress / handoff /
   assert.equal(cont.injected.length, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf('session-panel-continue'), 'autoChoose'), false);
 
-  // 2) compress：不切换 + 抛错（指令先 organize 再重试）；模式持久：relay_phase 拒绝不改模式
+  // 2) compress：B/C 口径下到线不停工——放行切换 + reminder 提示收口后 organize；模式持久
   const compress = make('session-panel-compress', { defaultOperation: 'compress' });
-  await assert.rejects(compress.call(), (error) => /relay_organize/.test(error.message) && /授权/.test(error.message));
-  assert.equal(panelStateOf('session-panel-compress').defaultOperation, 'compress', 'relay_phase 拒绝不改模式（B-P2-3）');
-  assert.equal(compress.injected.length, 0, '拒绝分支只 throw，不再重复注入 phase 边界 notice（错误必达）');
-  // 抛错不算切换：后续 status 仍 discover（fallback derivePhase 按 isError 忽略）
+  const compressedSwitch = await compress.call();
+  assert.equal(compressedSwitch.phase, 'build');
+  assert.match(compressedSwitch.reminder, /压缩继续/);
+  assert.equal(panelStateOf('session-panel-compress').defaultOperation, 'compress', '模式持久不消费（B-P2-3）');
   const status = await compress.tools.get('relay_status').execute({}, { agent: { session: compress.session, options: {} } });
-  assert.equal(status.phase, 'discover');
+  assert.equal(status.phase, 'build');
   // organize 成功后模式保持（v0.4.0 持久）
   const organized = await compress.tools.get('relay_organize').execute({ phase: 'discover', brief: 'x' }, { agent: { session: compress.session, options: {}, inject() {} } });
   assert.equal(organized.organized, true, JSON.stringify(organized));
   assert.equal(panelStateOf('session-panel-compress').defaultOperation, 'compress', 'organize 成功后模式保持（仍按压缩继续）');
 
-  // 3) handoff：不切换 + 不再自带预授权（rev5.5 正交模型）+ 抛错；B-P2-3：预设保留到接力成功
+  // 3) handoff：放行切换 + reminder 提示接力；模式只决定操作、不产生授权
   const handoff = make('session-panel-handoff', { defaultOperation: 'handoff' });
-  await assert.rejects(handoff.call(), (error) => /relay_handoff/.test(error.message) && /授权/.test(error.message));
+  const handoffSwitch = await handoff.call();
+  assert.equal(handoffSwitch.phase, 'build');
+  assert.match(handoffSwitch.reminder, /接力新会话/);
   const panel = panelStateOf('session-panel-handoff');
-  assert.equal(panel.defaultOperation, 'handoff', 'relay_phase 拒绝不改接力模式');
+  assert.equal(panel.defaultOperation, 'handoff', '模式持久不消费');
   assert.equal(panel.authorizeNext, false, '模式只决定操作，不产生授权');
-  assert.equal(handoff.injected.length, 0, '拒绝分支只 throw（notice 不再同义双写）');
+  assert.equal(handoff.injected.length, 1, '放行路径注入一条 phase 边界 notice');
 
-  // 4) 退役自决存档（autoChoose/autoDecision）被丢弃 → 等同「未设模式」（问人类），不切换
+  // 4) 退役自决存档（autoChoose/autoDecision）被丢弃 → 等同「未设模式」（按继续放行）
   const auto = make('session-panel-auto', { autoChoose: true, autoDecision: { operation: 'handoff', at: 1 } });
   assert.deepEqual(Object.keys(panelStateOf('session-panel-auto')).some((key) => key === 'autoChoose' || key === 'autoDecision'), false);
-  await assert.rejects(auto.call(), (error) => /问人类/.test(error.message) && /composer 面板/.test(error.message));
-  assert.equal(auto.injected.length, 0);
+  const autoSwitch = await auto.call();
+  assert.equal(autoSwitch.phase, 'build');
+  assert.match(autoSwitch.reminder, /继续/);
+  assert.equal(auto.injected.length, 1);
 
-  // 5) 未设模式：不切换 + 抛错（问人类 / composer 面板选模式）
+  // 5) 未设模式：同样放行（B/C：到线不停工），reminder 提示按继续
   const ask = make('session-panel-ask', {});
-  await assert.rejects(ask.call(), (error) => /问人类/.test(error.message) && /composer 面板/.test(error.message));
-  assert.equal(ask.injected.length, 0);
+  const askSwitch = await ask.call();
+  assert.equal(askSwitch.phase, 'build');
+  assert.match(askSwitch.reminder, /继续/);
+  assert.equal(ask.injected.length, 1);
 
   // 预算内：无需面板，直接切换；不返回 band
   const okSession = fakeSession({ id: 'session-panel-ok', seq: 0 });
@@ -573,23 +580,25 @@ test('v0.10.0 面板退役档归一：cth→null（问我）、自决字段整�
     return { session, tools, call, injected };
   };
 
-  // 1) 存量档「压缩→新会话」：面板归一 null（问我）——不再有隐藏档放行/两段式，超预算按「问人类」拒绝
+  // 1) 存量档「压缩→新会话」：面板归一 null（问我）——不再有隐藏档放行/两段式；B/C 下照样放行切换
   const cth = make('session-hidden-cth', { defaultOperation: 'compress-then-handoff' });
   assert.equal(panelStateOf('session-hidden-cth').defaultOperation, null, 'cth 归一 null（问我；D8=A）');
-  await assert.rejects(cth.call(), (error) => /问人类/.test(error.message) && /composer 面板/.test(error.message));
+  const cthSwitch = await cth.call();
+  assert.equal(cthSwitch.phase, 'build');
+  assert.match(cthSwitch.reminder, /继续/);
   assert.equal(panelStateOf('session-hidden-cth').defaultOperation, null, '归一后保持 null');
-  assert.equal(cth.injected.length, 0, '拒绝分支零副作用（不再注入边界 notice）');
+  assert.equal(cth.injected.length, 1, '放行路径一条边界 notice');
 
   // 2) 退役自决存档：字段整体不进白名单（不保留为高级开关）
   const auto = make('session-hidden-auto', { autoChoose: true, autoDecision: { operation: 'handoff', at: 1 } });
   for (const key of ['autoChoose', 'autoDecision']) {
     assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf('session-hidden-auto'), key), false, '退役字段不得出现：' + key);
   }
-  await assert.rejects(auto.call(), (error) => /问人类/.test(error.message));
+  assert.equal((await auto.call()).phase, 'build');
 
-  // 3) 非隐藏档仍按原语义（「压缩」继续拒绝、预设保留）
+  // 3) 非隐藏档：压缩模式放行切换、预设保留
   const compress = make('session-hidden-compress', { defaultOperation: 'compress' });
-  await assert.rejects(compress.call(), /relay_organize/);
+  assert.equal((await compress.call()).phase, 'build');
   assert.equal(panelStateOf('session-hidden-compress').defaultOperation, 'compress', '非隐藏档不消费');
 
   // 4) 侧栏默认值（未改过面板的会话）里的 cth 同样归一（normalizeSettings）：relay_phase 按「问我」
@@ -597,7 +606,8 @@ test('v0.10.0 面板退役档归一：cth→null（问我）、自决字段整�
   const settingsSession = fakeSession({ id: 'session-hidden-settings-cth', cwd: tmpCwd(), seq: 0 });
   const settingsTools = applyAgent(fakeServices({ session: settingsSession, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } }).services).tools;
   assert.equal(panelStateOf(settingsSession.id).defaultOperation, null, 'settings 默认 cth 归一 null');
-  await assert.rejects(settingsTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: { session: settingsSession, options: {} } }), /问人类/);
+  const settingsSwitch = await settingsTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: { session: settingsSession, options: {} } });
+  assert.equal(settingsSwitch.phase, 'build', 'B/C：未设模式也放行（不停工）');
 
   // 5) v0.10.0：退役 config.routerMode 被静默忽略（无 warn）；仍按单一模式放行
   const legacySession = fakeSession({ id: 'session-hidden-router-off', cwd: tmpCwd(), seq: 0 });
@@ -940,6 +950,34 @@ test('reminders: 模块重建靠持久 notice seed；同模块多实例共享 la
   assert.ok(stateA.pressure.projectedTokens > 0);
 });
 
+test('B/C：到线只记 incident、不停任务；crossed/escalated 区分 + relay_status 可查', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const session = fakeSession({ id: 'session-incident-query', cwd });
+  const { services, state } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
+  const { tools, events } = applyAgent(services);
+  const listener = events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
+  const injected = [];
+  const agent = { session, inject(message) { injected.push(message); } };
+  await listener({ agent }, async () => undefined);
+  let incidents = readIncidents(cwd, session.id, { limit: 5 });
+  assert.equal(incidents.count >= 1, true, 'organize 升线记 incident');
+  assert.equal(incidents.recent.at(-1).event, 'crossed');
+  assert.equal(incidents.recent.at(-1).band, 'organize');
+  // 新会话首步即 relay → event=escalated（F4 区分 crossed/escalated）
+  const relaySession = fakeSession({ id: 'session-incident-relay', cwd });
+  const { services: relayServices } = fakeServices({ session: relaySession, pressure: { contextWindow: 1_000_000, projectedTokens: 520_000 } });
+  const relayListener = applyAgent(relayServices).events.filter((event) => event.name === 'agent/pre-step').at(-1).listener;
+  await relayListener({ agent: { session: relaySession, inject() {} } }, async () => undefined);
+  const relayIncidents = readIncidents(cwd, relaySession.id, { limit: 5 });
+  assert.equal(relayIncidents.recent.at(-1).event, 'escalated', 'relay 升线记 escalated');
+  assert.equal(relayIncidents.recent.at(-1).band, 'relay');
+  const report = await tools.get('relay_status').execute({}, { agent: { session, options: {} } });
+  assert.equal(report.incidents.count >= 1, true, 'relay_status.incidents 可查');
+  assert.match(report.text, /越线事故/);
+  const switched = await tools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });
+  assert.equal(switched.phase, 'build', 'band 不拒 phase');
+});
 test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重新提示（C15/§5）', async () => {
   resetSharedState();
   clearPlaneMemory();
@@ -1018,8 +1056,8 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   assert.match(text, /^\[插件状态\]\n队友会话·到线请示/);
   assert.match(subInjected[0].source.summary, /band=organize/);
   assert.match(text, /队友会话·到线请示/);
-  assert.match(text, /向上一级（Lead \/ 父 agent）请示/, 'no Team service -> tell it to send_message upward');
-  assert.match(text, /边界先写 checkpoint/);
+  assert.match(text, /到线已记 incident/, 'B/C：到线只提醒并记 incident（不请示）');
+  assert.match(text, /阶段边界再管理/);
   assert.match(text, /不自行压缩\/交接/);
   assert.doesNotMatch(text, /relay_organize|relay_handoff/);
   assert.match(text, /不询问用户/);
@@ -1035,7 +1073,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   assert.match(depthInjected[0].content[0].text, /队友会话·到线请示/);
 });
 
-test('reminders: 队友到线自动向 Lead 请示压缩/交接，只发一次', async () => {
+test('reminders: 队友到线只记 incident/提醒，不向 Lead 请示', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const sub = fakeSession({ id: 'session-escalate', header: { cwd, origin: 'subagent' } });
@@ -1056,13 +1094,10 @@ test('reminders: 队友到线自动向 Lead 请示压缩/交接，只发一次',
   const listener = preStepListener(applyAgent(services).events);
   await listener({ agent }, async () => undefined);
   await listener({ agent }, async () => undefined);
-  assert.equal(sent.length, 1, 'same band -> escalate once');
-  assert.equal(sent[0].request.target, 'lead');
-  const message = sent[0].request.content[0].text;
-  assert.match(message, /队友到线请示/);
-  assert.match(message, /band=organize/);
-  assert.match(message, /relay_handoff/, 'Lead must be told it can hand off');
-  assert.match(injected[0].content[0].text, /已自动向上一级（Lead）发出请示/);
+  assert.equal(sent.length, 0, 'B/C：到线不再向 Lead 请示');
+  assert.equal(injected.length, 1, '队友只收本地 notice');
+  assert.match(injected[0].content[0].text, /到线已记 incident/);
+  assert.doesNotMatch(injected[0].content[0].text, /向上一级|send_message 向/);
 });
 
 test('reminders: 队友 warn 档只本地提示、不 escalation（减少 Lead 收件箱噪音）', async () => {
@@ -1092,7 +1127,7 @@ test('reminders: 队友 warn 档只本地提示、不 escalation（减少 Lead �
   assert.match(injected[0].content[0].text, /checkpoint/);
 });
 
-test('relay_phase: 队友会话超预算不消费面板预设、不问人类，改为向上级请示', async () => {
+test('relay_phase: 队友会话超预算不停工、不请示、不消费面板预设（B/C）', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const sub = fakeSession({ id: 'session-phase-teammate', header: { cwd, origin: 'subagent' } });
@@ -1111,15 +1146,13 @@ test('relay_phase: 队友会话超预算不消费面板预设、不问人类，�
   const { tools } = applyAgent(bundle.services);
   updatePanelState(sub.id, { defaultOperation: 'compress' });
   const injected = [];
-  await assert.rejects(
-    tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session: sub, options: {}, inject(message) { injected.push(message); } } }),
-    (error) => /队友会话/.test(error.message) && /队友会话不自行切 phase/.test(error.message) && /Lead/.test(error.message),
-  );
+  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session: sub, options: {}, inject(message) { injected.push(message); } } });
+  assert.equal(switched.phase, 'build', 'B/C：队友到线也放行切换，不再请示/拒绝');
   assert.equal(panelStateOf(sub.id).defaultOperation, 'compress', '侧栏/面板预设不被队友会话消费');
-  assert.equal(sent.length, 1, 'escalation sent to Lead');
-  assert.equal(injected.length, 0, '拒绝分支只 throw（escalation 走 send_message），不重复注入 notice');
+  assert.equal(sent.length, 0, '不再向 Lead 发中途请示');
+  assert.equal(injected.length, 1, '放行路径一条 phase 边界 notice');
   const status = await tools.get('relay_status').execute({}, { agent: { session: sub, options: {} } });
-  assert.equal(status.phase, 'discover', '抛错不算切换');
+  assert.equal(status.phase, 'build');
 });
 
 test('relay_handoff requires human approval and records nothing on refusal', async () => {
@@ -3121,22 +3154,14 @@ test('live sidebar settings: 只剩 threshold；超预算切 phase 由面板而�
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40 };
   // 超预算 + 未预设面板 → relay_phase 抛结构化内部事实（旧 autoPhase 已不存在）。
   // 0.14.0-dev W2：拒绝路径不再产四段 human 用户段；message 保留 band= 排障细节，结构化字段给 effects/retryable/next。
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } }), (error) => {
-    assert.match(error.message, /阶段切换未完成/);
-    assert.match(error.message, /band=organize/, 'message 保留内部排障细节');
-    assert.ok(String(error.code).startsWith('band'), 'code 带 band 前缀');
-    assert.equal(error.human, undefined, '无 human 用户段');
-    assert.equal(error.user, undefined, '无 user 用户段');
-    assert.match(error.facts.effects, /零副作用/, '拒绝路径零副作用');
-    assert.equal(error.facts.retryable, true, '结构化 retryable');
-    assert.ok(typeof error.facts.next === 'string' && error.facts.next !== '', '结构化 next');
-    assert.doesNotMatch(error.message, /\[给用户\]|你看到什么：/, 'message 不贴用户段');
-    return true;
-  }, 'band 拒绝返回内部事实（无用户段）');
+  const direct = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });
+  assert.equal(direct.phase, 'build');
+  assert.match(direct.reminder, /incident/);
+  assert.equal(direct.human, undefined, '无 human 用户段');
   // 面板一次性默认操作「继续」→ 放行
   updatePanelState(session.id, { defaultOperation: 'continue' });
-  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });
-  assert.equal(switched.phase, 'build');
+  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'verify' }, { agent: { session, options: {} } });
+  assert.equal(switched.phase, 'verify');
   assert.match(switched.reminder, /继续/);
   resetSharedState();
 });
@@ -3250,7 +3275,8 @@ test('handoff 授权闭环：「授权下一次操作」免审 → 接力成功�
   assert.equal((await gate(handoffExec, next)).kind, 'ask', '未预授权时仍问人');
   // relay_phase 超预算 + 面板预设「接力」→ 不切换、抛错；预设只决定操作、不再自带免审，且保留到接力成功
   updatePanelState(session.id, { defaultOperation: 'handoff' });
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } }), /relay_handoff/);
+  const presetSwitch = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });
+  assert.equal(presetSwitch.phase, 'build');
   assert.equal(panelStateOf(session.id).defaultOperation, 'handoff', 'B-P2-3：接力预设保留到成功路径消费');
   assert.equal((await gate(handoffExec, next)).kind, 'ask', '预设不再自动免审');
   // 人类在面板点「授权下一次操作」→ 一次性免审
@@ -3276,15 +3302,15 @@ test('relay_* 工具调用后发布面板实时状态（composer chip 数据源�
   assert.equal(live.overBudget, true);
   assert.equal(live.phase, 'discover');
   // 超预算 + 未预设 → relay_phase 抛错也会刷新 live（phase 仍是 discover）
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } }));
+  await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {} } });
   live = liveStateOf(session.id);
-  assert.equal(live.phase, 'discover');
+  assert.equal(live.phase, 'build');
   assert.equal(live.band, 'organize');
   // organize 成功后刷新 live
   const organized = await tools.get('relay_organize').execute({ phase: 'discover', brief: 'x', force: true }, { agent: { session, options: {} } });
   assert.equal(organized.ok, true);
   assert.ok(liveStateOf(session.id).updatedAt >= live.updatedAt);
-  assert.equal(liveStateOf(session.id).phase, 'discover');
+  assert.equal(liveStateOf(session.id).phase, 'build', 'organize 不改 phase（live 仍为 build）');
   resetSharedState();
 });
 
@@ -3302,15 +3328,18 @@ test('v0.9.0 面板预设「压缩→新会话」退役（MIG4/D8=A）：侧栏/
   const call = (args = {}) => tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE, ...args }, { agent });
   assert.equal(panelStateOf(session.id).defaultOperation, null, '侧栏默认 cth 归一 null（问我）');
   // 未设模式 → 问人类（一次问清、附推荐与默认）；拒绝零副作用、无两段式指令
-  await assert.rejects(call(), (error) => /问人类/.test(error.message) && /composer 面板/.test(error.message));
-  assert.equal(panelStateOf(session.id).defaultOperation, null, '拒绝后仍 null');
+  const firstSwitch = await call();
+  assert.equal(firstSwitch.phase, 'build');
+  assert.equal(panelStateOf(session.id).defaultOperation, null, '未设模式仍 null');
   assert.equal(panelStateOf(session.id).authorizeNext, false, '预设不产生授权');
-  assert.equal(injected.length, 0, '拒绝分支零 notice（错误必达）');
+  assert.equal(injected.length, 1, '放行路径一条边界 notice');
   // 压缩成功后（旧 cth 第 2 段场景已不存在）：仍按「问我」处理，不出现两段式指令
   log.push({ type: 'tool/ptc-dispatch', seq: 0, data: { name: 'relay_organize', arguments: { phase: 'discover' }, isError: false, content: [{ type: 'text', text: 'organized: freed 321 tokens' }] } });
-  await assert.rejects(call({ phase: 'verify' }), (error) => /问人类/.test(error.message) && !/两段式|第 2\/2 步/.test(error.message));
+  const secondSwitch = await call({ phase: 'verify' });
+  assert.equal(secondSwitch.phase, 'verify');
+  assert.doesNotMatch(secondSwitch.reminder ?? '', /两段式|第 2\/2 步/);
   assert.equal(panelStateOf(session.id).defaultOperation, null);
-  assert.equal(injected.length, 0);
+  assert.equal(injected.length, 2);
   resetSharedState();
 });
 test('v0.9.0 旧「压缩→新会话」预设不产生两段式/免审（D8=A）；接力按 rev5.5 授权模型成功并消费', async () => {
@@ -3342,11 +3371,12 @@ test('v0.9.0 旧「压缩→新会话」预设不产生两段式/免审（D8=A�
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
   // 旧 cth 归一「问我」后：超预算 relay_phase 仍是问人类（不再有第 2/2 段指令）
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent }),
-    (error) => /问人类/.test(error.message) && !/第 2\/2 步/.test(error.message));
+  const cthSwitch = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent });
+  assert.equal(cthSwitch.phase, 'build');
+  assert.doesNotMatch(cthSwitch.reminder ?? '', /第 2\/2 步/);
   assert.equal(panelStateOf(session.id).defaultOperation, null, '归一后保持 null');
   assert.equal(panelStateOf(session.id).authorizeNext, false, '预设不再自带免审');
-  assert.equal(injected.length, 0, '拒绝分支只 throw，不再注入 notice');
+  assert.equal(injected.length, 1, '放行路径一条边界 notice');
   assert.equal((await gate(handoffExec, next)).kind, 'ask', '预设不自动免审');
 
   // 人类点「授权下一次操作」→ 一次性免审 → 接力成功只消费一次性授权（模式不继承）
@@ -3409,9 +3439,10 @@ test('v0.9.0 面板状态文本：cth 档退役（归一「问我」），到线
   assert.doesNotMatch(injected[0].content[0].text, /压缩→新会话/);
 
   // 拒绝分支只 throw：问人类文案同样不出现已移除档位（不再注入 notice）
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent }),
-    (error) => /问人类/.test(error.message) && !/压缩→新会话/.test(error.message));
-  assert.equal(injected.length, 1, '拒绝分支不再追加 phase 边界 notice');
+  const cthSwitch = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent });
+  assert.equal(cthSwitch.phase, 'build');
+  assert.doesNotMatch(cthSwitch.reminder ?? '', /压缩→新会话/);
+  assert.equal(injected.length, 2, '放行路径追加 phase 边界 notice');
 
   // 旧挡位回归：compress 仍是单段「压缩」语义（B-P2-3：预设保留到 organize 成功，不预授权接力）
   resetSharedState();
@@ -3423,8 +3454,10 @@ test('v0.9.0 面板状态文本：cth 档退役（归一「问我」），到线
   });
   const oldTools = applyAgent(old.services).tools;
   updatePanelState(oldSession.id, { defaultOperation: 'compress' });
-  await assert.rejects(oldTools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session: oldSession, options: {} } }), /relay_organize/);
-  assert.equal(panelStateOf(oldSession.id).defaultOperation, 'compress', 'relay_phase 拒绝不改模式');
+  const oldSwitch = await oldTools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session: oldSession, options: {} } });
+  assert.equal(oldSwitch.phase, 'build');
+  assert.match(oldSwitch.reminder, /压缩继续/);
+  assert.equal(panelStateOf(oldSession.id).defaultOperation, 'compress', '模式持久不消费');
   const oldOrganized = await oldTools.get('relay_organize').execute({ phase: 'discover', brief: 'x' }, { agent: { session: oldSession, options: {}, inject() {} } });
   assert.equal(oldOrganized.organized, true);
   assert.equal(panelStateOf(oldSession.id).defaultOperation, 'compress', 'organize 成功后模式保持');
@@ -3797,13 +3830,17 @@ test('v0.10 C10：退役自决存档（autoChoose/autoDecision）被丢弃 → �
   // 退役存档被白名单丢弃：到线按「问人类」拒绝（不再按已记录决定指示）
   const toHandoff = make('session-decide-handoff', { operation: 'handoff', at: 1 });
   assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf('session-decide-handoff'), 'autoDecision'), false);
-  await assert.rejects(toHandoff.call(), (error) => /问人类/.test(error.message) && !/已记录/.test(error.message));
-  assert.equal(toHandoff.injected.length, 0, '拒绝分支只 throw');
+  const toHandoffSwitch = await toHandoff.call();
+  assert.equal(toHandoffSwitch.phase, 'build');
+  assert.doesNotMatch(toHandoffSwitch.reminder ?? '', /已记录/);
+  assert.equal(toHandoff.injected.length, 1, '放行路径一条边界 notice');
   // 已压缩过：同样按「问人类」
   const organizedLog = [{ type: 'tool/ptc-dispatch', seq: 0, data: { name: 'relay_organize', arguments: { phase: 'build' }, isError: false, content: [{ type: 'text', text: 'organized: freed 10 tokens' }] } }];
   const toCompress = make('session-decide-compress', { operation: 'compress', at: 2 }, organizedLog);
-  await assert.rejects(toCompress.call(), (error) => /问人类/.test(error.message) && !/已记录/.test(error.message));
-  assert.equal(toCompress.injected.length, 0);
+  const toCompressSwitch = await toCompress.call();
+  assert.equal(toCompressSwitch.phase, 'build');
+  assert.doesNotMatch(toCompressSwitch.reminder ?? '', /已记录/);
+  assert.equal(toCompress.injected.length, 1);
   resetSharedState();
 });
 test('v3 relay_organize 成功清 authorizeNext（模式持久不消费）；失败不改模式/授权', async () => {
@@ -4053,7 +4090,7 @@ test('文案：autoChoose 模型自决档退役（D8=A）——advice/常驻协�
   // 常驻协议同步：退役标识已删净 + 人类模式权威句（其余交互纪律断言保持）
   const protocol = sections.map((section) => typeof section.text === 'function' ? section.text({ agent: { session } }) : String(section.text ?? '')).join('\n');
   assert.doesNotMatch(protocol, /autoChoose|autoDecision|next_operation/);
-  assert.match(protocol, /严格按模式执行/);
+  assert.match(protocol, /按模式处理即可（提示非强制/);
   assert.match(protocol, /\*\*持久\*\*（不消费）/);
   assert.match(protocol, /authorizeNext/);
   assert.match(protocol, /提问工具只用于简单问题/, '提问纪律：只把简单问题放提问工具');
@@ -4093,12 +4130,11 @@ test('文案闭环：退役 next_operation 参数被忽略，到线按「问人�
   updatePanelState(session.id, { autoChoose: true });
   const injected = [];
   const agent = { session, options: {}, inject(message) { injected.push(message); } };
-  await assert.rejects(
-    tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE, next_operation: 'handoff' }, { agent }),
-    (error) => /问人类/.test(error.message) && !/按已记录/.test(error.message) && !/模型自决档/.test(error.message),
-  );
+  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE, next_operation: 'handoff' }, { agent });
+  assert.equal(switched.phase, 'build');
+  assert.doesNotMatch(switched.reminder ?? '', /按已记录|模型自决档/);
   assert.equal(Object.prototype.hasOwnProperty.call(panelStateOf(session.id), 'autoDecision'), false, '不写自决字段');
-  assert.equal(injected.length, 0, '拒绝分支只 throw');
+  assert.equal(injected.length, 1, '放行路径一条边界 notice');
   resetSharedState();
 });
 // ───────────── 2026-10-29 审计修复回归（core：B-P1/P2/P3 + Lead 设计缺口）─────────────
@@ -4134,8 +4170,10 @@ test('B-P2-3：compress 模式 organize 失败/成功都不改模式（持久）
   const compaction = { async compactIfNeeded() { if (fail) throw new Error('boom'); return { shadowedTokenCount: 4 }; } };
   const { tools } = applyAgent(fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 }, compaction }).services);
   updatePanelState(session.id, { defaultOperation: 'compress' });
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {}, inject() {} } }), /relay_organize/);
-  assert.equal(panelStateOf(session.id).defaultOperation, 'compress', 'relay_phase 拒绝不改模式');
+  const switched = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent: { session, options: {}, inject() {} } });
+  assert.equal(switched.phase, 'build');
+  assert.match(switched.reminder, /压缩继续/);
+  assert.equal(panelStateOf(session.id).defaultOperation, 'compress', '模式持久不消费');
   const failed = await tools.get('relay_organize').execute({ phase: 'discover', brief: 'x' }, { agent: { session, options: {}, inject() {} } });
   assert.equal(failed.ok, false);
   assert.equal(panelStateOf(session.id).defaultOperation, 'compress', 'organize 失败不改模式');
@@ -4145,7 +4183,7 @@ test('B-P2-3：compress 模式 organize 失败/成功都不改模式（持久）
   assert.equal(panelStateOf(session.id).defaultOperation, 'compress', 'organize 成功后模式保持');
 });
 
-test('B-P2-4：队友 relay_phase 连续超预算尝试只向 Lead 请示一次；band 上升后允许再请示', async () => {
+test('B-P2-4：队友 relay_phase 到线不再请示/拒绝（B/C）；band 上升也不停', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const sub = fakeSession({ id: 'session-escalate-dedupe', header: { cwd, origin: 'subagent' } });
@@ -4164,16 +4202,17 @@ test('B-P2-4：队友 relay_phase 连续超预算尝试只向 Lead 请示一次�
   const { tools } = applyAgent(bundle.services);
   const injected = [];
   const agent = { session: sub, options: {}, inject(message) { injected.push(message); } };
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent }), /队友会话/);
-  assert.equal(sent.length, 1);
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'verify' }, { agent }),
-    (error) => /队友会话/.test(error.message) && /不重复发送/.test(error.message));
-  assert.equal(sent.length, 1, 'same band: escalation deduped（B-P2-4）');
-  assert.equal(injected.length, 0, '拒绝分支只 throw（去重提示在错误文案里）');
+  const first = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent });
+  assert.equal(first.phase, 'build', 'B/C：到线不停工');
+  assert.equal(sent.length, 0, '不再中途请示 Lead');
+  const second = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'verify' }, { agent });
+  assert.equal(second.phase, 'verify');
+  assert.equal(sent.length, 0);
+  assert.equal(injected.length, 2, '每次跨 phase 一条边界 notice（不拒绝）');
   bundle.state.pressure = { contextWindow: 1_000_000, projectedTokens: 520_000 };
-  await assert.rejects(tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent }), /队友会话/);
-  assert.equal(sent.length, 2, 'band 上升（relay）后允许再请示一次');
-  assert.match(sent[1].content[0].text, /band=relay/);
+  const third = await tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, phase: 'build', design_gate: DESIGN_GATE }, { agent });
+  assert.equal(third.phase, 'build');
+  assert.equal(sent.length, 0, 'band 上升也不请示');
 });
 
 test('B-P2-5：队友 relay_status advice 改为向 Lead 请示（不自行 relay、不问人类、跳过面板预设命令）', async () => {

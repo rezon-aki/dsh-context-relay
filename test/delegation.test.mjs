@@ -21,7 +21,9 @@ import {
   delegationSnapshot,
   validateDispatchArgs,
   composeDispatchBrief,
+  parseAssessmentLine,
   parseReportHead,
+  taskSizeOf,
   digestOf,
   reportPathOf,
   dispatchIdOf,
@@ -372,7 +374,6 @@ test('validateDispatchArgs：合法 5 字段通过并归一（trim / 默认值�
   assert.equal(checked.value.acceptance, VALID_DISPATCH.acceptance);
   assert.equal(checked.value.next, '执行分点');
   assert.equal(checked.value.force, true);
-  assert.equal(checked.value.accept_dirty, false);
   assert.equal(checked.value.worker, null);
 });
 
@@ -433,7 +434,7 @@ test('validateDispatchArgs：brief/acceptance/next 长度上限与布尔字段�
   assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, next: '  ' }).ok, true, '空 next 视为缺省');
   assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, next: 'ok' }).value.next, 'ok');
   assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, force: 'yes' }).ok, false);
-  assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, accept_dirty: 1 }).ok, false);
+  assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, force: 1 }).ok, false);
   assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, worker: 42 }).ok, false);
   assert.equal(validateDispatchArgs({ ...VALID_DISPATCH, worker: ' worker-1 ' }).value.worker, 'worker-1');
 });
@@ -452,20 +453,30 @@ test('composeDispatchBrief：5 字段 + dispatchId + reportPath + verdict 枚举
   });
   const lines = brief.split('\n');
   assert.equal(lines[0], '[context-relay] 派活 · a1 · dispatch d-a1-test');
-  assert.equal(lines[1], '1) 目标：实现 X');
-  assert.equal(lines[2], '2) 必读（1–3 份，按序自取，含 when/role）：docs/A.md；lib/x.js');
-  assert.equal(lines[3], '3) 写范围：lib/x.js；test/x.test.mjs（越界禁止；只改这些文件/目录）');
-  assert.equal(lines[4], '4) 验收：node --test test/x.test.mjs');
-  assert.match(lines[5], /^5\) 回执：\.scratch\/context-relay\/reports\/a1\.md（≤4KB advisory；头 3 行/);
-  assert.ok(lines[5].includes('task: a1'), 'brief 含回执头 task 字段');
-  assert.ok(lines[5].includes('revision: d-a1-test'), 'brief 含 revision=dispatchId');
-  assert.ok(lines[5].includes('verdict: done|needs-human|blocked'), 'brief 含 verdict 枚举');
+  // v0.14 F2：第 0 段=开工前自评（两问 + taskSize + 动作 + needs-split 指引）。
+  assert.match(lines[1], /^0\) 开工前自评/);
+  assert.match(brief, /taskSize=(normal|large)/, 'brief 带 taskSize 预判');
+  assert.ok(brief.includes('needPriorContext=true|false'), 'brief 要求 Q1 自评');
+  assert.ok(brief.includes('canFinish=true|false'), 'brief 要求 Q2 自评');
+  assert.ok(brief.includes('prestart:true'), 'brief 给出 prestart reset 调用');
+  assert.ok(brief.includes('needs-split'), 'brief 允许开工前回 needs-split');
+  const field = (prefix) => lines.find((line) => line.startsWith(prefix));
+  assert.equal(field('1) 目标：'), '1) 目标：实现 X');
+  assert.equal(field('2) 必读'), '2) 必读（1–3 份，按序自取，含 when/role）：docs/A.md；lib/x.js');
+  assert.equal(field('3) 写范围：'), '3) 写范围：lib/x.js；test/x.test.mjs（越界禁止；只改这些文件/目录）');
+  assert.equal(field('4) 验收：'), '4) 验收：node --test test/x.test.mjs');
+  const receipt = field('5) 回执：');
+  assert.match(receipt, /^5\) 回执：\.scratch\/context-relay\/reports\/a1\.md（≤4KB advisory；头 3 行/);
+  assert.ok(receipt.includes('task: a1'), 'brief 含回执头 task 字段');
+  assert.ok(receipt.includes('revision: d-a1-test'), 'brief 含 revision=dispatchId');
+  assert.ok(receipt.includes('verdict: done|needs-human|blocked'), 'brief 含 verdict 枚举');
   // 0.14.0-dev W2：回执只给纯事实，不再要求 worker 写「给用户正文/## 用户可见/## 需要你决定」。
-  assert.ok(lines[5].includes('结论/证据(file:line)/改动/验证/未验证/风险/下一步'), 'brief 要求纯事实回执节');
-  assert.match(lines[5], /头 3 行.*是机器契约、不贴用户/, 'brief 保留头 3 行机器契约');
+  assert.ok(receipt.includes('结论/证据(file:line)/改动/验证/未验证/风险/下一步'), 'brief 要求纯事实回执节');
+  assert.match(receipt, /头 3 行.*是机器契约、不贴用户/, 'brief 保留头 3 行机器契约');
   assert.doesNotMatch(brief, /给用户正文|## 用户可见|## 需要你决定/, 'brief 不再要求用户段');
-  assert.match(lines[6], /^收尾：落盘后只发 1 条 ≤200 字消息给 Lead/);
-  assert.ok(lines[6].includes('task-a1 report .scratch/context-relay/reports/a1.md verdict=<...>'));
+  const tailLine = field('收尾：');
+  assert.match(tailLine, /^收尾：落盘后只发 1 条 ≤200 字消息给 Lead/);
+  assert.ok(tailLine.includes('task-a1 report .scratch/context-relay/reports/a1.md verdict=<...>'));
 });
 
 test('composeDispatchBrief：未传 dispatchId/reportPath 时确定性派生', () => {
@@ -495,6 +506,23 @@ test('parseReportHead：合法 3 行（含加粗/中文冒号/列表前缀/CRLF�
 
   assert.equal(parseReportHead('task: a1\nrevision: d-a1-x\nverdict: DONE\n').verdict, 'done', 'verdict 大小写不敏感归一');
   assert.equal(parseReportHead('task: a1\nrevision: d-a1-x\nverdict: needs-human\n').verdict, 'needs-human');
+});
+
+test('v0.14 F2：第 4 行 assessment 解析（可选、向后兼容）+ taskSizeOf；needs-split 合法', () => {
+  const withAssessment = parseReportHead('task: a1\nrevision: d-a1-x\nverdict: done\nassessment: needPriorContext=true canFinish=false action=checkpoint-freshen\n\n## 结论\n完成。');
+  assert.equal(withAssessment.ok, true);
+  assert.deepEqual(withAssessment.assessment, { ok: true, needPriorContext: true, canFinish: false, action: 'checkpoint-freshen' });
+  assert.doesNotMatch(withAssessment.body, /assessment:/, 'assessment 行不进正文');
+  const legacy = parseReportHead('task: a1\nrevision: d-a1-x\nverdict: done\n\n## 结论\n完成。');
+  assert.equal(legacy.ok, true);
+  assert.equal(legacy.assessment, null, '旧回执无第 4 行仍有效');
+  const split = parseReportHead('task: a1\nrevision: d-a1-x\nverdict: needs-human\nassessment: needPriorContext=false canFinish=false action=needs-split\n');
+  assert.equal(split.assessment.action, 'needs-split', '开工前可回 needs-split');
+  assert.equal(parseAssessmentLine('needPriorContext=maybe canFinish=false action=direct').ok, false);
+  assert.equal(parseAssessmentLine('needPriorContext=true action=bogus').ok, false);
+  assert.equal(taskSizeOf({ writeScope: ['a', 'b'], acceptance: 'node --test' }), 'large', '验收含 test → large');
+  assert.equal(taskSizeOf({ writeScope: ['a', 'b'], acceptance: '人工核对' }), 'normal');
+  assert.equal(taskSizeOf({ writeScope: ['a', 'b', 'c'], acceptance: '人工核对' }), 'large', '写范围 >2 → large');
 });
 
 test('parseReportHead：头缺失/乱序/verdict 非法 → ok:false + reason', () => {

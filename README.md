@@ -159,10 +159,10 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ## 团队：Lead、队友和架构师
 
-- **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认关闭**，优先复用现有人手；没有可用队员时，让现有队员清空复用、把历史成员纳入小队（adopt）；phase 边界交接只归档旧会话，**不重建小队**，要新成员须把 `allowSpawn` 设为 true 再 `dispatch`/`renew`（或手工开官方 subagent）。
+- **固定小队，默认上限 8 人（含架构师）**，`squadMax` 可上调；**spawn 默认允许**（受 squadMax 约束，仍优先复用现有人手）；没有可用队员时先让现有队员清空复用、把历史成员纳入小队（adopt），确需新成员再 `dispatch`/`renew`（`allowSpawn:false` 可关，或手工开官方 subagent）；phase 边界交接只归档旧会话，**不重建小队**。
 - **Lead 只做调度**：拆活、派活、验收；具体实现交给队友。队友会收到一张标准派活单：目标、必读材料、能改哪些文件、怎么验收、回执放哪。
 - **按角色裁剪**：human-loop 技能只注册给接力 Lead（`context-relay`/`doc-governance` 全局可用）；`doc_lint` 与需要人拍板的问题（`ask_user_question`）只给 Lead；teammate 保留 status/phase/doc 与 checkpoint/freshen，worker 只余 `relay_doc`（brief/handoff 的有界读）；架构师与 worker 裁 `relay_status` 和 `relay_phase`。工具名与参数不变。
-- **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
+- **换人优先全清复用**：让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 真清空（同成员、0 额度）；只有换身份/角色（且 spawn 未关）才用 `relay_renew`。历史成员默认隐藏、不派活；需要时用 `relay_team_status({manage:{action:'adopt',...}})` 纳入，或 `manage:{action:'retire',scope:'legacy',...}` 批量清理（catalog 名字不删；真清空团队用交接）。
 - **不会一直催队友**：队友的回执会自动送达，Lead 不会空转轮询（省 token）。
 
 ### 专职架构师
@@ -201,7 +201,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 | `threshold` / `settings.threshold` | 35 | 水位线基准（%）：提前 5 个点提醒，到基准线建议处理，再高 10 个点是硬线。v0.10.0 起这是阈值的唯一来源。 |
 | `settings` | 六个字段的默认值 | 面板的初始默认值；你在界面上保存过的值优先。 |
 | `settings.capacityThreshold` | `55` | 容量保全线（%，20–95，独立于 band 阈值；调回 85 接近旧行为）。 |
-| `allowSpawn` | `false` | 是否允许 dispatch/renew 新建成员；false 时换人只能 reset 复用/adopt/handoff。 |
+| `allowSpawn` | `true` | 是否允许 dispatch/renew 新建成员（默认允许，受 squadMax 约束）；false 时换人只能 reset 复用/adopt/handoff。 |
 | `squadMax` | `8` | 小队上限（含架构师，可上调；32 为防御上限）。 |
 | `contextCheck` | `'on'` | 新 phase/新任务起点自查提醒；`'off'` 全静默。 |
 | `reopenGate` | `'strict'` | ship→build/verify 返修闸门：`strict` / `warn` / `off`（off=v0.10 旧行为）。 |
@@ -241,7 +241,7 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 **Q：关掉「预算无上限」，队友还会收到那句提示吗？** 之后新建的队友/架构师/worker 会继承「关」；已在跑的队友会在下次清空复用（freshen）或架构师继续时同步。
 
-**Q：队友上下文脏了/卡住了怎么办？** 让 Lead 让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 原地清空复用（保留工作记录、同成员、0 额度）；只有换身份/角色且 `allowSpawn=true` 才 `relay_renew`。历史成员要先 `manage.adopt` 才能派活。
+**Q：队友上下文脏了/卡住了怎么办？** 让 Lead 让队友先 checkpoint，再 `relay_freshen({reset:true,brief})` 原地清空复用（保留工作记录、同成员、0 额度）；只有换身份/角色（spawn 未关）才 `relay_renew`。历史成员要先 `manage.adopt` 才能派活。
 
 **Q：会删掉我的对话吗？** 不会。压缩只是压缩——旧对话细节不再出现在当前上下文里，历史仍由 DSH 保存；交接的新旧会话都会留着。
 
@@ -329,7 +329,7 @@ npm run check   # 全部入口语法检查
 | `relay_dispatch` | Lead 取分点 → 复用或新建 worker → 发标准派活单（目标/必读/写范围/验收/回执）。 |
 | `relay_collect` | Lead 短等回执（≤120s），只读回执头 + 摘要，校验新鲜度后把分点置 done/blocked；未验证会标 `unverified`，不冒充“全部完成/已核对”。 |
 | `relay_team_status` | 团队体检（默认只当前小队）：健康/档位/检查点/派活计数/reset 结果；`include_legacy`/`include_retired` 查看历史；`manage` 做 retire/adopt/maintain；状态没变的重复查询会被拒绝。 |
-| `relay_renew` | 队友换代（默认关闭；只换身份/角色且 `allowSpawn=true` 才用）。 |
+| `relay_renew` | 队友换代（只换身份/角色且 spawn 未关时用）。 |
 | `relay_architect` | 创建/续用固定架构师（`fresh` 换新上下文 / `continue` 接着设计）。 |
 | `relay_checkpoint` | 队友/架构师写检查点（结论/完成/决策/证据/约束/未决/下一步）。 |
 | `relay_freshen` | 队友同任务内减压；`{reset:true, brief}` 真清空并换新 brief。 |

@@ -142,7 +142,7 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
     assert.ok(text.includes(phrase), 'SKILL 缺短语: ' + phrase);
   }
   assert.ok(!text.includes('当前实现仍 seed'));
-  for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认关', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
+  for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认允许', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
 });
 
 test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER ≤2450 / TEAMMATE ≤1350', () => {
@@ -153,7 +153,7 @@ test('prompt 字符预算回归 + 硬约束短语：PROTOCOL ≤8200 / ROUTER �
   // C11/A-07（M-09）：TEAMMATE 是 depth-1 直接队友的**整段**注入文本，防无界漂移。
   assert.ok(TEAMMATE_PROTOCOL_TEXT.length <= 1320, 'TEAMMATE_PROTOCOL_TEXT 超预算: ' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认关', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
+    '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
     '不产生审批豁免',
     '免审只来自 autoCompress / autoHandoff / authorizeNext',
@@ -285,6 +285,16 @@ test('v0.14 P1 真源唯一性 / 指针可达 / 合同条款清单（防删防�
   }
 });
 
+test('v0.14 C3：四条丢失规则回写（升线去重/出口语义/每 phase 一次/交接不发消息+不回放+归档名）', () => {
+  for (const phrase of [
+    '到线只在升线时提醒', '同档不重复，与压缩次数无关',
+    'blocked=等用户/外部，cancel=任务取消',
+    '人类同步每 phase 最多一次非 P0',
+    '不再给新会话发消息', '不回放/重建', 'progress-archive-<年份>.md',
+  ]) {
+    assert.ok(PROTOCOL_TEXT.includes(phrase), 'C3 规则缺失: ' + phrase);
+  }
+});
 test('v0.14 P1：redline(10199)+phase(10150) 两段结构（字节只记录，不设门）', () => {
   // v0.14 P1 验收：Lead 常驻协议拆 redline（system 最末）+ phase（角色影子覆盖），
   // 装配只剩这两段；unlimitedBudget 句并入 redline 顶部。字节按 UTF-8 只做 diagnostic（R1：不设失败门）。
@@ -333,7 +343,7 @@ test('v0.2.17 C：worker 协议短文本 250–400 字符，覆盖身份/回报/
 
 test('v0.14 P1 队友保鲜协议资产：Lead/队友段预算 + 真清空 reset/手动重建 纪律', () => {
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.length <= 950, 'TEAM_LEAD 超预算: ' + TEAM_LEAD_PROTOCOL_TEXT.length);
-  for (const phrase of ['固定小队上限 8', 'spawn 默认关', 'relay_team_status', 'relay_checkpoint', 'relay_freshen({reset:true', 'relay_architect', 'relay_organize/relay_handoff', 'lead-only', '不问人类']) {
+  for (const phrase of ['固定小队上限 8', 'spawn 默认允许', 'relay_team_status', 'relay_checkpoint', 'relay_freshen({reset:true', 'relay_architect', 'relay_organize/relay_handoff', 'lead-only', '不问人类']) {
     assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes(phrase), 'Lead 保鲜段缺短语: ' + phrase);
   }
   // v0.3.2：reset 是真清空（同成员/不占额度）；架构师例外由 Lead 用 relay_architect fresh 新开代

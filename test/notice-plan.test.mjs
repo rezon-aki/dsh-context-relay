@@ -69,7 +69,7 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
   assert.match(plan.notice.text, /队友会话·到线请示/);
   assert.ok(Buffer.byteLength(plan.notice.text, 'utf8') <= NOTICE_MAX_BYTES, 'notice ≤600 B');
   assert.doesNotMatch(plan.notice.text, /band=/);
-  assert.match(plan.notice.text, /已自动向上一级（Lead）发出请示/);
+  assert.doesNotMatch(plan.notice.text, /向上一级|send_message|已自动/);
   assert.doesNotMatch(plan.notice.text, /工作台账/, 'M-12：队友看不到 Lead 台账计数');
   assert.doesNotMatch(plan.notice.text, /relay_work_items/);
   assert.deepEqual(plan.claims.lastBand, { band: 'organize', compactionSeq: -1 });
