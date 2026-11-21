@@ -574,6 +574,28 @@ test('坏指针分级：活跃文档 FAIL、L2/raw 只 WARN；docLint 汇总 FAI
   } finally { rmSync(cwd, { recursive: true, force: true }); }
 });
 
+test('坏指针解析：插件包根兜底（lib/… 不再误报）；session_event_read 模板/glob 不当指针', () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-resolve-'));
+  try {
+    const r = join(cwd, '.scratch', 'context-relay');
+    // 模拟插件包根（在 workspace 内，符合 lint 的 workspace 沙箱）：relay 文档引用插件自身 lib/ → 不该报坏指针。
+    const pkg = join(cwd, 'dsh-plugins', 'demo-plugin');
+    w(join(pkg, 'lib', 'docs.js'), '// plugin entry');
+    w(join(r, 'handoff-a.md'), '# 交接', '实现见 ' + BT + 'lib/docs.js' + BT);
+    w(join(r, 'architecture', 'a.md'), '---', 'role: 架构', 'layer: L2', 'when: 改前', 'constraints: none', '---', '# 文档',
+      '用 ' + BT + 'session_event_read({session_id, seq})' + BT + ' 回读；示例 ' + BT + 'phase-*.md' + BT + '、' + BT + 'README(.en).md' + BT);
+    const check = checkSessionDocs({ workspaceRoot: cwd, packageRoot: pkg });
+    assert.ok(!check.pointers.some((item) => item.path === 'lib/docs.js'), '插件包内 lib/ 不应被误报：' + JSON.stringify(check.pointers));
+    assert.ok(!check.pointers.some((item) => item.path.includes('session_event_read')), '用法模板不是坏 seq');
+    assert.ok(!check.pointers.some((item) => item.path === 'phase-*.md' || item.path === 'README(.en).md'), 'glob/占位不是指针');
+    // 真坏指针仍要报（解析顺序 workspace 优先，兜底不掩盖缺失）。
+    w(join(r, 'handoff-b.md'), '# 交接', '读 ' + BT + 'lib/missing-entry.js' + BT);
+    const after = checkSessionDocs({ workspaceRoot: cwd, packageRoot: pkg });
+    const bad = after.pointers.find((item) => item.path === 'lib/missing-entry.js');
+    assert.ok(bad && bad.severity === 'fail', '真缺失仍报活跃坏指针');
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+});
+
 test('contracts/updated 陈旧：缺 updated、格式无效、超 90 天都 WARN；新鲜文档不报', () => {
   const cwd = mkdtempSync(join(tmpdir(), 'relay-docs-stale-'));
   try {

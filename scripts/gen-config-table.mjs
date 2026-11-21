@@ -198,8 +198,8 @@ export const CONFIG_ROWS = [
   {
     key: "`docs.layout`",
     default: () => '`' + DOCS.layout + '`',
-    zh: "索引的宽度/组数自动分层（W/G）。设为 `false` / `'flat'` / `'off'` 关闭 W/G（不再因宽度或组数降级）；字节护栏仍会 A→B→C 兜底。",
-    en: "Automatic width/group layering (W/G) of the index. Set to `false` / `'flat'` / `'off'` to disable W/G (no width- or group-triggered downgrade); the byte guardrail still degrades A→B→C.",
+    zh: "索引的宽度/组数自动分层（W/G）。设为 `false` / `'flat'` / `'off'` 关闭 W/G（不再因宽度或组数降级）。缺省字节预算 0 = 不限，层级只由显式 docs.width / docs.maxGroups 触发。",
+    en: "Automatic width/group layering (W/G) of the index. Set to `false` / `'flat'` / `'off'` to disable W/G (no width- or group-triggered downgrade). The default byte budget is 0 = unlimited; levels only change via explicit docs.width / docs.maxGroups.",
   },
   {
     key: "`docs.metrics`",
@@ -210,8 +210,8 @@ export const CONFIG_ROWS = [
   {
     key: "`docs.width`",
     default: () => '`' + DOC_LIMITS.indexWidth + '`',
-    zh: "单列条目的显示列预算（CJK/emoji 按 2 列）：超过则 A→B，B 层 pin 仍超则 C。正整数覆盖；`docs.layout` 关掉后本项不参与分层。",
-    en: "Display-column budget for single-listed entries (CJK/emoji count 2): above it A→B, and if pinned lines still exceed it in B, C. Override with a positive integer; ignored for layering when `docs.layout` is off.",
+    zh: "单列条目的显示列预算（CJK/emoji 按 2 列）：缺省 `0` = 不限（不按宽度折叠）；正整数才触发 A→B，B 层 pin 仍超则 C。`docs.layout` 关掉后本项不参与分层。",
+    en: "Display-column budget for single-listed entries (CJK/emoji count 2): the default `0` means unlimited (no width-driven folding); a positive integer triggers A→B, and if pinned lines still exceed it in B, C. Ignored for layering when `docs.layout` is off.",
   },
   {
     key: "`docs.maxGroups`",
