@@ -39,7 +39,6 @@ function resetSharedState() {
   // 测试夹具：本文件 band 数学（提醒/预算/advice）按显式基准 40%（35/40/50）编写；
   // 生产默认基准改为 35%（30/35/45）由 policy/index 测试覆盖。
   globalThis[Symbol.for('dsh-context-relay.settings')] = { threshold: 40, defaultOperation: null, autoChoose: false, autoCompress: false, autoHandoff: false, unlimitedBudget: true };
-  delete globalThis[Symbol.for('dsh-context-relay.handoff.routes')];
   clearPanelMemory();
   clearSentinelMemory();
   configurePanelStore({ panelPath: join(mkdtempSync(join(tmpdir(), 'relay-panel-')), 'panel.json') });
@@ -1507,12 +1506,19 @@ test('relay_handoff inherits caller model route and permission onto the new sess
   });
   const permissionCalls = [];
   const followed = [];
+  const order = [];
+  const selections = [];
   const childSession = { id: 'session-inherit-child', header: { cwd }, requestHeader: () => undefined };
-  const liveAgent = { session: childSession, status: 'idle', followup(message) { followed.push(message); } };
+  const liveAgent = {
+    session: childSession,
+    status: 'idle',
+    model: { select(selection) { selections.push(selection); order.push('select'); } },
+    followup(message) { followed.push(message); order.push('followup'); },
+  };
   const { services } = fakeServices({
     session: callerSession,
     extra: {
-      sessionController: { async create() { return { sessionId: childSession.id }; } },
+      sessionController: { async create() { order.push('create'); return { sessionId: childSession.id }; } },
       agents: { list: () => [liveAgent] },
       permissionPresets: {
         permissionState: () => ({ preset: 'workspace-write', sandbox: 'workspace-write', approval: 'ask' }),
@@ -1526,22 +1532,19 @@ test('relay_handoff inherits caller model route and permission onto the new sess
   const { tools } = applyAgent(services);
   const result = await tools.get('relay_handoff').execute({ status: { goal: 'inherit me' }, human_approved: true }, { agent: { session: callerSession, options: {} } });
   assert.equal(result.ok, true, JSON.stringify(result));
-  assert.deepEqual(result.inherited.model, { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high', maxTokens: 300000 });
+  // 官方迁移（v0.2.1-alpha.4）：agent/request 不能再改 provider/model，改为建会话后、followup 前 agent.model.select。
+  assert.deepEqual(selections, [{ provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' }]);
+  assert.deepEqual(order, ['create', 'select', 'followup'], 'select 在 create 之后、followup 之前');
+  assert.deepEqual(result.inherited.model, { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' });
   assert.deepEqual(result.inherited.permission, { preset: 'workspace-write' });
   assert.equal(permissionCalls.length, 1);
   assert.equal(permissionCalls[0][0], childSession);
   assert.equal(permissionCalls[0][1], 'workspace-write');
   assert.equal(followed.length, 1, '只发 handoff 首条消息（清理结果不再另发）');
 
-  // 子会话 relay preset 的 agent/request 监听：首个请求套用旧会话路由，消费一次即失效
+  // 插件不再注册 agent/request 路由监听（官方弃用；改 provider/model 会直接抛错）
   const child = applyAgent(fakeServices({ session: childSession }));
-  const request = child.events.find((event) => event.name === 'agent/request');
-  assert.ok(request !== undefined, 'agent/request listener registered');
-  const base = { provider: 'deployment-default', model: 'deployment-default' };
-  const first = await request.listener({ agent: { session: childSession } }, async () => base);
-  assert.deepEqual(first, { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high', maxTokens: 300000 });
-  const second = await request.listener({ agent: { session: childSession } }, async () => base);
-  assert.deepEqual(second, base, 'route applies only once');
+  assert.equal(child.events.some((event) => event.name === 'agent/request'), false, '没有 agent/request 路由监听');
 });
 
 test('relay_handoff inherits a custom permission bundle by appending knob events', async () => {
@@ -1584,8 +1587,9 @@ test('relay_handoff inheritOnHandoff=false leaves the new session on deployment 
   const cwd = tmpCwd();
   const callerSession = fakeSession({ id: 'session-noinherit-caller', cwd, seq: 0 });
   const permissionCalls = [];
+  const selections = [];
   const childSession = { id: 'session-noinherit-child', header: { cwd }, requestHeader: () => undefined };
-  const liveAgent = { session: childSession, status: 'idle', followup() {} };
+  const liveAgent = { session: childSession, status: 'idle', model: { select(selection) { selections.push(selection); } }, followup() {} };
   const { services } = fakeServices({
     session: callerSession,
     extra: {
@@ -1605,10 +1609,40 @@ test('relay_handoff inheritOnHandoff=false leaves the new session on deployment 
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(result.inherited, undefined);
   assert.equal(permissionCalls.length, 0);
-  const child = applyAgent(fakeServices({ session: childSession }));
-  const request = child.events.find((event) => event.name === 'agent/request');
-  const base = { provider: 'deployment-default', model: 'deployment-default' };
-  assert.deepEqual(await request.listener({ agent: { session: childSession } }, async () => base), base);
+  assert.deepEqual(selections, [], '不写子会话模型选择（保持部署默认路由）');
+});
+
+test('relay_handoff keeps a child session route that already has a requestHeader', async () => {
+  resetSharedState();
+  const cwd = tmpCwd();
+  const callerSession = fakeSession({ id: 'session-keeproute-caller', cwd, seq: 0 });
+  const selections = [];
+  const childSession = {
+    id: 'session-keeproute-child',
+    header: { cwd },
+    requestHeader: () => ({ config: { provider: 'deployment-default', model: 'deployment-default' } }),
+  };
+  const liveAgent = { session: childSession, status: 'idle', model: { select(selection) { selections.push(selection); } }, followup() {} };
+  const { services } = fakeServices({
+    session: callerSession,
+    extra: {
+      sessionController: { async create() { return { sessionId: childSession.id }; } },
+      agents: { list: () => [liveAgent] },
+      permissionPresets: {
+        permissionState: () => ({ preset: 'workspace-write', sandbox: 'workspace-write', approval: 'ask' }),
+        current: () => 'workspace-write',
+        set() {},
+      },
+      workspaceRegistry: { async resolveByPath() { return { id: 'ws-1', title: 'ws', async attachSession() {} }; } },
+      sessionTitle: { rename() {} },
+    },
+  });
+  const { tools } = applyAgent(services);
+  const result = await tools.get('relay_handoff').execute({ status: { goal: 'keep existing route' }, human_approved: true }, { agent: { session: callerSession, options: {} } });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(selections, [], '已有 requestHeader 的子会话不被覆盖');
+  assert.equal(result.inherited?.model, undefined, '未写入的选择不报告为已继承');
+  assert.deepEqual(result.inherited.permission, { preset: 'workspace-write' }, '权限继承不受影响');
 });
 
 test('relay_handoff：超大 evidence 不再拒绝——摘要 advisory 收短、完整文件含全部原文', async () => {
@@ -4297,7 +4331,7 @@ test('P2-21：permissionPresets.permissionState（private API）缺失时 logWar
     session: callerSession,
     extra: {
       sessionController: { async create() { return { sessionId: childSession.id }; } },
-      agents: { list: () => [{ session: childSession, status: 'idle', followup() {} }] },
+      agents: { list: () => [{ session: childSession, status: 'idle', model: { select() {} }, followup() {} }] },
       permissionPresets: { set() {}, current: () => 'custom' },
       workspaceRegistry: { async resolveByPath() { return { id: 'ws', title: 'ws', async attachSession() {} }; } },
       sessionTitle: { rename() {} },
