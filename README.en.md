@@ -1,12 +1,12 @@
 # dsh-context-relay
 
-[![tests](https://img.shields.io/badge/tests-1084%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
+[![tests](https://img.shields.io/badge/tests-1089%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
 
 > An agent suite with a two-layer architecture built on official subagents: a Leader dedicated to interfacing with you and managing the team; document governance and chained memory; only the minimum necessary context, with documents fetched on demand; the whole team working efficiently at low context; implementation drift and corner-cutting corrected and verified; human interaction tuned; and only the minimum necessary verification — heavy testing only with your consent; plus a dedicated architect with independently configurable model and reasoning effort, ultra-low-context, contamination-free and burden-free, who finalizes the engineering implementation; and the "your token budget is unlimited" switch, whose one-line hint strengthens dsh41f's depth of thought.
 
 [中文](README.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [Changelog](CHANGELOG.md) · [Migration](docs/design/MIGRATION.md) · MIT
 
-> **Test release v0.14.0-beta.1**: for evaluation only; use a stable release in production. Install with an explicit version or `@beta`.
+> **Test release v0.14.0-beta.2**: for evaluation only; use a stable release in production. Install with an explicit version or `@beta`.
 
 **A long-task plugin for DSH (DeepSeek Harness).** After install there is exactly one mode: **Relay mode · very long tasks**. It keeps an agent clear-headed through very long sessions: it tidies its own context as it fills up, tells you when a line is reached, and carries what matters into a fresh session when it's time to move. It can also hand work to a small standing team: a Lead that splits and checks the work, teammates that do it.
 
@@ -64,6 +64,7 @@ How to ask and how to report is in [Reports and questions](#reports-and-question
 - **v0.10.0 is a breaking release.** The old classic `relay` alias, the dual-mode configuration and the old config keys are all gone, and the panel authorization contract moves to version 3 (old authorizations expire once after the upgrade; mode and architect settings are kept). Read the [migration guide](docs/design/MIGRATION.md) before upgrading.
 - **v0.11.0 changes defaults:** capacity 55% (independently configured), spawn off, squad-only display by default, explicit reopen for post-delivery repair, and host-compaction fallback. See [CHANGELOG.md](CHANGELOG.md) and the migration guide.
 - **v0.12.0 refines behaviour (no migration):** gates by risk tier (T0 doc-only changes may skip the design gate and independent review, but only with actual diff evidence; T2 keeps every gate), T2 design-gate echo (your own words + not-doing list), plain-language output (three questions since v0.13), a document index with A/B/C layers and injection metrics, role-trimmed tools/skills, and a constraints/contracts/relations semantic layer. See [CHANGELOG.md](CHANGELOG.md).
+- **v0.14.0-beta.2 (test release) consolidates interaction:** decide whether it is worth interrupting, pick the lightest form (one line / decision card / formal report), and use no fixed template; formal reports are only checked for non-empty, and format warnings are gone; the question tool is only for simple questions, complex ones are asked as messages and wait for a reply, and a timed-out `pending` only means unanswered.
 - **v0.14.0-beta.1 (test release)** tightens the contract: tool returns are internal facts only (state / what happened / where it is stuck / next / evidence / risk), never a user segment; the Lead writes the three questions and must present a decision card when your call is needed; failures and partial success carry `effects`/`retryable`/`next`; `collect` marks `unverified` explicitly, and skipped handoff cleanup says "not checked / not applicable".
 
 ## Install
@@ -271,6 +272,8 @@ Data files: `~/.dsh/data/dsh-context-relay/settings.json` and `panel.json`; conv
 - **The architect model follows your model choice by default:** an explicit choice has to be inside the session's official subagent allowlist.
 
 ## Upgrade and uninstall
+
+**v0.14.0-beta.2 (test release; no data migration):** user-facing interaction is consolidated into decide → pick the lightest form → say only what a decision needs; the three forms are chosen by impact and no fixed template is required; formal reports are only checked for non-empty (format warnings removed; over-length and log-dumping warnings remain); skills point at the protocol instead of restating it; notice/handoff tails are unified to "not your own words; rewrite when needed".
 
 **v0.14.0-beta.1 (test release; no data migration):** tool returns are internal facts only and the user segment/`user_visible` are removed; the Lead writes the three questions and decision cards; the protocol gains a risk-tier gate matrix; handoff recovery copy now guarantees chain memory only (no rebuild/replay/new read-only entry); failures and partial success carry `effects`/`retryable`/`next`.
 
