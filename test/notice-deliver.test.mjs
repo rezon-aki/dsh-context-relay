@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { apply } from '../lib/agent.js';
 import { clearPanelMemory, configurePanelStore } from '../lib/panel-store.js';
-import { NOTICE_MAX_BYTES } from '../lib/output.js';
+import { NOTICE_HEAD, NOTICE_MAX_BYTES } from '../lib/output.js';
 import { clearSentinelMemory } from '../lib/agent/sentinel.js';
 import {
   LAST_BAND, LEDGER_GUARD, PENDING_CLOSURE, armedBandOf, boundaryStateOf, claimBoundaryNotice,
@@ -143,7 +143,7 @@ test('notice 脱敏（M-21）：safeTarget 只取首行 + 凭据脱敏；deliver
 test('投递硬上限：超过 600 B 的 notice 正文按 UTF-8 截断并以省略号结尾', () => {
   resetSharedState();
   const injected = [];
-  const long = '[插件状态]\n到线提醒：' + '上下文'.repeat(400);
+  const long = NOTICE_HEAD + '\n到线提醒：' + '上下文'.repeat(400);
   deliverPlan({ inject: (message) => injected.push(message) }, 'session-cap', {
     notice: { kind: 'phase', text: long, summary: 'x' },
     track: {},
@@ -152,7 +152,7 @@ test('投递硬上限：超过 600 B 的 notice 正文按 UTF-8 截断并以省�
   const text = injected[0].content[0].text;
   assert.ok(Buffer.byteLength(text, 'utf8') <= NOTICE_MAX_BYTES, 'bytes ' + Buffer.byteLength(text, 'utf8'));
   assert.match(text, /…$/);
-  assert.ok(text.startsWith('[插件状态]\n到线提醒：'), '截断保留机器头与正文前缀');
+  assert.ok(text.startsWith(NOTICE_HEAD + '\n到线提醒：'), '截断保留机器头与正文前缀');
 });
 
 test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入证据才记；每次真实 crossing 都提示', () => {
@@ -171,7 +171,7 @@ test('边界 notice 两段式（A-13/A-15）：先预留不记投递；有注入
     type: 'user/message',
     seq: 3,
     data: {
-      content: [{ type: 'text', text: '[插件状态]\n阶段边界：构建 → 验证（完成时仍超线：上下文 40%）。\n已放行本次切换；按面板模式「继续」放行本次切换（模式保持）。\n下一步：继续下一阶段；到下一个阶段边界前管理上下文。\n依据：面板「接力」chip 的用量\n这不是用户发言。不要复述本段；需要告诉用户时自己重写。' }],
+      content: [{ type: 'text', text: NOTICE_HEAD + '\n阶段边界：构建 → 验证（完成时仍超线：上下文 40%）。\n已放行本次切换；按面板模式「继续」放行本次切换（模式保持）。\n下一步：继续下一阶段；到下一个阶段边界前管理上下文。\n依据：面板「接力」chip 的用量\n这不是用户发言。不要复述本段；需要告诉用户时自己重写。' }],
       source: { kind: 'dsh-context-relay', form: 'notice', summary: '[context-relay] phase 边界 · band=warn · 完成仍超线（非用户发言）' },
     },
   }];

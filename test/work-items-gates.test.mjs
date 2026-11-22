@@ -16,6 +16,7 @@ import { clearPanelMemory, configurePanelStore, panelStateOf, updatePanelState }
 import { createTeamTools } from '../lib/agent/team-tools.js';
 import { clearSentinelMemory, sentinelText } from '../lib/agent/sentinel.js';
 import { thresholdsFromPercent } from '../lib/policy.js';
+import { NOTICE_DISCLAIMER, NOTICE_HEAD } from '../lib/output.js';
 import { readWorkItems, writeWorkItems } from '../lib/agent/work-items.js';
 import { confirmKeyOf } from '../lib/risk.js';
 import { readTeamContext } from '../lib/agent/team-context.js';
@@ -926,7 +927,7 @@ test('台账闭环：未落账签名去重（同签名不重复；count 不变�
   assert.equal(injected.length, 2);
   assert.equal(
     injected[1].content[0].text,
-    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n这不是用户发言。不要复述本段；需要告诉用户时自己重写。',
+    NOTICE_HEAD + '\n[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n' + NOTICE_DISCLAIMER,
     'P1 内容等价：闭环行文本与旧 builder 逐字一致',
   );
   await step();

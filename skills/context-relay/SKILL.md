@@ -26,7 +26,7 @@ disable-model-invocation: true
 1. `relay_status`：看 phase/band/continue/budget/plane/delegation/diagnostics。
 2. `relay_phase`：discover→decide→build→verify→ship；**discover/decide 必填 `exit_criteria`**；**T2 首次进 build 必带 `design_gate`**；**ship 只能从 verify 进**；ship 返修须显式 `reopen{reason,user_approved:true}`（T0/T1 免用户确认），新任务声明 discover。
 3. **预算 phase 优先**：只当 phase 边界闸门，中段不因预算打断；**warn 档切 phase 必填 `budget_plan{action:proceed|split|relay}`**；放不下就拆票或先 relay；**容量保全** notice 出现立即收尾、停开新活、写 brief/progress/台账，再按授权压缩/交接。
-4. 到线处理：`warn`=现在动手（压缩/清空复用/交接三选一）；`organize`/`relay`=兜底告警；**容量保全**=最坏兜底（`settings.capacityThreshold`，默认 55%）。
+4. 到线处理：`warn`=现在动手（压缩/清空复用/交接三选一）；`organize`/`relay`=兜底告警；**容量保全**=最坏兜底（`settings.capacityThreshold`，默认值以配置表为准）。
 5. 收尾：写 phase brief（关键文件索引 ≤8 条）+ 三清单（已完成/未完成原因/未尝试原因）。
 
 ## 派活与收口（工具化：relay_dispatch / relay_collect）
@@ -61,7 +61,7 @@ disable-model-invocation: true
 ## composer 面板、到线与阈值
 
 - 面板「接力」chip：模式（继续/压缩继续/接力新会话；问我=未设）本会话持久（不消费）；`autoCompress`/`autoHandoff`/`authorizeNext` 是唯一免审来源。
-- 四档语义：`warn`=现在就该动手；`organize`/`relay`=兜底告警；`容量保全`=最坏兜底（`capacityThreshold` 默认 55%，不自动执行）。只在升线时提醒。
+- 四档语义：`warn`=现在就该动手；`organize`/`relay`=兜底告警；`容量保全`=最坏兜底（`capacityThreshold` 默认值以配置表为准，不自动执行）。只在升线时提醒。
 - 阈值唯一来源 = 插件 config / `settings.threshold`；`relay_status.budget` 给 headroom。
 
 ## 工作台账（phase 工作队列）

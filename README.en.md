@@ -27,11 +27,11 @@ The menu below the composer: model, reasoning effort, architect model, and enabl
 
 ### 1. Keeping the context in its efficient range
 
-The longer a conversation runs, the more an agent forgets things, repeats itself and over-builds. The plugin sets a few watermarks for the session (these are the defaults; you can change them in the panel):
+The longer a conversation runs, the more an agent forgets things, repeats itself and over-builds. The plugin sets a few watermarks for the session (values are in the [configuration](#configuration-optional-advanced); you can change them in the panel):
 
-- **Around 30% of the context used:** one reminder — a reminder only, not an interruption.
-- **At the basis line (35% by default):** it suggests dealing with the context, and compaction is an option.
-- **One step higher (45% by default):** it suggests handing off to a new session.
+- **Lowest watermark:** one reminder — a reminder only, not an interruption.
+- **At the basis line:** it suggests dealing with the context, and compaction is an option.
+- **One step higher:** it suggests handing off to a new session.
 
 What happens at each one is up to you (or the panel settings). The plugin never compacts or starts a new session on its own.
 
@@ -39,9 +39,7 @@ What happens at each one is up to you (or the panel settings). The plugin never 
 
 The test is simple: would it change the outcome, the boundaries or the cost? If yes, ask. If no, find out first.
 
-- Check the facts first, then put the questions that really need your call to you once, clearly: the conclusion, the options, the recommendation, and what happens if you pick nothing.
-- For irreversible, external, paid, credential or delete actions, say what will be done, why, and how to undo it first — and wait for your explicit yes.
-- A question you've already answered isn't asked again, and your answers carry into the next relay.
+How to ask and how to report is in [Reports and questions](#reports-and-questions).
 
 ### 3. Phase by phase, so the work doesn't wander
 
@@ -106,7 +104,7 @@ Either way you still need to reload the profile, refresh the page, and then crea
 - The mode picker has exactly one production mode: **Relay mode · very long tasks**.
 - A **status bar** above the composer (relay sessions only): how much context is used, whether a line has been reached, and which mode is active. Click it to open the panel.
 - Once work items have been recorded, a **ledger chip** appears next to it (`ledger 3/8` = open items / total; an amber dot means in progress, a red dot blocked). Click it for the full list.
-- When the context reaches a line you get a **status notice** (not a user message): warn says "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (55% by default) is the last resort. It never acts on its own and doesn't interrupt you.
+- When the context reaches a line you get a **status notice** (not a user message): warn says "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (see the configuration table) is the last resort. It never acts on its own and doesn't interrupt you.
 
 ### What you can change in the panel
 
@@ -133,11 +131,11 @@ The relay panel: the dial (ask me / keep going / compact and continue / hand off
 
 ### Reaching a line, and what happens next
 
-- **Four line tiers:** proactive management at a fresh start; warn 30% means "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (55%, separately configured) is the last resort. A status notice doesn't interrupt you and is never executed automatically.
+- **Four line tiers:** proactive management at a fresh start; warn means "deal with it now" (compact / reset-reuse / hand off); organize/relay are fallback warnings; the capacity line (separately configured; see the configuration table) is the last resort. A status notice doesn't interrupt you and is never executed automatically.
 - **You pick "compact and continue", or say "compact":** the agent first writes what a successor needs to know onto one page (the goal, what has been settled, the evidence, the next step), compacts the old conversation, puts that page back in, and keeps going.
 - **You pick "hand off to a new session", or the context reaches the hard line:** it writes a handover sheet, opens a new session and sends it the summary; the old session stays. Teammates and background jobs in the old session are interrupted, and scheduled jobs move to the new one.
 - A session compacts once by default (so the summary doesn't drift a little further with every pass); choosing "compact and continue" in the panel allows a second one, still subject to approval.
-- **Capacity line** (55% by default, `settings.capacityThreshold`, independently configured): once reached, finish the current action, stop starting new work or dispatching, write the brief/progress/ledger first, then compact or hand off according to the mode/authorization; it never executes automatically.
+- **Capacity line** (`settings.capacityThreshold`, independently configured; default in the configuration table): once reached, finish the current action, stop starting new work or dispatching, write the brief/progress/ledger first, then compact or hand off according to the mode/authorization; it never executes automatically.
 
 ### Phases, and the two points where you sign off
 
@@ -155,8 +153,8 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 - It talks to you in plain language: no command output, logs or long diffs, no piles of internal fields and jargon; a term is explained the first time it appears.
 - A report before delivery covers four things: what changed (what you can observe), impact (result, cost, unverified risk), what you need to do (with a recommendation and default), and boundaries (what was not done or not verified); keep it under 600 characters by default and give evidence pointers.
 - **Tool returns are not user speech:** status, handoff, collect and failure results are internal facts for the Lead (reason / what already happened / whether it can be retried / next / evidence / risk); the Lead turns them into a plain report or stays silent. No user segment is produced, and nothing is meant to be pasted verbatim.
-- **When your call is needed, a decision card is mandatory:** question, options A/B, impact of each, benefits/risks, recommendation, default, and what happens if you do not choose; documents are evidence only, never the whole answer.
-- Anything the agent can check for itself, it checks first; only the questions that genuinely need your call come to you, all at once, with a recommendation, a default and the consequences.
+- **When your call is needed, give a decision card on the spot** (the seven fields are in the protocol's "Interacting with the user" section); documents are evidence only, never the whole answer.
+- Anything the agent can check for itself, it checks first; only the questions that genuinely need your call come to you, all at once (recommendation + default + cost of not deciding); answered questions are not asked again, and your answers carry into the next relay.
 - Irreversible, external, paid, credential or delete actions are announced first — what will be done, why, and how to undo it — and only happen after an explicit yes.
 
 ## The team: Lead, teammates and the architect

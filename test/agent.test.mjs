@@ -360,6 +360,7 @@ test('apply registers phase + redline sections and relay tools', () => {
   assert.ok(!phaseText.includes('35%/40%/50%'), 'protocol must not hardcode thresholds');
   // 2026-11-01 用户更正：预算=上下文预算属于设计理念，不写进常驻协议、不写死 40%
   assert.ok(!phaseText.includes('40%'), 'protocol must not hardcode 40%');
+  assert.ok(!phaseText.includes('默认 55%'), 'protocol must not hardcode the capacity default');
   assert.ok(!phaseText.includes('高效区'), 'protocol must not embed the efficiency-zone philosophy');
   assert.ok(!phaseText.includes('上下文预算'), 'protocol must not embed the context-budget philosophy');
   // 侧栏热生效：不重建 agent 平面，段 text() 直接读 live 设置
@@ -387,7 +388,7 @@ test('apply registers phase + redline sections and relay tools', () => {
   const allText = [phaseText, redlineText].join('\n');
   assert.match(allText, /模式只决定「做什么」/);
   assert.match(allText, /不产生审批豁免/);
-  assert.match(allText, /免审只来自 autoCompress \/ autoHandoff \/ authorizeNext/);
+  assert.match(allText, /免审只来自 autoCompress\/autoHandoff\/authorizeNext/);
   assert.doesNotMatch(allText, /本次免审批|视为已授权|pre-authorize/);
   // 工具描述同步提面板、不提审批弹窗
   assert.match(tools.get('relay_phase').description, /composer panel/);
@@ -1011,7 +1012,7 @@ test('reminders: 平面/seam 降级首步一次性 notice，压缩复位后重�
   assert.equal(message.source.form, 'notice');
   assert.match(message.source.summary, /平面\/seam 降级/);
   const text = message.content[0].text;
-  assert.match(text, /^\[插件状态\]\n平面未装好（role=/);
+  assert.match(text, /^\[插件状态·非用户发言\]\n平面未装好（role=/);
   assert.match(text, /seam tools/, '列 seam 名：tools');
   assert.doesNotMatch(text, /seam systemPrompt/, '≤600 B：首条 seam 后截断，完整清单走 relay_status.plane');
   assert.match(text, /agent\.ctx unavailable/, '列降级原因');
@@ -1062,7 +1063,7 @@ test('reminders: 3 consecutive pre-steps inject once; cross bands once; subagent
   await preStepListener(applyAgent(subServices.services).events)({ agent: { session: sub, inject(message) { subInjected.push(message); } } }, async () => undefined);
   assert.equal(subInjected.length, 1);
   const text = subInjected[0].content[0].text;
-  assert.match(text, /^\[插件状态\]\n队友会话·到线提醒/);
+  assert.match(text, /^\[插件状态·非用户发言\]\n队友会话·到线提醒/);
   assert.match(subInjected[0].source.summary, /band=organize/);
   assert.match(text, /队友会话·到线提醒/);
   assert.match(text, /到线已记 incident/, 'B/C：到线只提醒并记 incident（不请示）');
@@ -4362,7 +4363,7 @@ test('B-P1-2 文本契约：协议/工具描述/运行期 advice 不含旧授权
   assert.doesNotMatch(protocol, forbidden, '常驻协议不得残留旧授权口径');
   assert.match(protocol, /模式只决定「做什么」/);
   assert.match(protocol, /不产生审批豁免/);
-  assert.match(protocol, /免审只来自 autoCompress \/ autoHandoff \/ authorizeNext/);
+  assert.match(protocol, /免审只来自 autoCompress\/autoHandoff\/authorizeNext/);
   for (const name of ['relay_status', 'relay_phase', 'relay_organize', 'relay_handoff', 'doc_lint']) {
     assert.doesNotMatch(tools.get(name).description, forbidden, name + ' description 不得残留旧授权口径');
   }

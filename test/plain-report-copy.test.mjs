@@ -47,11 +47,12 @@ test('Architect: only checkpoint; clean context via Lead relay_architect fresh',
   assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /只写 checkpoint/);
 });
 
-test('tools.js: report schema describes the four coverage items; no template wording', () => {
+test('tools.js: one REPORT_HINT for the four coverage items; no template wording', () => {
   const source = read('lib/agent/tools.js');
-  assert.doesNotMatch(source, /默认三问|四段式|三段式|四段汇报/);
-  assert.match(source, /正式汇报（大白话，不套模板）/);
-  assert.match(source, /变化（用户可观察什么）/);
+  assert.doesNotMatch(source, /默认三问|四段式|三段式|四段汇报|three-question/);
+  assert.match(source, /const REPORT_HINT = '正式汇报：变化/);
+  assert.match(source, /不套模板/);
+  assert.equal((source.match(/const REPORT_HINT/g) || []).length, 1, 'REPORT_HINT 只有一处定义');
 });
 
 test('Internal marks: facts for the Lead, not user speech', () => {

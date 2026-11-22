@@ -34,7 +34,8 @@ test('v0.14 P2: 首条注入 = [交接摘要] 机器头 + source.kind=user + ≤
  assert.equal(message.source.kind,'user','首条仍是用户发言（非插件 notice）');
  const text=message.content[0].text;
  assert.ok(text.startsWith('[交接摘要·系统生成，非用户发言]\n'),'机器头先给交接摘要且标明系统生成');
- assert.match(text, /用户可见的话自己写（不套模板）；禁 band=\/verdict\/relay_\*。/, '近端尾行：用户可见的话自己写');
+ assert.match(text, /用户可见的话自己写（不套模板）；内部记号与禁词见协议 §用户语域。/, '近端尾行：用户可见的话自己写');
+ assert.doesNotMatch(text, /band=\/verdict\/relay_\*/, '尾行不再枚举禁词');
  assert.ok(Buffer.byteLength(text,'utf8')<=8000,'首条 ≤8KB，实际 '+Buffer.byteLength(text,'utf8'));
  assert.ok(text.includes('## 完整交接单（全部细节）'),'完整交接单段落保留');
  assert.match(text,/完整交接单：\.scratch\/context-relay\/handoff-\d+\.md/,'指向完整交接单文件');

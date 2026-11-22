@@ -156,10 +156,10 @@ test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL / ROUTER / TEAMMATE 
   console.log('[diagnostic] ROUTER_PROTOCOL_TEXT chars=' + ROUTER_PROTOCOL_TEXT.length);
   console.log('[diagnostic] TEAMMATE_PROTOCOL_TEXT chars=' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '最小注意力 × 最大影响', '宿主只校验非空', '不套标题', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
+    '最小注意力 × 最大影响', '宿主只校验非空', '不套标题', '容量保全', '容量保全线（阈值见设置', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
     '不产生审批豁免',
-    '免审只来自 autoCompress / autoHandoff / authorizeNext',
+    '免审只来自 autoCompress/autoHandoff/authorizeNext',
     '完整上下文索引',
     '最多 1 轮',
     '≤10 个工具调用 / ≤5 分钟',
@@ -279,7 +279,7 @@ test('v0.14 P1 真源唯一性 / 指针可达 / 合同条款清单（防删防�
   assert.ok(PROTOCOL_TEXT.includes('## 派活与回执'), '指针目标缺失: ## 派活与回执');
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('队友保鲜'), '指针目标缺失: 队友保鲜');
   // 4) 合同条款清单：只删重复句，条款本体必须仍在合并文本
-  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'T2 进 build 必须带 design_gate 或复用有效 currentPhase.design', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
+  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress/autoHandoff/authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'T2 进 build 必须带 design_gate 或复用有效 currentPhase.design', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 合同条款缺失: ' + phrase);
   }
   // 5) 旧口径清零（既有禁令仍不得回潮）

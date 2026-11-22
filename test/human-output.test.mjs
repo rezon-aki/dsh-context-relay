@@ -17,6 +17,7 @@ const PANEL = { defaultOperation: null, autoCompress: false, autoHandoff: false,
 /** 断言一段 notice 文案：机器头 + 固定尾齐全、内部键为零、UTF-8 ≤ 600 B。 */
 function assertHuman(text, name) {
   assert.ok(text.startsWith(NOTICE_HEAD + '\n'), name + ' 缺机器头');
+  assert.match(text.split('\n')[0], /非用户发言/, name + ' 首行缺「非用户发言」');
   assert.ok(text.endsWith(NOTICE_DISCLAIMER), name + ' 缺固定尾');
   assert.doesNotMatch(text, /结论：|需要你做什么：|证据：/, name + ' 仍是旧四段式');
   assert.deepEqual(internalKeysIn(text), [], name + ' 含内部键：' + internalKeysIn(text).join(','));

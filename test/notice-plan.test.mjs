@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { NOTICE_MAX, bandLineOf, panelSignatureOf, planNotices, planeIssueOf, unavailableNoticeText } from '../lib/agent/notice/plan.js';
-import { NOTICE_DISCLAIMER, NOTICE_MAX_BYTES } from '../lib/output.js';
+import { NOTICE_DISCLAIMER, NOTICE_HEAD, NOTICE_MAX_BYTES } from '../lib/output.js';
 
 /** C4 notice 规划纯函数：事实 → 本步 0/1 条 notice + track/claims（不碰状态、不注入）。 */
 
@@ -33,7 +33,7 @@ test('planNotices：Lead 升线 → 一条到线提醒（带台账行），claim
   const plan = planNotices(facts({ ledger: LEDGER_PENDING }));
   assert.equal(plan.rising, true);
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^\[插件状态\]\n到线提醒：/);
+  assert.ok(plan.notice.text.startsWith(NOTICE_HEAD + '\n到线提醒：'));
   assert.match(plan.notice.text, /到线提醒：兜底告警/);
   assert.match(plan.notice.text, /工作台账：未闭合 2 \/ 共 3/);
   assert.doesNotMatch(plan.notice.text, /band=/, '用户文案不带内部键');
@@ -65,7 +65,7 @@ test('planNotices：队友稿不含 Lead 台账行（M-12），带 escalation �
     panelPrevious: undefined,
   }));
   assert.equal(plan.notice.kind, 'phase');
-  assert.match(plan.notice.text, /^\[插件状态\]\n队友会话·到线提醒/);
+  assert.ok(plan.notice.text.startsWith(NOTICE_HEAD + '\n队友会话·到线提醒'));
   assert.match(plan.notice.text, /队友会话·到线提醒/);
   assert.doesNotMatch(plan.notice.text, /等答复期间|请决定|向上一级（Lead）请示/, '到线不再请示/等答复');
   assert.ok(Buffer.byteLength(plan.notice.text, 'utf8') <= NOTICE_MAX_BYTES, 'notice ≤600 B');
@@ -154,7 +154,7 @@ test('planNotices：台账批次（焦点 → 上下文 → 闭环 → 派活；
   // 600B 投递预算：先丢 [队友]、再丢 [上下文]（guard 不推进、下一步单独补）；焦点/闭环/派活保留顺序。
   assert.equal(teamIdx, -1, '超 600B 先丢 [队友]，下一步单独补');
   assert.equal(bandIdx, -1, '仍不够再丢 [上下文]');
-  assert.ok(focusIdx === 0 && closureIdx > focusIdx && dispatchIdx > closureIdx, text);
+  assert.ok(focusIdx === NOTICE_HEAD.length + 1 && closureIdx > focusIdx && dispatchIdx > closureIdx, text);
   assert.match(text, /\[闭环\] 上一步改动未落账：write\(x\.js\)/);
   assert.match(text, /\[派活·队友上下文\] mate-2 档位=organize/);
   assert.doesNotMatch(text, /band=/);

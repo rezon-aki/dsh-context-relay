@@ -18,7 +18,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 |---|---|---|---|
 | G1 | 多层架构 + 必要最小上下文不断 | Lead → 直接队友 → worker，每层只拿完成当前任务所需的最小上下文；层间靠记录、指针、交接保持连续 | 新会话只凭「brief + 交接摘要 + 指针」即可开工；派活 brief 给必读最小集（1–3 份）而非口头复述背景 |
 | G2 | 动态取得所需必要上下文 | 不预装全量历史；需要时按文件、brief、链式索引、会话事件精确召回，召回有界 | 索引→正文不超过 2 跳；单次读取有界并返回 `nextOffset`；检索只回 `path:line` 摘要；坏指针可由 lint 报出 |
-| G3 | 全团队保持在上下文高效区间 | 目标区间可配置（默认基准 35%，band 30/35/45），由 Lead 在分配任务前评估与管理（含 Lead 自身） | phase 边界给出 band 与边界动作；不在 phase 中段压缩或接力（容量保全例外）；派活前看队友档位 |
+| G3 | 全团队保持在上下文高效区间 | 阈值/四档可配置（按基准线派生；具体数值见配置表），由 Lead 在分配任务前评估与管理（含 Lead 自身） | phase 边界给出 band 与边界动作；不在 phase 中段压缩或接力（容量保全例外）；派活前看队友档位 |
 | G4 | 工程方向由独立低上下文的架构师敲定 | 固定的架构师队友，模型默认与 Lead 相同、用户可覆盖；只交付工程实现文档与「待决策」项，不写代码 | 实现按文档落地；偏离文档要回问架构师；架构师上下文保持低 |
 | G5 | Leader 与用户交互优化（最小注意力、最大影响） | 只给用户必要文本（白话）；P0 先报备「做什么·为什么·怎么撤」再等明确 Go；先查文档定论、不替用户拍板、问题批量一次问清 | 用户正文只有必要汇报与裁决条目（影响/风险/收益）；每 phase 非 P0 同步最多一次；P0 有明确 Go/No-go |
 | G6 | Leader 的项目文档管理 | 核心设计只保留最小必要的高价值条目；低价值/过程性内容进链式记录按需取；文档有分层与索引 | 新人凭索引能定位最小必读集；超界只归档或完整落盘加指针、不丢数据；索引自动生成 |
@@ -39,13 +39,13 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 
 ### 4.1 上下文度量与预算
 
-- 实时度量上下文占用并分四档：ok（<30%）/ warn（30–35%）/ organize（35–45%）/ relay（≥45%）；基准线默认 35% 可配置，四档按基准线派生。
+- 实时度量上下文占用并分四档，按基准线派生：warn = 基准线−5、organize = 基准线、relay = 基准线+10；基准线可配置，具体数值见配置表。
 - 预算只是 phase 边界闸门：phase 中段不打断、不压缩、不接力，phase 优先。
-- 容量保全线独立配置（`settings.capacityThreshold`，默认 55%、[20,95]，不参与 band 派生）：到达后立即收尾当前动作、停止开新活/派活、写 brief/progress/台账，再按模式/授权压缩或交接；不自动执行。容量线是「最坏兜底」，不是常规管理点。
+- 容量保全线独立配置（`settings.capacityThreshold`，[20,95]，默认见配置表，不参与 band 派生）：到达后立即收尾当前动作、停止开新活/派活、写 brief/progress/台账，再按模式/授权压缩或交接；不自动执行。容量线是「最坏兜底」，不是常规管理点。
 - 四档语义（v0.11）：起点（新 phase / 新任务）主动预估与管理；warn=现在就该动手（压缩/清空复用/交接三选一，面板优先）；organize/relay=兜底告警（本应已处理）；capacity=最坏兜底。提醒归 Lead，且只提醒不自动执行。
 - 开新 phase 前做可行性判断（`budget_plan`：proceed / split / relay），放不下就拆票，不硬挤。
 - 升线提醒事件驱动、只告知事实与边界动作、不重复；指标缺失/过期按保守档处理并提示，不静默当作 ok。
-- 历史 40/50 基准属旧口径，legacy `config.thresholds` 已在 v0.10.0 删除（换算见[迁移表](MIGRATION.md) MIG5）；新会话默认 35% 基准（band 30/35/45）。
+- 历史 40/50 基准属旧口径，legacy `config.thresholds` 已在 v0.10.0 删除（换算见[迁移表](MIGRATION.md) MIG5）；新会话基准与四档默认值见配置表。
 
 ### 4.2 phase 生命周期
 
@@ -169,7 +169,7 @@ relay 补的是「多层智能体架构下的上下文生命周期」：让 Lead
 - 起点自查（P0-D）：新 phase / 新任务（create_goal、task_board_run、ship 后首条用户消息、ship→discover）给 Lead 一次可执行自查（先 relay_status 预估 → 继续/压缩/清空复用/交接四选一）；每 phase/task 一次、冷却 ≥3 步、phase+task 合并、投递成功才 claim、压缩不重放、off 全静默。
 - 四档到线文案：warn 不再推荐「继续」，给出压缩/清空复用/交接三选一；organize/relay 为兜底告警；capacity 为最坏兜底；文案含 relay_status 与面板模式现状（上限 900 字符）。
 - ship 受控 reopen 与 deriveReopen（见 §4.2）；宿主压缩兜底（见 §4.3）。
-- 默认值/回退：capacityThreshold 55（85 接近旧行为）、allowSpawn false + squadMax 8、contextCheck on、reopenGate strict、compactionFallback on；均可按 MIGRATION 回退。
+- 默认值/回退：capacityThreshold 默认见配置表（85 接近旧行为）、allowSpawn false + squadMax 8、contextCheck on、reopenGate strict、compactionFallback on；均可按 MIGRATION 回退。
 
 ## 5. 强制契约
 

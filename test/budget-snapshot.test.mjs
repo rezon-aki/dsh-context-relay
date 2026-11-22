@@ -183,7 +183,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [360, 9012],
+  relay_phase: [360, 8999],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
@@ -199,7 +199,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
 };
 
 /** 15 工具 schema 合计（0.14.0-dev W2：删除 dispatch/work_items 用户段字段、risk 的 user_visible → params 22,409；desc 5,626；schema 28,035）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5659, params: 24169, schema: 29828 };
+const TOOL_SCHEMA_TOTALS = { desc: 5659, params: 24156, schema: 29815 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();
@@ -255,58 +255,58 @@ test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（
 const ROLE_SNAPSHOT = {
   lead: {
     sections: [
-      ['context-relay:phase', 5189],
-      ['context-relay:redline', 1178],
+      ['context-relay:phase', 5773],
+      ['context-relay:redline', 1248],
     ],
-    sectionChars: 6367,
+    sectionChars: 7021,
     denied: ['bash', 'pwsh', 'write', 'edit'],
     roleTools: ['relay_team_status', 'relay_renew', 'relay_architect', 'relay_dispatch', 'relay_collect'],
     tools: [...LEAD_TOOL_NAMES],
-    toolDescChars: 4872,
+    toolDescChars: 4905,
     // v0.13 fix4：collect lead_confirm schema 改由 LEAD_CONFIRM_SPEC 生成（描述变长 +135）。
     // v0.13 fix5：relay_phase report schema 三问化 +44；router 2196→2246。
-    toolSchemaChars: 25122,
-    totalChars: 31489,
+    toolSchemaChars: 26146,
+    totalChars: 33167,
   },
   teammate: {
     sections: [
-      ['context-relay:phase', 1320],
+      ['context-relay:phase', 1434],
       ['context-relay:redline', 15],
     ],
-    sectionChars: 1335,
+    sectionChars: 1449,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint', 'relay_freshen'],
     tools: [...TEAMMATE_TOOL_NAMES],
-    toolDescChars: 1815,
+    toolDescChars: 1805,
     // v0.13 fix5：relay_phase report schema 三问化 +44 同样进队友面。
-    toolSchemaChars: 13016,
-    totalChars: 14351,
+    toolSchemaChars: 14741,
+    totalChars: 16190,
   },
   architect: {
     sections: [
-      ['context-relay:phase', 845],
+      ['context-relay:phase', 850],
       ['context-relay:redline', 15],
     ],
-    sectionChars: 860,
+    sectionChars: 865,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: ['relay_checkpoint'],
     tools: [...ARCHITECT_TOOL_NAMES],
     toolDescChars: 683,
     toolSchemaChars: 2850,
-    totalChars: 3710,
+    totalChars: 3715,
   },
   worker: {
     sections: [
-      ['context-relay:phase', 371],
+      ['context-relay:phase', 395],
       ['context-relay:redline', 15],
     ],
-    sectionChars: 386,
+    sectionChars: 410,
     denied: ['relay_organize', 'relay_handoff', 'relay_recommend', 'relay_work_items', 'relay_phase', 'relay_status', 'doc_lint', 'ask_user_question'],
     roleTools: [],
     tools: [...WORKER_TOOL_NAMES],
     toolDescChars: 345,
     toolSchemaChars: 1305,
-    totalChars: 1691,
+    totalChars: 1715,
   },
 };
 

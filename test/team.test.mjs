@@ -21,6 +21,7 @@ import { clearSharedMemory, consumePendingBudgetInherit, markPendingArchitect } 
 import { COLLECT_OK_PREFIX, DISPATCH_OK_PREFIX } from '../lib/projection.js';
 import { subagentsFromLegacy } from './team-fixture.mjs';
 import { thresholdsFromPercent } from '../lib/policy.js';
+import { NOTICE_DISCLAIMER } from '../lib/output.js';
 import { configurePanelStore, panelStateOf, updatePanelState } from '../lib/panel-store.js';
 import {
   TEAM_LIMITS,
@@ -777,6 +778,7 @@ test('relay_freshen：Lead 拒绝/低 band 拒绝；官方压缩 + brief 注入 
     assert.equal(engineCalls[0].trigger, 'context-overflow');
     assert.ok(teammate.injected.length >= 1, '压缩后 brief 注入下一 step');
     assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /队友 freshen/);
+    assert.ok(String(teammate.injected[0]?.content?.[0]?.text ?? '').endsWith(NOTICE_DISCLAIMER), 'freshen 注入带固定免责尾');
     assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /压缩后手动召回/);
     assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /pkg\/AGENTS\.md/);
     assert.match(readFileSync(join(dir, '.scratch', 'context-relay', 'chain.ndjson'), 'utf8'), /teammate-freshen/);
@@ -996,6 +998,8 @@ test('pre-step：consume pending → 真清空 surface + ledger reset + chain + 
     const successNotice = String(teammate.injected[0]?.content?.[0]?.text ?? '');
     assert.match(successNotice, /reset 结果：真清空成功/);
     assert.match(successNotice, /session_event_read/);
+    assert.ok(successNotice.startsWith('（非用户发言）'), 'reset 结果首句标非用户发言');
+    assert.ok(successNotice.endsWith(NOTICE_DISCLAIMER), 'reset 结果带固定免责尾');
     assert.equal(teammate.injected[0]?.source?.form, 'notice', 'notice 身份（非用户发言）');
     // 第二次 pre-step：无 pending，不再 append
     await listener({ agent: teammate, signal: new AbortController().signal }, next);
@@ -1031,6 +1035,8 @@ test('pre-step：wipe 失败回退官方压缩 + brief 注入，ledger 记 fallb
     assert.match(String(teammate.injected[0]?.content?.[0]?.text ?? ''), /reset 回退/);
     assert.match(String(teammate.injected[1]?.content?.[0]?.text ?? ''), /reset 结果：真清空未生效/);
     assert.match(String(teammate.injected[1]?.content?.[0]?.text ?? ''), /回退官方压缩/);
+    assert.ok(String(teammate.injected[1]?.content?.[0]?.text ?? '').startsWith('（非用户发言）'), 'reset 回退结果标非用户发言');
+    assert.ok(String(teammate.injected[1]?.content?.[0]?.text ?? '').endsWith(NOTICE_DISCLAIMER), 'reset 回退结果带固定免责尾');
     const fallback = readLedger(dir, 'impl', 20, LEAD).find((entry) => entry.event === 'freshen');
     assert.ok(fallback !== undefined, '回退按 freshen 记账（有损压缩算入同代次数）');
     assert.equal(fallback.reset, true);
@@ -1067,6 +1073,8 @@ test('pre-step：wipe 失败且压缩无进展 → ledger 记 reset-failed，不
     assert.match(failureNotice, /reset 结果：真清空失败/);
     assert.match(failureNotice, /旧上下文仍在/);
     assert.match(failureNotice, /compaction made no progress/);
+    assert.ok(failureNotice.startsWith('（非用户发言）'), 'reset 失败结果标非用户发言');
+    assert.ok(failureNotice.endsWith(NOTICE_DISCLAIMER), 'reset 失败结果带固定免责尾');
   } finally {
     clearPendingResets();
     cleanup(dir);

@@ -243,7 +243,7 @@ test('sentinel：首个 pre-step 只 seed；phase 变化 1 条、同 phase 重�
   assert.equal(bundle.injected.length, 1);
   const text = bundle.injected[0].content[0].text;
   assert.match(text, /新阶段开始「探索 → 决策」/);
-  assert.match(text, /^\[插件状态\]\n上下文自查：/);
+  assert.match(text, /^\[插件状态·非用户发言\]\n上下文自查：/);
   assert.match(text, /下一步：四选一：继续 \/ 压缩继续 \/ 清空复用 \/ 交接新会话/);
   assert.match(text, /四选一/);
   session.setSeq(3);
