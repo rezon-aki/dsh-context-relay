@@ -1,12 +1,10 @@
 # dsh-context-relay
 
-[![tests](https://img.shields.io/badge/tests-1089%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
+[![tests](https://img.shields.io/badge/tests-1090%20passing-brightgreen.svg)](https://github.com/rezon-aki/dsh-context-relay)
 
 > 以官方子智能体为基础的双层架构 agent套件，leader负责专职对接用户+团队管理，文档治理+链式记忆，维持最小必要上下文+按需调取文档，全团队保持低上下文高效工作，偏移实现、偷懒实现矫正/验证，人机交互优化，测试验证只用最小必要+重型验证测试需用户同意，可独立配置模型和思考强度的超低上下文无污染无负担专职敲定工程实现的架构师，“你的token预算无上限”开关用一句提示词强化dsh41f的思考深度。
 
 [English](README.en.md) · [npm](https://www.npmjs.com/package/dsh-context-relay) · [变更记录](CHANGELOG.md) · [迁移说明](docs/design/MIGRATION.md) · MIT
-
-> **测试版 v0.14.0-beta.2**：仅供试用，生产请用正式版；安装请显式指定版本或 `@beta`。
 
 **DSH（DeepSeek Harness）的长任务插件。** 装上后只有一个模式：**接力模式（Relay）· 超长任务**。它让 agent 在很长的会话里保持清醒——上下文快满了自己整理，到线了提醒你，需要换新会话时把该带走的都带上；还可以把活分给一支固定小队：Lead 负责拆活和验收，队友负责干活。
 
@@ -64,8 +62,7 @@
 - **v0.10.0 是破坏性版本**：旧的 classic `relay` 别名、双模式配置、旧配置键都已删除，面板授权契约版本升到 3（升级后旧授权一次性失效，模式和架构师设置保留）。升级前先看[迁移说明](docs/design/MIGRATION.md)。
 - **v0.11.0 调整默认值**：容量线 55%（独立配置）、spawn 默认关、默认只显示当前小队、ship 后返修需显式 reopen、宿主压缩兜底；完整变更见 [CHANGELOG.md](CHANGELOG.md) 与迁移说明。
 - **v0.12.0 细化行为（无迁移）**：按风险配门禁（T0 文档改动可免设计门与独立审查，但须带实际 diff 证据；T2 全门）、T2 设计门回显用户原话与不做清单、输出统一说明式（v0.13 起为三问）、文档索引 A/B/C 分层与注入计量、按角色裁剪工具与技能、constraints/contracts/relations 语义层；完整变更见 [CHANGELOG.md](CHANGELOG.md)。
-- **v0.14.0-beta.2（测试版）交互收束**：跟用户说话只留一处规范——先判断值不值得打扰，再挑最轻形式（一句话 / 裁决卡 / 正式汇报），不套固定模板；正式汇报只校验非空，不再按格式提醒；提问工具只用于简单问题，复杂问题等回复，pending 只表示未答。
-- **v0.14.0-beta.1（测试版）契约收紧**：工具返回只作内部事实（状态/发生了什么/卡在哪/下一步/证据/风险），不再产任何用户段；Lead 自己写三问，需要裁决时当场给卡片；失败/部分成功带 `effects`/`retryable`/`next`；`collect` 未验证明示 `unverified`，handoff 清理 skipped 写“未检查/不适用”。
+- **v0.15.0 交互与契约收束（无迁移）**：跟用户说话只留一处规范——先判断值不值得打扰，再挑最轻形式（一句话 / 裁决卡 / 正式汇报），不套固定模板；正式汇报只校验非空，不再按格式提醒；工具返回只作内部事实（状态/发生了什么/卡在哪/下一步/证据/风险），不再产任何用户段；提问工具只用于简单问题，复杂问题等回复，pending 只表示未答；交接的新会话沿用当前模型选择。完整变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 安装
 
@@ -273,11 +270,9 @@ dsh plugin --profile web add /path/to/dsh-plugins/dsh-context-relay
 
 ## 升级与卸载
 
-**v0.14.0-beta.2（测试版；无数据迁移）**：交互口径收束为「判断 → 选最轻形式 → 只说到能决定的粒度」；一句话 / 裁决卡 / 正式汇报三种形式按影响挑最轻，不套固定模板；正式汇报只校验非空（格式类提醒删除，只留超长/倾倒日志）；技能只留协议指针；通知与交接尾句统一为「非用户发言，需要时自己重写」。
+**v0.15.0 是交互与契约收束版（无数据迁移）**：交互口径收束为「判断 → 选最轻形式 → 只说到能决定的粒度」；一句话 / 裁决卡 / 正式汇报三种形式按影响挑最轻，不套固定模板；正式汇报只校验非空（只留超长/倾倒日志两条提醒）；工具只返回内部事实，删除用户段/`human`/`user`/`user_visible`，Lead 自写三问、裁决必须给卡片；失败与部分成功带 `effects`/`retryable`/`next`；交接只保证链式记忆可取，并沿用当前模型选择。
 
-**v0.14.0-beta.1（测试版；无数据迁移）**：工具只返回内部事实，删除用户段/`user_visible`；Lead 自写三问、裁决必须给卡片；协议补风险档免门矩阵；handoff 恢复文案改为只保证链式记忆可取（不重建/不回放/不新增只读入口）；失败与部分成功带 `effects`/`retryable`/`next`。
-
-**v0.13.0 是「用户段材料层」版本（已被 0.14.0-beta.1 取代）**：工具默认 `[给用户]` 三问、默认沉默、`manage.maintain`、回执证据、`review_ref`、参数 warn、配置表单一真源、legacy golden、风险档落盘与 `isDocItem` 路径优先；工具数与数据格式不变。
+**v0.13.0 是「用户段材料层」版本（已被 v0.15.0 取代）**：工具默认 `[给用户]` 三问、默认沉默、`manage.maintain`、回执证据、`review_ref`、参数 warn、配置表单一真源、legacy golden、风险档落盘与 `isDocItem` 路径优先；工具数与数据格式不变。
 
 **v0.12.0 是行为细化版（无数据迁移）**：风险分级门禁、T2 设计门回显、说明式输出（v0.13 起为三问）、文档索引 v2、角色裁剪与 constraints/relations 语义层；旧 T2 `design_gate` 调用需补 `ask_ref`/`not_doing`，工具数与数据格式不变。
 
