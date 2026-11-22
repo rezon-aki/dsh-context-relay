@@ -183,7 +183,7 @@ function measureRole(scope, presetTools, presetSections) {
 const TOOL_SCHEMA_SNAPSHOT = {
   relay_status: [346, 62],
   relay_recommend: [133, 311],
-  relay_phase: [360, 8972],
+  relay_phase: [360, 9012],
   relay_organize: [314, 651],
   relay_doc: [345, 960],
   doc_lint: [110, 147],
@@ -199,7 +199,7 @@ const TOOL_SCHEMA_SNAPSHOT = {
 };
 
 /** 15 工具 schema 合计（0.14.0-dev W2：删除 dispatch/work_items 用户段字段、risk 的 user_visible → params 22,409；desc 5,626；schema 28,035）。 */
-const TOOL_SCHEMA_TOTALS = { desc: 5659, params: 24129, schema: 29788 };
+const TOOL_SCHEMA_TOTALS = { desc: 5659, params: 24169, schema: 29828 };
 
 test('C11 M-09/A-06/D-10：15 个模型工具 desc + params JSON 字符快照（新增/删除工具必须更新快照）', async () => {
   const { allTools } = await assembleAll();

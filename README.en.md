@@ -153,8 +153,8 @@ Acceptance stays minimal by default: run the target tests, do one independent di
 ### Reports and questions
 
 - It talks to you in plain language: no command output, logs or long diffs, no piles of internal fields and jargon; a term is explained the first time it appears.
-- A report before delivery uses the default three questions: what you see → what you need to do → what impact it has, within 600 characters by default; use four parts only when you ask for detail or for a long ship report.
-- **Tool returns are not user speech:** status, handoff, collect and failure results are internal facts for the Lead (reason / what already happened / whether it can be retried / next / evidence / risk); the Lead turns them into the three questions. No user segment is produced, and nothing is meant to be pasted verbatim.
+- A report before delivery covers four things: what changed (what you can observe), impact (result, cost, unverified risk), what you need to do (with a recommendation and default), and boundaries (what was not done or not verified); keep it under 600 characters by default and give evidence pointers.
+- **Tool returns are not user speech:** status, handoff, collect and failure results are internal facts for the Lead (reason / what already happened / whether it can be retried / next / evidence / risk); the Lead turns them into a plain report or stays silent. No user segment is produced, and nothing is meant to be pasted verbatim.
 - **When your call is needed, a decision card is mandatory:** question, options A/B, impact of each, benefits/risks, recommendation, default, and what happens if you do not choose; documents are evidence only, never the whole answer.
 - Anything the agent can check for itself, it checks first; only the questions that genuinely need your call come to you, all at once, with a recommendation, a default and the consequences.
 - Irreversible, external, paid, credential or delete actions are announced first — what will be done, why, and how to undo it — and only happen after an explicit yes.

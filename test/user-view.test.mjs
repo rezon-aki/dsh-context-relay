@@ -168,7 +168,7 @@ test('status/phase：内部事实与下一步，无用户段；teammate 不返�
   assert.ok(typeof phase.facts.next === 'string' && phase.facts.next !== '', 'phase facts.next');
   const phaseRender = renderOf(tools.get('relay_phase'), phase);
   assertInternal(phaseRender, 'phase');
-  assert.match(tools.get('relay_phase').parameters.properties.user_gate.properties.report.description, /三问/);
+  assert.match(tools.get('relay_phase').parameters.properties.user_gate.properties.report.description, /正式汇报/);
 });
 
 function handoffHarness(cwd, { jobs, agents, sessionId = 'old', dispatchError } = {}) {

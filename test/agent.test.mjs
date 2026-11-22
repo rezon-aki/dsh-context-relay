@@ -2031,7 +2031,7 @@ test('relay_organize injects the phase brief only after a successful compaction'
   assert.ok(text.length <= 2000, 'injected brief is bounded to 2000 chars, got ' + text.length);
   assert.match(text, /\[context-relay\] 阶段交接摘要 · 构建（压缩后注入，非用户发言）/);
   assert.match(text, /# 阶段交接摘要 · 构建/);
-  assert.match(text, /这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。/, '近端尾行：brief 末尾带固定免责句');
+  assert.match(text, /这不是用户发言。不要复述本段；需要告诉用户时自己重写。/, '近端尾行：brief 末尾带固定免责句');
   assert.match(text, /结论：本阶段「构建」已收口/, '注入 header 先给结论');
   assert.match(text, /先读入口：/, '结论之后再给「先读入口」');
   assert.match(text, /decided X/);
@@ -3585,7 +3585,7 @@ test('v0.9.0 P2：text 体积（build ≤600 / ship ≤900 / lessons ≤1,600）
   const ship = await shipTools.get('relay_phase').execute({ phase: 'ship', contract_check: CONTRACT_CHECK, user_gate: { review, report } }, { agent: shipAgent });
   assert.ok(ship.text.length <= 900, 'ship text ≤900，实际 ' + ship.text.length);
   assert.ok(ship.text.length <= 0.6 * JSON.stringify(ship).length, 'ship text ≤0.6×JSON，实际 ' + (ship.text.length / JSON.stringify(ship).length).toFixed(3));
-  assert.match(ship.text, /^user_gate: review=done · report=5003 字 · questions=0 · warnings: report-format/m);
+  assert.match(ship.text, /^user_gate: review=done · report=5003 字 · questions=0 · warnings: report-too-long/m);
   assert.equal(ship.text.includes('x'.repeat(200)), false, 'review 原文不进 text');
   assert.equal(ship.text.includes('y'.repeat(200)), false, 'report 原文不进 text');
   assert.equal(ship.text.includes('独立审查：'), false, 'review 原文（含前缀）不进 text');
@@ -4105,7 +4105,7 @@ test('文案：autoChoose 模型自决档退役（D8=A）——advice/常驻协�
   assert.match(protocol, /提问工具只用于简单问题/, '提问纪律：只把简单问题放提问工具');
   assert.match(protocol, /复杂问题用消息/, '提问纪律：复杂问题用普通消息白话展开');
   assert.match(protocol, /pending 不是跳过、不是同意/, '提问纪律：超时 pending 的语义');
-  assert.match(protocol, /汇报默认三问/, '交互纪律：用户汇报默认三问（D2=A；四段仅在要细节/长报告时用）');
+  assert.match(protocol, /与用户交互（最小注意力 × 最大影响）/, '交互纪律：唯一真源 = redline §与用户交互');
   assert.match(protocol, /wait_agent/, '等待纪律：派活后不空转等队友');
   assert.match(protocol, /wait_agent\/list_agents/, '等待纪律：点名不要循环调用的工具');
   assert.match(protocol, /回执自动送达/, '等待纪律：回执自动送达');

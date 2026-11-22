@@ -142,7 +142,8 @@ test('v0.9.0 skill 同步 Lead 职责、默认档与架构师模型口径', () =
     assert.ok(text.includes(phrase), 'SKILL 缺短语: ' + phrase);
   }
   assert.ok(!text.includes('当前实现仍 seed'));
-  for (const phrase of ['四段式', '结论：', '影响：', '需要你做什么：', '证据位置：', '只提醒不拒绝', '绝不阻断ship', 'details_requested:true', '≤4000字', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认允许', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
+  for (const phrase of ['交互口径唯一真源', 'redline §与用户交互', '一句话', '裁决卡', '正式汇报', '只校验非空', '官方任务板为准', 'officialTaskId', '固定小队默认上限 8', 'spawn 默认允许', '容量保全', 'capacityThreshold', 'exit_reason']) assert.ok(text.includes(phrase), phrase);
+  assert.doesNotMatch(text, /三问|四段式|三段式|问题卡模板|报备模板/, 'SKILL 不得复制模板（指针到 redline）');
 });
 
 test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL / ROUTER / TEAMMATE 体积只记录，不设门', () => {
@@ -155,7 +156,7 @@ test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL / ROUTER / TEAMMATE 
   console.log('[diagnostic] ROUTER_PROTOCOL_TEXT chars=' + ROUTER_PROTOCOL_TEXT.length);
   console.log('[diagnostic] TEAMMATE_PROTOCOL_TEXT chars=' + TEAMMATE_PROTOCOL_TEXT.length);
   const protocolRequired = [
-    '汇报默认三问', '只提醒不拒绝', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
+    '最小注意力 × 最大影响', '宿主只校验非空', '不套标题', '容量保全', '容量保全线（默认 55%', '不自动压缩', 'exit_reason', "phase:'blocked'|'cancel'", 'verify→build', '审查超时或未完成不算通过', '固定小队上限 8', 'spawn 默认允许', '绑定会话+操作+版本', '不跨会话继承', '派活 brief 五字段缺一不可',
     '模式只决定「做什么」',
     '不产生审批豁免',
     '免审只来自 autoCompress / autoHandoff / authorizeNext',
@@ -186,7 +187,6 @@ test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL / ROUTER / TEAMMATE 
     '验收用户门（实现者自查有盲区）',
     '必须让新上下文的模型做一次独立审查，再向用户汇报',
     '边界问题即发现即报',
-    '人类注意力最小高影响',
     '问题批量一次问清',
     '不限题数',
     'P0/不可逆',
@@ -205,13 +205,14 @@ test('prompt 字符 diagnostic + 硬约束短语：PROTOCOL / ROUTER / TEAMMATE 
   for (const phrase of protocolRequired) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 硬约束短语缺失: ' + phrase);
   }
-  // 汇报规范（§提问与汇报）在红线段（10199，system 最末）；ROUTER 只留调度/派活。
+  // 交互规范（§与用户交互）在红线段（10199，system 最末）；ROUTER 只留调度/派活。
   const redlineRequired = [
-    '提问与汇报（白话优先）', '你看到什么：', '要你做什么：', '有什么影响：', '默认三问', '只提醒不拒绝', '只给 warning', '不阻断 ship/任何 phase', '≤600 字', '≤4000字', 'details_requested:true',
+    '与用户交互（最小注意力 × 最大影响）', '先判断再开口', '三种形式', '不套标题', '正式汇报', '变化（用户能观察到什么）', '需要你做什么', '边界（没做什么', '宿主只校验非空', '提问工具只用于简单问题', 'pending 不是跳过、不是同意', '裁决卡（硬规则）', '工具返回只是内部事实',
   ];
   for (const phrase of redlineRequired) {
     assert.ok(REDLINE_PROTOCOL_TEXT.includes(phrase), 'REDLINE 硬约束短语缺失: ' + phrase);
   }
+  assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /三问|四段式|三段式/, 'REDLINE 不得回潮模板词');
   const routerRequired = [
     '目标：', '必读（1–3 份', '写范围：', '验收：', '回执：',
     "不设自做额度",
@@ -278,7 +279,7 @@ test('v0.14 P1 真源唯一性 / 指针可达 / 合同条款清单（防删防�
   assert.ok(PROTOCOL_TEXT.includes('## 派活与回执'), '指针目标缺失: ## 派活与回执');
   assert.ok(TEAM_LEAD_PROTOCOL_TEXT.includes('队友保鲜'), '指针目标缺失: 队友保鲜');
   // 4) 合同条款清单：只删重复句，条款本体必须仍在合并文本
-  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '人类注意力最小高影响', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'T2 进 build 必须带 design_gate 或复用有效 currentPhase.design', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
+  for (const phrase of ['验收用户门（实现者自查有盲区）', '必须让新上下文的模型做一次独立审查，再向用户汇报', '完整上下文索引', '最多 1 轮', '审查超时或未完成不算通过', '边界问题即发现即报', '问题批量一次问清', '不限题数', 'P0/不可逆', '超时≠同意', 'handoff 不是验收', '授权口径（唯一真源）', '模式只决定「做什么」', '不产生审批豁免', '免审只来自 autoCompress / autoHandoff / authorizeNext', '绑定会话+操作+版本', '不跨会话继承', '（A）设计门（开工前，显式停）', 'T2 进 build 必须带 design_gate 或复用有效 currentPhase.design', 'design_gate{path,user_approved:true,ask_ref,not_doing}', '实现↔设计对齐', '与其他验收**并行**、不串行终检', '默认不做、须用户明确授权', 'verification{tier:minimal|heavy,approved_by_user?,items[]}']) {
     assert.ok(PROTOCOL_TEXT.includes(phrase), 'PROTOCOL 合同条款缺失: ' + phrase);
   }
   // 5) 旧口径清零（既有禁令仍不得回潮）
@@ -409,7 +410,7 @@ test('v0.3.8/v0.9.0/v0.10.0 单模式常驻协议：唯一 PROTOCOL_TEXT base，
   // w1 设计门回显/深度模板后实测 7,086 → 预算同步到 7,200；v0.13 D2 三问后实测 7,236 → 7,300。
   // 0.14.0-dev W1/W2（风险档矩阵/裁决卡/内部事实）后实测 8,074；R1：体积只记录，不设失败门。
   console.log('[diagnostic] PROTOCOL_TEXT chars=' + PROTOCOL_TEXT.length);
-  for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision']) {
+  for (const retiredPhrase of ['压缩→新会话', '两段式', '本模式只有这三档', 'autoChoose', 'autoDecision', '默认三问', '四段式', '三段式', '问题卡模板', '报备模板']) {
     assert.ok(!PROTOCOL_TEXT.includes(retiredPhrase), '退役句不得回到常驻协议: ' + retiredPhrase);
   }
   for (const phrase of [

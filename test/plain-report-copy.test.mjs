@@ -10,12 +10,13 @@ import { INTERNAL_DETAILS_MARK, INTERNAL_ERROR_MARK, MODEL_STATE_MARK } from '..
 
 const read = (path) => readFileSync(new URL('../' + path, import.meta.url), 'utf8');
 
-test('Sources: no tool user-segment drafting; Lead writes the three questions', () => {
+test('Sources: no tool user-segment drafting; Lead writes the report', () => {
   for (const [name, text] of [['PROTOCOL', PROTOCOL_TEXT], ['ROUTER', ROUTER_PROTOCOL_TEXT], ['TEAMMATE', TEAMMATE_PROTOCOL_TEXT], ['ARCHITECT_LEAD', ARCHITECT_LEAD_PROTOCOL_TEXT], ['ARCHITECT_WORKER', ARCHITECT_WORKER_PROTOCOL_TEXT]]) {
     assert.doesNotMatch(text, /\[给用户\]/, name + ' must not mention a user segment');
   }
   assert.match(REDLINE_PROTOCOL_TEXT, /工具返回只是内部事实/);
-  assert.match(REDLINE_PROTOCOL_TEXT, /汇报默认三问/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /与用户交互（最小注意力/);
+  assert.match(REDLINE_PROTOCOL_TEXT, /正式汇报/);
   assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /从工具返回的 .*段起稿/);
   assert.doesNotMatch(REDLINE_PROTOCOL_TEXT, /没有 .*段就不发进度消息/);
   assert.match(REDLINE_PROTOCOL_TEXT, /不得原样贴给用户/);
@@ -46,11 +47,11 @@ test('Architect: only checkpoint; clean context via Lead relay_architect fresh',
   assert.match(ARCHITECT_WORKER_PROTOCOL_TEXT, /只写 checkpoint/);
 });
 
-test('tools.js: report schema still asks for the three questions; no four-part wording', () => {
+test('tools.js: report schema describes the four coverage items; no template wording', () => {
   const source = read('lib/agent/tools.js');
-  assert.doesNotMatch(source, /四段式大白话汇报/);
-  assert.doesNotMatch(source, /（四段汇报）/);
-  assert.match(source, /默认三问大白话汇报/);
+  assert.doesNotMatch(source, /默认三问|四段式|三段式|四段汇报/);
+  assert.match(source, /正式汇报（大白话，不套模板）/);
+  assert.match(source, /变化（用户可观察什么）/);
 });
 
 test('Internal marks: facts for the Lead, not user speech', () => {

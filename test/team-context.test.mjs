@@ -407,7 +407,7 @@ test('批次上限 900：超限先丢 [队友] 再丢 [上下文]，focus/闭环
   const text = injected[0].content[0].text;
   assert.ok(text.includes(phaseFocusLine(readWorkItems(cwd, { pathOverride: WORK_ITEMS_REL }))), 'focus 保留且正文不截断');
   assert.match(text, /\[闭环\] 上一步改动未落账：write\(x+/, '闭环行前缀保留（极端超长行按 600B 尾裁）');
-  assert.ok(text.endsWith('这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。'), '免责尾完整');
+  assert.ok(text.endsWith('这不是用户发言。不要复述本段；需要告诉用户时自己重写。'), '免责尾完整');
   assert.doesNotMatch(text, /\[队友\]/, '超限先丢 [队友]');
   assert.doesNotMatch(text, /\[上下文\]/, '仍超限再丢 [上下文]');
   await step(); // 被丢弃的两类下一步补（不推进 guard → 不丢事件）

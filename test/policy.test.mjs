@@ -759,32 +759,18 @@ test('v0.11 P0-E capacityOf/capacityRatioOf：独立容量线默认 55% / 窗口
   assert.equal(capacityOf({ used: 90, window: 100 }, { ratio: 2 }).threshold, 0.55, '非法 ratio 回落默认 55%');
 });
 
-test('v0.13 D2 userReportWarnings：三问零 warning；旧四段只 warning 不拒；缺段/乱序/空段/超长/代码块 → 只 warning', () => {
-  const three = '你看到什么：登录按钮修好了。\n要你做什么：不用。\n有什么影响：没有额外影响。';
-  const ok = userReportWarnings(three);
+test('v0.14 用户汇报：任意自然语言零格式 warning；超长/倾倒/代码块只 warning', () => {
+  const natural = '登录按钮修好了。\n不用你做什么；没有额外影响。';
+  const ok = userReportWarnings(natural);
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.warnings, []);
-  assert.equal(ok.formatOk, true);
-  assert.equal(ok.chars, [...three.trim()].length);
-  // markdown 加粗/#/列表 变体与三问顺序仍识别。
-  assert.deepEqual(userReportWarnings('## 你看到什么：完成\n**要你做什么**：无\n- 有什么影响：无').warnings, []);
-  // D2=A：旧四段接受（formatOk=true），但默认给一条迁移 warning；detailsRequested 时不提示。
+  assert.equal('formatOk' in ok, false, 'formatOk 已删除');
+  assert.equal(ok.chars, [...natural.trim()].length);
+  // 任意自然语言（含旧四段/旧三问/无标签）都不再产格式 warning。
   const legacy = '结论：完成用户汇报校验接线。\n影响：无（用户可见行为不变）。\n需要你做什么：无需。\n证据位置：lib/policy.js:488、test/policy.test.mjs';
-  const legacyResult = userReportWarnings(legacy);
-  assert.equal(legacyResult.formatOk, true, '旧四段仍被识别（不拒）');
-  assert.ok(legacyResult.warnings.some((warning) => warning.code === 'report-four-part-legacy'), '旧四段只 warning');
-  assert.equal(legacyResult.ok, false, '有 warning 即 ok=false（仍不抛不拒）');
-  assert.ok(!userReportWarnings(legacy, { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-four-part-legacy'), '要细节时不提示迁移');
-  // 缺段 / 乱序 / 空段 → report-format（同一 code）。
-  for (const bad of [
-    '结论：a\n影响：b\n证据位置：d',
-    '影响：b\n结论：a\n需要你做什么：c\n证据位置：d',
-    '结论：\n影响：b\n需要你做什么：c\n证据位置：d',
-  ]) {
-    const result = userReportWarnings(bad);
-    assert.equal(result.ok, false);
-    assert.equal(result.formatOk, false);
-    assert.ok(result.warnings.some((warning) => warning.code === 'report-format'));
+  assert.deepEqual(userReportWarnings(legacy).warnings, [], '旧四段不再有 legacy warning');
+  for (const naturalText of ['你看到什么：a\n要你做什么：b\n有什么影响：c', '## 随便写\n- 一段话说明结果与边界。']) {
+    assert.deepEqual(userReportWarnings(naturalText).warnings, []);
   }
   // 600/601 与 4000/4001 边界（码点口径）。
   const filler = (total) => {
@@ -796,11 +782,11 @@ test('v0.13 D2 userReportWarnings：三问零 warning；旧四段只 warning 不
   assert.equal(userReportWarnings(filler(601)).warnings.some((warning) => warning.code === 'report-too-long'), true, '601 字提示');
   assert.equal(userReportWarnings(filler(4000), { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-too-long'), false, '展开档 4000 字不提示');
   assert.equal(userReportWarnings(filler(4001), { detailsRequested: true }).warnings.some((warning) => warning.code === 'report-too-long'), true, '展开档 4001 字提示');
-  // 空/非字符串：只统计（不抛）——非空硬门由 checkUserGate 保持。
+  // 空/非字符串：只统计字符（不抛）——非空硬门由 checkUserGate 保持。
   for (const empty of ['', '   ', undefined, null, 42]) {
     const result = userReportWarnings(empty);
     assert.equal(result.chars, 0);
-    assert.ok(result.warnings.some((warning) => warning.code === 'report-empty'));
+    assert.deepEqual(result.warnings, []);
   }
   // 代码块/超长行/命令输出 → report-internal-details；details_requested 时不产出。
   assert.ok(userReportWarnings(legacy + '\n```\nnpm test\n```').warnings.some((warning) => warning.code === 'report-internal-details'));

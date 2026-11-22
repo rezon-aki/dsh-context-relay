@@ -691,7 +691,7 @@ test('relay_phase → ship：workItemsGate=warn 只附 workItemsWarning 不拒�
   }
 });
 
-test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻断（D1=B）；空 review/report 仍拒', async () => {
+test('relay_phase → ship：user_gate.report 字数/倾倒只 warning 不阻断（D1=B）；空 review/report 仍拒', async () => {
   resetSharedState();
   const cwd = tmpCwd();
   const session = fakeSession({ id: 'session-wi-user-gate', cwd, seq: 0 });
@@ -707,9 +707,9 @@ test('relay_phase → ship：user_gate.report 四段式/字数只 warning 不阻
   assert.equal(shipped.previous, 'verify');
   assert.equal(shipped.user_gate.review, 'done');
   assert.ok(shipped.user_gate.reportChars > 0);
-  assert.ok(Array.isArray(shipped.user_gate.warnings) && shipped.user_gate.warnings.length > 0, '缺段/内部细节 → warning');
-  assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-format'));
+  assert.ok(Array.isArray(shipped.user_gate.warnings) && shipped.user_gate.warnings.length > 0, '倾倒日志 → warning');
   assert.ok(shipped.user_gate.warnings.some((warning) => warning.code === 'report-internal-details'));
+  assert.ok(!shipped.user_gate.warnings.some((warning) => warning.code === 'report-format'), '不再有格式 warning');
   assert.equal('report' in shipped.user_gate, false, '不落 report 原文');
   assert.equal(injected.length, 0, 'warnings 只在结果里返回，不再重复注入 notice');
   assert.equal((await tools.get('relay_status').execute({}, { agent })).phase, 'ship', 'phase 已正常切换');
@@ -926,7 +926,7 @@ test('台账闭环：未落账签名去重（同签名不重复；count 不变�
   assert.equal(injected.length, 2);
   assert.equal(
     injected[1].content[0].text,
-    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n这不是用户发言。不要复述本段；对用户请用三问重写（简单确认不套）。',
+    '[闭环] 上一步改动未落账：write(a.js) —— 更新当前分点的 status/next/evidence（relay_work_items），或说明归到哪条分点；关 phase 前必须落账。\n这不是用户发言。不要复述本段；需要告诉用户时自己重写。',
     'P1 内容等价：闭环行文本与旧 builder 逐字一致',
   );
   await step();
