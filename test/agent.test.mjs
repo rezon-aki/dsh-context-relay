@@ -3187,7 +3187,7 @@ test('relay_handoff best-effort disposes half-created sessions and reports halfC
 
 test('live sidebar settings: 只剩 threshold；超预算切 phase 由面板而非侧栏开关决定', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-live-settings', seq: 0 });
+  const session = fakeSession({ id: 'session-live-settings', cwd: tmpCwd(), seq: 0 });
   const { services } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 400_000 } });
   const { tools } = applyAgent(services);
   assert.equal((await tools.get('relay_status').execute({}, { agent: { session, options: {} } })).lead.band, 'organize');
@@ -3515,7 +3515,7 @@ test('v0.9.0 面板状态文本：cth 档退役（归一「问我」），到线
 });
 test('relay_phase: discover/decide 必须写 exit_criteria（仅 crossing；A-11 同 phase 重声明不强制）', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-acceptance', seq: 0 });
+  const session = fakeSession({ id: 'session-acceptance', cwd: tmpCwd(), seq: 0 });
   const { services } = fakeServices({ session });
   const { tools } = applyAgent(services);
   const call = (args) => tools.get('relay_phase').execute({ contract_check: CONTRACT_CHECK, ...args }, { agent: { session, options: {}, inject() {} } });
@@ -3848,7 +3848,7 @@ test('relay_handoff 成功后标记 handedOff：旧会话不再注入到线提�
 
 test('v0.10 C10 relay_phase next_operation 死路径已删：schema 不暴露，传入被忽略、零面板写入', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-next-op', seq: 0 });
+  const session = fakeSession({ id: 'session-next-op', cwd: tmpCwd(), seq: 0 });
   const { services } = fakeServices({ session });
   const { tools } = applyAgent(services);
   assert.equal('next_operation' in tools.get('relay_phase').parameters.properties, false, 'schema 不再暴露 next_operation');
@@ -4168,7 +4168,7 @@ test('文案：人类模式 = 严格按模式执行（不含模型自决指令�
 
 test('文案闭环：退役 next_operation 参数被忽略，到线按「问人类」提示', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-copy-loop', seq: 0 });
+  const session = fakeSession({ id: 'session-copy-loop', cwd: tmpCwd(), seq: 0 });
   const { services } = fakeServices({ session, pressure: { contextWindow: 1_000_000, projectedTokens: 420_000 } });
   const { tools } = applyAgent(services);
   updatePanelState(session.id, { autoChoose: true });
@@ -5056,7 +5056,7 @@ test('v0.3.3 推荐清理：relay_phase 成功切 phase / relay_organize 压缩�
   const cleared = { operation: null, reason: '', at: null };
 
   // ① relay_phase 成功切 phase
-  const phaseSession = fakeSession({ id: 'session-rec-clean-phase', seq: 0 });
+  const phaseSession = fakeSession({ id: 'session-rec-clean-phase', cwd: tmpCwd(), seq: 0 });
   const phaseTools = applyAgent(fakeServices({ session: phaseSession }).services).tools;
   setRecommendation(phaseSession.id);
   const switched = await phaseTools.get('relay_phase').execute({ phase: 'build', design_gate: DESIGN_GATE, contract_check: CONTRACT_CHECK }, { agent: { session: phaseSession, options: {} } });
@@ -5220,7 +5220,7 @@ test('P1-2 去重键：T2 复用必须带 diff_hash；reopen/新任务清键，�
 
 test('P1-1 复用仍跑 user_gate 校验：heavy 授权 / questions / report 不因复用豁免', async () => {
   resetSharedState();
-  const session = fakeSession({ id: 'session-p1-reuse-gate', seq: 0 });
+  const session = fakeSession({ id: 'session-p1-reuse-gate', cwd: tmpCwd(), seq: 0 });
   const { tools } = applyAgent(fakeServices({ session }).services);
   const agent = { session, options: {} };
   const call = (args) => tools.get('relay_phase').execute(args, { agent });
