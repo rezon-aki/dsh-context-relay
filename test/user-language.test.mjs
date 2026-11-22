@@ -69,6 +69,26 @@ test('决策卡指针：架构师七字段齐全，README 交互段不枚举字�
   assert.doesNotMatch(readmeSections['README.en Reports'], /options A\/B/i, 'README en 用指针而非枚举');
 });
 
+test('redline 是唯一交互真源：七字段/P0/pending 齐备，技能不写固定汇报序列', () => {
+  for (const field of ['问题', '选项 A/B', '各自影响面', '收益/风险', '推荐', '默认', '不选会怎样']) {
+    assert.ok(REDLINE_PROTOCOL_TEXT.includes(field), 'redline 决策卡缺字段: ' + field);
+  }
+  assert.match(REDLINE_PROTOCOL_TEXT, /做什么\/为什么\/怎么撤/, 'redline 缺 P0 三字段');
+  assert.match(REDLINE_PROTOCOL_TEXT, /超时≠同意/, 'redline 缺 P0 超时语义');
+  assert.match(REDLINE_PROTOCOL_TEXT, /pending 不是跳过、不是同意/, 'redline 缺 pending 语义');
+  assert.match(REDLINE_PROTOCOL_TEXT, /等回复/, 'redline 复杂问题须明确等回复');
+  const skills = {
+    'human-loop': read('skills/human-loop/SKILL.md'),
+    'context-relay': read('skills/context-relay/SKILL.md'),
+  };
+  for (const [name, text] of Object.entries(skills)) {
+    assert.ok(text.includes('redline §与用户交互'), name + ' 缺 redline 指针');
+    assert.doesNotMatch(text, /用户原话需求\s*(?:→|->)|(?:→|->)\s*实际实现/, name + ' 规定了固定汇报序列');
+    assert.doesNotMatch(text, /变化（用户能观察到什么）/, name + ' 复述正式汇报覆盖项（应为指针）');
+    assert.doesNotMatch(text, /选项 A\/B/, name + ' 复述裁决卡七字段（应为指针）');
+  }
+});
+
 test('handoff 尾：不枚举禁词，指向 §用户语域', () => {
   const line = read('lib/agent/handoff.js').split('\n').find((source) => source.includes('const firstTail =')) ?? '';
   assert.match(line, /§用户语域/);
